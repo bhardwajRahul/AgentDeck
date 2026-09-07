@@ -9,7 +9,8 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { request } from 'http';
 import { BRIDGE_WS_PORT } from './types.js';
-import { SESSION_WEIGHT_MIN, SESSION_WEIGHT_MAX, stopDeliveryLoss, ESP32_BOARDS } from '@agentdeck/shared';
+import { SESSION_WEIGHT_MIN, SESSION_WEIGHT_MAX, stopDeliveryLoss, judgeCoverage, ESP32_BOARDS,
+  type ApmeJudgeHealthRow } from '@agentdeck/shared';
 import { ensureBleRuntime, getBleRuntimeStatus } from './python-ble-runtime.js';
 import {
   TASK_NAME,
@@ -3598,6 +3599,164 @@ apme
     log('  Reaped = the run was reaped under the open turn — the daemon that would have taken its Stop was gone (a restart)');
     log('  ?      = closed before end_source existed — signal unknown, never guessed');
     log('');
+  });
+
+/** Where a judge-health window starts, as an instant.
+ *
+ *  Day-or-longer windows snap back to a LOCAL midnight: `sinceMs` is an instant
+ *  while the buckets are local dates, so an unsnapped 14d makes the oldest row
+ *  a partial day that renders identically to a full one, with coverage computed
+ *  over a partial denominator. Sub-day windows are NOT snapped — that would
+ *  move `--since 6h` to yesterday's midnight and report 25 hours under a header
+ *  saying 6h; there the single partial day is exactly what was asked for.
+ *
+ *  Snapping can only move the start EARLIER, never past `now - windowMs`, so a
+ *  23-hour or 25-hour local day (a DST transition) cannot shorten the window. */
+export function judgeHealthWindowStart(windowMs: number, now: number = Date.now()): number {
+  const raw = now - windowMs;
+  if (windowMs < 86_400_000) return raw;
+  const start = new Date(raw);
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
+}
+
+/** A local YYYY-MM-DD, matching the day buckets the store groups by. */
+export function localDay(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Coverage as text, rounded DOWN.
+ *
+ *  `toFixed(0)` rounded 469/471 to `100%` while the Waiting column on the same
+ *  line said 2. An instrument whose only job is surfacing loss must never round
+ *  toward perfection. `Math.floor` alone is sufficient — it can only reach 100
+ *  at a true ratio of 1 — so there is deliberately no `>99%` special case to go
+ *  stale beside it. */
+export function coverageText(c: { adjudicable: number; ratio: number | null }): string {
+  if (c.ratio == null) return '—';
+  return `${Math.floor(c.ratio * 100)}% of ${c.adjudicable}`;
+}
+
+/** A span in the largest unit that keeps it readable. Seconds alone printed a
+ *  real p90 as `369266s`, which is the multi-day case this command exists to
+ *  surface. */
+export function duration(ms: number | null): string {
+  if (ms == null) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  // FLOOR the demoted unit. Rounding it inflated every seam by up to a third —
+  // 90s printed `2m`, 90m printed `2h` — and the 1m and 1h bands did not exist
+  // at all. An instrument for surfacing loss must not overstate its own spans.
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+apme
+  .command('judge-health')
+  .description('Judge coverage — whether closed work actually got a verdict')
+  .option('--since <window>', 'Lookback window, e.g. 6h / 3d / 2w (default 14d)', '14d')
+  .option('--json', 'Emit JSON instead of the table')
+  .action(async (opts) => {
+    const { initApme } = await import('./apme/index.js');
+    const { TASK_JUDGE_DRAIN_WINDOW_MS } = await import('./apme/runner.js');
+    const apme = await initApme();
+    if (!apme) { log('APME not available'); process.exit(1); }
+
+    const windowMs = parseLookbackWindow(opts.since);
+    if (windowMs == null) { log(`Unrecognized --since value: ${opts.since}`); process.exit(1); }
+    // One `now` for both, or the label compares against a later instant and
+    // reports every window as snapped.
+    const nowMs = Date.now();
+    const sinceMs = judgeHealthWindowStart(windowMs, nowMs);
+    const snapped = sinceMs !== nowMs - windowMs;
+    // The drain's own boundary, not a second copy of it — see
+    // TASK_JUDGE_DRAIN_WINDOW_MS.
+    const agedCutoffMs = nowMs - TASK_JUDGE_DRAIN_WINDOW_MS;
+    const rows = apme.store.judgeHealth({ sinceMs, agedCutoffMs });
+    const latency = apme.store.judgeLatency({ sinceMs });
+    // Whole-store, not windowed — see judgeAgedOutTotal.
+    const agedOutTotal = apme.store.judgeAgedOutTotal({ agedCutoffMs });
+    // Not all of them are lost verdicts, and saying so is the difference
+    // between a number and a claim: these were never offered to
+    // task-gradeability either, and measured on one store it refuses 70% of
+    // them for having no agent reply. Computing that here would mean loading
+    // every turn of every aged-out task.
+    const logLegend = () => {
+      log('  Declined = the judge correctly refused: no reply, aborted-only, or trivial. Not a miss.');
+      log('  Waiting  = unjudged but still inside the drain\'s lookback — the judge may yet reach it.');
+      log(`  AgedOut  = unjudged and older than the drain's ${TASK_JUDGE_DRAIN_WINDOW_MS / 86_400_000}-day lookback. Nothing will judge these.`);
+      log('  Coverage = judged / (judged + waiting + aged out). Declined rows are not in the denominator.');
+      log('');
+    };
+    const logAgedOutTotal = () => {
+      log(`  Aged out, whole store: ${agedOutTotal} task(s) older than the drain's ${TASK_JUDGE_DRAIN_WINDOW_MS / 86_400_000}-day lookback and never judged.`);
+      log(`  ${' '.repeat(21)} Not all are gradeable — they were never offered to the gradeability check either.`);
+    };
+
+    if (opts.json) {
+      log(JSON.stringify({
+        since: opts.since,
+        sinceMs,
+        drainWindowDays: TASK_JUDGE_DRAIN_WINDOW_MS / 86_400_000,
+        agedOutTotal,
+        // Coverage travels with the counts: a consumer left to recompute it is
+        // a consumer restating the denominator rule, which is what
+        // `judgeCoverage` exists to prevent.
+        days: rows.map((r) => ({ ...r, coverage: judgeCoverage(r) })),
+        latency,
+      }, null, 2));
+      return;
+    }
+    // The aged-out total and the legend print even with no rows. A machine idle
+    // for a fortnight with hundreds of aged-out tasks is exactly the state this
+    // command exists for, and returning early there showed only "nothing
+    // closed" — while --json still carried the number, so the two output modes
+    // disagreed about whether it exists.
+    if (rows.length === 0) {
+      log(`\n  No tasks closed since ${localDay(sinceMs)} (--since ${opts.since}).`);
+      logAgedOutTotal();
+      // The legend too: a reader looking at a store with nothing recent and
+      // hundreds of aged-out rows is exactly the reader who needs the one
+      // sentence defining what "aged out" means.
+      logLegend();
+      return;
+    }
+
+    // The RANGE actually rendered, not the flag. Snapping to a day boundary
+    // means `--since 1d` covers two local dates and `14d` fifteen of them; a
+    // header echoing the flag claims a span the table does not show.
+    log(`\n  Tasks closed since ${localDay(sinceMs)} (--since ${opts.since}${snapped ? ', snapped to a local day' : ''}) — whether each day's work got a verdict`);
+    log(`  ${'Day'.padEnd(12)} ${'Closed'.padEnd(7)} ${'Judged'.padEnd(7)} ${'Declined'.padEnd(9)} ${'Waiting'.padEnd(8)} ${'AgedOut'.padEnd(8)} Coverage`);
+    log(`  ${'─'.repeat(12)} ${'─'.repeat(7)} ${'─'.repeat(7)} ${'─'.repeat(9)} ${'─'.repeat(8)} ${'─'.repeat(8)} ${'─'.repeat(9)}`);
+    const totals: ApmeJudgeHealthRow = { day: 'total', closed: 0, judged: 0, declined: 0, waiting: 0, agedOut: 0 };
+    for (const r of rows) {
+      totals.closed += r.closed; totals.judged += r.judged; totals.declined += r.declined;
+      totals.waiting += r.waiting; totals.agedOut += r.agedOut;
+      const cov = coverageText(judgeCoverage(r));
+      log(`  ${r.day.padEnd(12)} ${String(r.closed).padEnd(7)} ${String(r.judged).padEnd(7)} ${String(r.declined).padEnd(9)} ${String(r.waiting).padEnd(8)} ${String(r.agedOut).padEnd(8)} ${cov}`);
+    }
+    const t = judgeCoverage(totals);
+    log(`  ${'─'.repeat(12)} ${'─'.repeat(7)} ${'─'.repeat(7)} ${'─'.repeat(9)} ${'─'.repeat(8)} ${'─'.repeat(8)} ${'─'.repeat(9)}`);
+    log(`  ${'all'.padEnd(12)} ${String(totals.closed).padEnd(7)} ${String(totals.judged).padEnd(7)} ${String(totals.declined).padEnd(9)} ${String(totals.waiting).padEnd(8)} ${String(totals.agedOut).padEnd(8)} ${coverageText(t)}`);
+    log('');
+    // `n > 0 || excluded > 0`: when EVERY judged task in the window has a
+    // backdated close the counts are n=0, excluded>0 — the reaper case the
+    // store comment describes — and gating on `n` alone printed nothing while
+    // --json still carried the number, which is the very silence `excluded`
+    // was added to end.
+    if (latency.n > 0 || latency.excluded > 0) {
+      const excl = latency.excluded > 0 ? `, ${latency.excluded} excluded (verdict predates the close)` : '';
+      log(`  Close → verdict: p50 ${duration(latency.p50Ms)}  p90 ${duration(latency.p90Ms)}  max ${duration(latency.maxMs)}  (n=${latency.n}${excl})`);
+    }
+    // Unconditional: the per-day column can only be non-zero for days older
+    // than the drain window, so at any --since inside it the column is all
+    // zeros and this line is the only place the leak shows.
+    logAgedOutTotal();
+    logLegend();
   });
 
 apme

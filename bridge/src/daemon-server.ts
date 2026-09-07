@@ -160,6 +160,7 @@ import {
   type DaemonPortSource,
 } from './daemon-port.js';
 import { enableClaudeUsageRecovery, fetchUsageFromApi, hasOAuthToken, resetConsecutiveFailures, type ApiUsageData, type UsageFetchResult } from './usage-api.js';
+import { TASK_JUDGE_DRAIN_WINDOW_MS } from './apme/runner.js';
 import { stopClaudeUsageRecoveryChildren } from './claude-usage-recovery.js';
 import { AGENT_IDLE_GAP_MS, resolveGatewayHealth } from '@agentdeck/shared';
 import { getOrCreateToken, isLocalConnection, validateToken } from './auth.js';
@@ -4551,7 +4552,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     // stop ranking real work. Bounded to the same 30-day window the backlog
     // drain reads; idempotent after the first pass.
     try {
-      const r = retractUngradeableVerdicts(apme.store, Date.now() - 30 * 86_400_000);
+      // The drain's bound, not a second copy of it — an SSOT, not a fix. The
+      // residual is real and stays: retraction runs once at daemon start
+      // against its own clock, while the drain and `judge-health` evaluate the
+      // boundary later against theirs, so a task readmitted at day 29.9 is past
+      // the cutoff within hours. `readmitTask` clears its notGradeable stamp,
+      // moving it out of `declined` (explicitly not a miss) into `agedOut`
+      // (permanent). Narrowing the readmission window would trade that for
+      // never readmitting a class of task at all, which is the worse loss.
+      const r = retractUngradeableVerdicts(apme.store, Date.now() - TASK_JUDGE_DRAIN_WINDOW_MS);
       const n = r.no_reply + r.aborted_only + r.trivial;
       if (n > 0) log(`[agentdeck] APME withdrew ${n} verdict(s) reached without the agent's work — no reply ${r.no_reply}, client-ended ${r.aborted_only}, trivial ${r.trivial}`);
       if (r.readmitted > 0) log(`[agentdeck] APME re-admitted ${r.readmitted} declined task(s) to the judge backlog — their tool trajectory is the agent's work`);
@@ -6719,7 +6728,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         // silently, so every tick spent its one slot on it and the backlog
         // behind it starved (156 tasks, 2026-08-07..23, measured 2026-09-06).
         // Still one task per tick — the window only decides WHICH one.
-        const backlog = apme!.store.listTasksNeedingSummary(APME_TASK_JUDGE_DRAIN_WINDOW, Date.now() - 30 * 86_400_000);
+        const backlog = apme!.store.listTasksNeedingSummary(APME_TASK_JUDGE_DRAIN_WINDOW, Date.now() - TASK_JUDGE_DRAIN_WINDOW_MS);
         for (const t of apme!.runner.pickBacklogTasks(backlog, APME_TASK_JUDGE_DRAIN_PER_TICK)) {
           apme!.runner.enqueueTask({ runId: t.runId, taskId: t.id, ...(t.taskCategory ? { category: t.taskCategory } : {}) });
         }
