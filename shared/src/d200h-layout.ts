@@ -412,7 +412,13 @@ export function renderUsagePairGauge(agent: 'claude' | 'codex', windows: [UsageT
     const reset = window.footnote || (window.stale ? 'stale' : formatResetCountdown(window.resetsAt));
     const textColor = dim ? UI.ttyDim : Tide.s50;
     const barW = Math.round(120 * used / 100);
-    return `<text x="12" y="${y + 29}" font-family="JetBrains Mono, monospace" font-size="18" font-weight="bold" fill="${textColor}">${escXml(window.label)}</text>`
+    // The label and the right-aligned value share one 144px row, so a long label
+    // beside a 3-digit percent collides ("FABLE100%"). Window labels are 2 chars
+    // ("5H"/"7D") and never hit this; a scoped cap's name (up to 6) does, and it
+    // is exactly the pairing this renderer now carries. Shrink the label rather
+    // than truncate a name the user has to recognise.
+    const labelSize = window.label.length >= 5 ? 14 : 18;
+    return `<text x="12" y="${y + 29}" font-family="JetBrains Mono, monospace" font-size="${labelSize}" font-weight="bold" fill="${textColor}">${escXml(window.label)}</text>`
       + `<text x="100" y="${y + 29}" text-anchor="end" font-family="IBM Plex Sans, sans-serif" font-size="20" font-weight="bold" fill="${textColor}">${Math.round(used)}</text>`
       + `<text x="102" y="${y + 29}" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="bold" fill="${textColor}">%</text>`
       + (reset ? `<text x="12" y="${y + 51}" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${textColor}">${escXml(reset)}</text>` : '')

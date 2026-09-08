@@ -391,8 +391,11 @@ private struct D200HSlotTile: View {
                         let dim = window.stale || (window.footnote?.isEmpty == false)
                         VStack(spacing: size * 0.015) {
                             HStack(alignment: .firstTextBaseline) {
+                                // Mirrors renderUsagePairGauge: a scoped cap's name
+                                // (up to 6 chars) beside a 3-digit percent needs the
+                                // smaller label, or the row reads "FABLE100%".
                                 Text(window.label)
-                                    .font(.system(size: size * 0.13, weight: .bold, design: .monospaced))
+                                    .font(.system(size: size * (window.label.count >= 5 ? 0.10 : 0.13), weight: .bold, design: .monospaced))
                                 Spacer(minLength: 0)
                                 Text("\(Int(window.percent))%")
                                     .font(.system(size: size * 0.14, weight: .heavy))
