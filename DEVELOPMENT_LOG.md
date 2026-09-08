@@ -1,5 +1,111 @@
 # AgentDeck Development Log
 
+## 2026-09-08 — InkDeck → `trmnl_75` 리네임, 사용량 스트립 자리 고정, CLAUDE.md 낡은 사실 정리
+
+### 문제
+
+7.5" e-ink 보드만 이름 규칙에서 벗어나 있었다. 나머지 보드는 전부 벤더 제품명
+(`Ulanzi TC001`, `Waveshare C6-LCD-1.47`, `RockBase NM-EPD-420`)이거나 패널 서술
+(`IPS 10.1"`, `Round AMOLED`)인데, 이 보드만 **InkDeck** 이라는 우리가 지어낸
+이름이었다. 사용자가 그 이름으로 살 수 있는 물건이 없다 — 실물은 **Seeed TRMNL
+7.5" OG DIY Kit** 이다.
+
+### 해결
+
+`inkdeck` → `trmnl_75`, 표시 이름 `Seeed TRMNL 7.5"`. 90개 파일 419군데(코드·문서·
+Pages·디자인 시스템·펌웨어 매크로·Swift 프리뷰·에셋 파일명)를 한 번에 옮겼다.
+식별자 형태별로 규칙을 나눴다: `BOARD_INKDECK`→`BOARD_TRMNL_75`,
+`AGENTDECK_INKDECK_UI`→`AGENTDECK_TRMNL_75_UI`, `InkDeckPreview`→`Trmnl75Preview`,
+`board_inkdeck.h`/`docs/media/inkdeck.jpg` 도 함께 rename.
+
+**이미 플래시된 보드가 이 rename 의 유일한 사각지대다.** 현장 보드는 자신이
+빌드된 이름(`inkdeck`)을 OTA 를 받기 전까지 계속 보고하는데, 그 OTA 를 보내려면
+데몬이 그 보드를 찾아야 한다 — 즉 canonical id 만 옮기면 **이름을 바꿔 줄 바로 그
+경로가 그 보드를 못 찾는다.** 그래서 `LEGACY_BOARD_IDS` / `canonicalBoardId()` 를
+SSOT 에 두고 (1) `findWifiOtaTarget` 의 board 비교, (2) `resolveStagedFwBoard`,
+(3) glance frame geometry 조회를 전부 canonical 비교로 바꿨다. Swift 쪽 Surface
+등록 allow-list 는 생성 미러 블록 **바깥에** `legacySurfaceFirmwareBoards` 로
+따로 뒀다 — 보드 카탈로그가 아니라 "현장에 남은 전선 문자열"이므로 미러 게이트가
+검사하는 집합을 오염시키면 안 된다. CLI 별칭(`agentdeck esp32-ota inkdeck`)도
+유지되므로 사용자의 셸 히스토리가 계속 동작한다.
+
+### 검증
+
+- vitest 265 파일 4,156 통과 (legacy id 회귀 테스트 1개 추가), typecheck 통과
+- `generate-esp32-board-matrix --check` 12보드 일치 (별칭 표까지 재생성)
+- SYNC-HASH 핀 2개 재계산 — pinned origin(`eink_display.cpp`,
+  `eink_dashboard_layout.h`) 변경분은 매크로/주석 rename 뿐임을 diff 로 확인 후 bump
+- `pio run -e trmnl_75` 실제 펌웨어 빌드 SUCCESS, sim `render.sh trmnl_75` 프레임
+  800×480 정상 렌더
+- docs:check / design-system:check / tokens-sync / surface-mirrors / hardware
+  spec cards 전부 통과. HTML `alt` 속성 안에 들어간 인치 기호는 `&quot;` 로 이스케이프
+  (일괄 치환이 속성을 깨뜨린 자리 3곳, Swift 문자열 리터럴 1곳을 손으로 고침)
+
+CHANGELOG 은 릴리스 컷 시점에 쓴다(`verify-release-version` 이 강제). 과거 devlog/
+CHANGELOG 항목의 "InkDeck" 표기는 그대로 둔다 — 그때 그 이름으로 나간 기록이다.
+
+### 사용량 스트립: 자리(seat)와 순위(rank)를 분리하다
+
+**증상.** Stream Deck 키패드에서 사용량 게이지 순서가 어떤 때는 `5H 7D FABLE CODEX`,
+어떤 때는 `5H 7D CODEX FABLE` 로 나온다.
+
+**원인은 의도된 코드였다.** `scopedLimitClaimsUsageKey` 의 문서가 명시하고 있었다 —
+"ACTIVE 캡은 Codex보다 앞, INACTIVE 캡은 뒤". 근거(#99)도 진짜다: 집계 5H/7D 가
+낮은데 per-model 주간 캡만 바인딩일 수 있으니, 자리가 모자랄 때 그 캡이 먼저다.
+
+문제는 **한 리스트로 두 질문에 답한 것**이다. "좁은 스트립에서 무엇이 살아남는가"
+(순위)와 "살아남은 것들이 어디에 앉는가"(자리)는 다른 질문인데, 순위 리스트를 그대로
+그리니 캡이 바인딩 상태가 바뀔 때마다 **좌석을 옮겨 다녔다**. 화면에는 왜 옮겼는지
+아무 표시도 없다. 사용자가 기억하는 건 위치다.
+
+**수정.** `USAGE_STRIP_ORDER = claude → scoped → codex → credits` 를
+`shared/src/format-utils.ts` 에 SSOT 로 두고:
+- D200H/Ulanzi(`buildUsageTiles`)는 캡을 항상 Claude 쪽에, Codex 앞에 놓는다.
+- Stream Deck 키패드는 `usageGauges()`(순위, 페이징용)와 `usageGaugesForDisplay()`
+  (자리)를 분리했다. 5개 초과로 페이징할 때 informational 캡이 살아있는 Codex 창을
+  2페이지로 밀어내지 않는다는 #99 의 의도는 순위 쪽에 그대로 남아 있다.
+- `active` 가 여전히 결정하는 것: 램프(critical vs 정보성 시안)와 페이징 순위. 자리는 아니다.
+
+### D200H 3키 스트립: 주간 판독 둘을 한 키에
+
+같은 스트립의 압축 규칙도 바꿨다. 기존에는 5개 판독(Claude 5H/7D, 캡, Codex 5H/7D)이
+3키에 들어갈 때 **Claude 5H+7D 를 한 키로 묶고 캡이 키 하나를 통째로** 썼다.
+
+바꾼 규칙: **세션 중 실제로 움직이는 건 5H** 이고 7D 와 per-model 주간 캡은 둘 다
+주간이라 같이 읽는다. 그래서 `5H` | `7D + FABLE` | `CODEX 5H+7D` 로 나눈다.
+키 수는 그대로 3, 버려지는 판독도 여전히 0.
+
+    5H  42%   |  7D 17%  / FABLE 98%  |  CX 5H 30% / 7D 10%
+
+**검증.** TS 엔진과 Swift 프리뷰 미러(`D200HLayoutModel`)를 각각 실행해 6개 시나리오
+문자열을 대조했다. 현실적인 5개는 완전히 동일. 6번째(5h 없이 7d만)는 **기존 비대칭**이
+드러난 것으로 이번 변경과 무관하다 — TS `parseState` 가 `fiveHourPercent ?? 0` 으로
+채워서 Pro 계정(주간만)에 `5H 0%` 유령 타일을 그리는 반면 Swift 는 optional 이라 생략한다.
+범위 밖이라 손대지 않고 여기 기록만 남긴다.
+
+렌더까지 확인(rsvg): 바인딩 캡은 빨간 임계 램프, 비바인딩 캡은 정보성 시안으로
+같은 자리에 그려진다. Swift 미러는 pair 행이 캡을 실을 수 있게 되었으므로
+`D200HUsagePairWindow.inactive` 를 추가했다(없으면 기기는 시안, 프리뷰는 빨강).
+`shared/src/d200h-layout.ts` SYNC-HASH 핀 재계산.
+
+### CLAUDE.md 정리
+
+같은 턴에 CLAUDE.md 의 **검증 가능한 낡은 사실**만 골라 고쳤다. 추측으로 지우지
+않고 하나씩 대조했다:
+
+- `hooks/` 항목이 아직 `~/.claude/settings.local.json` 를 설치 대상이라 말하고
+  있었다 — 같은 파일의 Key Conventions 는 그 파일이 user scope 에서 **죽은 파일**
+  이라고 못박고 있어 자기모순이었다 (`hooks/src/install.ts` 는 `settings.json` 을 씀)
+- Stream Deck 플러그인 "Five actions" → 실제 manifest 는 **6개**(`limit-key` 누락)
+- design-system "27 documents" → 실측 31. 숫자를 다시 박는 대신
+  `design-system:check` 가 출력하는 값을 읽으라고 바꿨다(토큰 미러 개수와 같은 방식)
+- "`pnpm-workspace.yaml` enforces the engine contract" → 범위는 `package.json`
+  `engines`, `pnpm-workspace.yaml` 은 `engineStrict` 로 치명적으로 만들 뿐
+- coverage 문장의 존재하지 않는 CI 스텝 이름 → 실제 명령
+- 규칙이 붙지 않은 순수 연대기(삭제 날짜, README 이관 날짜 등) 제거
+- 13KB 짜리 한 줄이던 `bridge/` 항목을 규칙별 하위 불릿으로 쪼갰다. 내용은
+  docs/apme.md 와 DEVELOPMENT_LOG 에 이미 있는 서사 위주로 줄이고 불변식은 남겼다
+
 ## 2026-09-07 — 순간적으로 아픈 OpenClaw 크리처, 그리고 끝나지 않던 수확기 둘
 
 ### 문제
