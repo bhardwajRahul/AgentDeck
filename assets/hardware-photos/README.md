@@ -26,7 +26,7 @@ node scripts/crop-hardware-images.mjs ~/some/dir   # from raw camera originals
 - **Re-encoded at quality 78** (mozjpeg), which halves the archive to ~15 MB at
   full capture resolution. The card outputs are at most 2400 px wide, so the
   downscale absorbs the difference — verified against the originals at 2×
-  magnification on the most detail-sensitive card (InkDeck's e-ink text).
+  magnification on the most detail-sensitive card (TRMNL 7.5"'s e-ink text).
 
 Filenames keep their original `IMG_####` identity so each row of the crop table
 maps to a capture one-to-one.

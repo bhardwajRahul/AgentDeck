@@ -331,7 +331,7 @@ static void networkTask(void* param) {
             }
         }
 #elif !defined(BOARD_IPS10)
-        // Serial-primary WiFi radio parking (TTGO, InkDeck, and every other board
+        // Serial-primary WiFi radio parking (TTGO, TRMNL 7.5", and every other board
         // except TC001/LED8X32 above and IPS10 which parks via its own block).
         // When the daemon is actively driving this board over USB serial, serial
         // IS the transport and the 2.4GHz radio is dead weight:
@@ -1044,7 +1044,7 @@ static void uiTask(void* param) {
 // Slow tick: render() is content-hash gated internally and a panel refresh
 // blocks 0.3-3s, so there is nothing to gain from the 30fps LCD cadence.
 static void uiTask(void* param) {
-    Serial.println("[UI] InkDeck e-ink task started on core 1");
+    Serial.println("[UI] TRMNL 7.5\" e-ink task started on core 1");
     Eink::init();
 #if defined(BOARD_HAS_SPEAKER)
     // Runs on the UI task, after the first panel cycle, for the same reason the
@@ -1098,7 +1098,7 @@ void setup() {
 #if ARDUINO_USB_MODE == 1
     // HWCDC-only knobs (TinyUSB's USBCDC has neither): grow the 256-byte TX
     // ring and widen the give-up timeout — HWCDC drops whole 64-byte FIFO
-    // blocks mid-line otherwise. InkDeck now ships TinyUSB (USB_MODE=0), so
+    // blocks mid-line otherwise. TRMNL 7.5" now ships TinyUSB (USB_MODE=0), so
     // this branch only matters if someone flips the mode back.
     Serial.setTxBufferSize(4096);
     Serial.setTxTimeoutMs(300);
@@ -1135,11 +1135,11 @@ void setup() {
     for (int i = 0; i < 30 && !Serial; i++) delay(100);
     delay(200);
     Serial.println("\n=== AgentDeck LilyGo T5 4.7\" e-ink ===");
-#elif defined(BOARD_INKDECK)
+#elif defined(BOARD_TRMNL_75)
     // Native USB CDC: wait for host connection (up to 3 seconds)
     for (int i = 0; i < 30 && !Serial; i++) delay(100);
     delay(200);
-    Serial.println("\n=== AgentDeck InkDeck 7.5\" e-ink ===");
+    Serial.println("\n=== AgentDeck TRMNL 7.5\" e-ink ===");
 #elif defined(BOARD_T_EMBED)
     // Native USB CDC: wait for host connection (up to 3 seconds)
     for (int i = 0; i < 30 && !Serial; i++) delay(100);
@@ -1168,8 +1168,8 @@ void setup() {
         "NM-EPD-420 4.2\" e-ink",
 #elif defined(BOARD_LILYGO_EPD47)
         "LilyGo T5 4.7\" e-ink",
-#elif defined(BOARD_INKDECK)
-        "InkDeck 7.5\" e-ink",
+#elif defined(BOARD_TRMNL_75)
+        "TRMNL 7.5\" e-ink",
 #elif defined(BOARD_T_EMBED)
         "T-Embed Knob",
 #elif defined(BOARD_T_DISPLAY_PRO)

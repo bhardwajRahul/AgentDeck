@@ -71,7 +71,7 @@ const tasks = [
   { name: 'round-amoled.jpg', src: 'IMG_9705.jpeg', crop: { left: 0, top: 1485, width: 3024, height: 1728 }, out: STANDARD },
   { name: 'ttgo.jpg', src: 'IMG_9702.jpeg', crop: { left: 0, top: 1444, width: 3024, height: 1728 }, out: STANDARD },
   { name: 'ips10.jpg', src: 'IMG_9696.jpeg', crop: { left: 0, top: 306, width: 4032, height: 2304 }, out: STANDARD },
-  { name: 'inkdeck.jpg', src: 'IMG_9708.jpeg', crop: { left: 216, top: 396, width: 3780, height: 2160 }, out: STANDARD },
+  { name: 'trmnl_75.jpg', src: 'IMG_9708.jpeg', crop: { left: 216, top: 396, width: 3780, height: 2160 }, out: STANDARD },
   // The two e-ink boards added in 1.2.0, shot 2026-09-02 running that firmware:
   // EPD47 on the QUEUE roster face, NM-EPD-420 on the ambient glance face.
   { name: 'epd47.jpg', src: 'IMG_0402.jpeg', crop: { left: 6, top: 500, width: 3900, height: 2229 }, out: STANDARD },

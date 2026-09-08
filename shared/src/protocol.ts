@@ -696,7 +696,7 @@ export interface DeviceInfoMessage {
   updateChannel?: string;
   sourceProvider?: string;
   // "86box" | "round_amoled" | "ips_35" | "ips_10" | "ttgo_t_display"
-  // | "ulanzi_tc001" | "inkdeck" | "t_embed" (wire strings — see esp32/src/net/protocol.cpp)
+  // | "ulanzi_tc001" | "trmnl_75" | "t_embed" (wire strings — see esp32/src/net/protocol.cpp)
   // | "xteink_x3" | "xteink_x4" (external CrossPoint fork; see docs/esp32-client-contract.md)
   board: string;
   version: string;       // firmware version (FIRMWARE_VERSION — bumped rarely)

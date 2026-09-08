@@ -30,7 +30,7 @@ final class ESP32WifiForwardTests: XCTestCase {
 
     func testWifiDeviceInfoKeepsEinkRefreshCounters() throws {
         let info = try XCTUnwrap(ESP32Serial.wifiDeviceInfo([
-            "board": "inkdeck",
+            "board": "trmnl_75",
             "version": "0.1.2",
             "repaintCount": 2_757,
             "fullRefreshCount": 461,
@@ -75,7 +75,7 @@ final class ESP32WifiForwardTests: XCTestCase {
 
     /// Timeline rows must be capped to the firmware's byte-sized TimelineEntry
     /// buffers on a UTF-8 character boundary. Uncapped raw let the board's
-    /// 119-byte strncpy cut mid-한글 and the IPS10 cards / InkDeck ticker drew a
+    /// 119-byte strncpy cut mid-한글 and the IPS10 cards / TRMNL 7.5" ticker drew a
     /// broken trailing glyph (Node parity: bridge/src/esp32-serial.ts `stamp`).
     func testTimelineEventRawIsByteCappedUtf8Safe() {
         let raw = String(repeating: "가", count: 60)   // 180 UTF-8 bytes, 60 Characters

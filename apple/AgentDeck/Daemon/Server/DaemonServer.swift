@@ -591,7 +591,7 @@ private final class SerialEventSnapshot: @unchecked Sendable {
         // ticker/cards show the real latest milestones instead of an empty
         // ring (Node parity: daemon-server.ts serial initial set). Kept small —
         // the single line must stay well under the 4KB serial RX buffer on
-        // non-InkDeck boards; per-entry raw/detail caps are applied by
+        // non-TRMNL 7.5" boards; per-entry raw/detail caps are applied by
         // prepareForSerial at send time.
         lock.lock()
         let seed = timelineSeedEntries.suffix(6)
@@ -686,11 +686,18 @@ final class DaemonServer {
     // TypeScript workspace module, so this exact product allow-list is a
     // generated-mirror boundary, never an independently edited board catalog.
     nonisolated static let surfaceFirmwareBoards: Set<String> = [
-        "86box", "ips_35", "round_amoled", "ips_10", "inkdeck", "nm_epd_420",
+        "86box", "ips_35", "round_amoled", "ips_10", "trmnl_75", "nm_epd_420",
         "lilygo_epd47", "ttgo_t_display", "ulanzi_tc001", "t_embed", "t_display_pro",
         "esp32_c6_147",
     ]
     // END GENERATED-SSOT-MIRROR: shared/src/esp32-boards.ts
+
+    /// Wire board ids that firmware already in the field still reports. Mirrors
+    /// `LEGACY_BOARD_IDS` in shared/src/esp32-boards.ts, and sits OUTSIDE the
+    /// generated block because it is not part of the board catalog: a flashed
+    /// board keeps saying what it was built as until it takes an OTA, so a
+    /// rename that moved only the canonical id would refuse every deployed unit.
+    nonisolated static let legacySurfaceFirmwareBoards: Set<String> = ["inkdeck"]
 
     /// Shared bounded-body contract for SD-backed reader assets. The firmware
     /// asks for 64 KiB so its main input loop runs between responses; clamps
@@ -714,7 +721,7 @@ final class DaemonServer {
         case "io.pocketdaily.reader":
             allowedBoards = ["xteink_x3", "xteink_x4"]
         case "dev.agentdeck.dashboard-firmware":
-            allowedBoards = surfaceFirmwareBoards
+            allowedBoards = surfaceFirmwareBoards.union(legacySurfaceFirmwareBoards)
         default:
             return .init(status: 422, code: "surface_product_unsupported",
                          message: "Surface product is not registered")
@@ -9660,7 +9667,7 @@ final class DaemonServer {
         // slot Codex happened to use: short (< 1 day → the 5h window) → `primary`,
         // long (≥ 1 day → the weekly window) → `secondary`. Codex now reports the
         // weekly (10080-min) window in its own `primary` slot with `secondary` null
-        // once the 5h window resets; slot-based downstream clients (ESP32/InkDeck
+        // once the 5h window resets; slot-based downstream clients (ESP32/TRMNL 7.5"
         // firmware label primary=5H, secondary=7D and never read windowMinutes)
         // would otherwise mislabel the weekly "5H" and drop the 7D gauge. Length-
         // based consumers still get windowMinutes and are unaffected.
@@ -11506,7 +11513,7 @@ final class DaemonServer {
         ]
         // Host-local "HH:MM" stamped at the source. ESP32 devices run NTP in UTC
         // and have no timezone, so rendering `ts` directly shows a clock hours off
-        // (e.g. 9h in KST); the InkDeck ticker reads `localHm` for the wall time.
+        // (e.g. 9h in KST); the TRMNL 7.5" ticker reads `localHm` for the wall time.
         // Mirrors the Node bridge `stampLocalHm` (bridge/src/bridge-core.ts); native
         // apps that derive HH:mm themselves simply ignore the extra field.
         if e.ts > 0 { dict["localHm"] = Self.localHmString(e.ts) }

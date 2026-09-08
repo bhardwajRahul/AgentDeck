@@ -105,7 +105,7 @@ describe('esp32-ota target resolution', () => {
 
   it('leaves a canonical board string unchanged', () => {
     expect(resolveEsp32OtaDaemonTarget('ttgo_t_display')).toBe('ttgo_t_display');
-    expect(resolveEsp32OtaDaemonTarget('inkdeck')).toBe('inkdeck');
+    expect(resolveEsp32OtaDaemonTarget('trmnl_75')).toBe('trmnl_75');
     expect(resolveEsp32OtaDaemonTarget('86box')).toBe('86box');
   });
 
@@ -156,8 +156,8 @@ describe('esp32-ota sandbox retry payload', () => {
   });
 
   it('keeps the live retry a live OTA request', () => {
-    expect(inlineOtaPayload('inkdeck', 'AA==')).toEqual({
-      target: 'inkdeck', firmwareB64: 'AA==',
+    expect(inlineOtaPayload('trmnl_75', 'AA==')).toEqual({
+      target: 'trmnl_75', firmwareB64: 'AA==',
     });
   });
 });

@@ -2808,7 +2808,7 @@ void update() {
             // one-liner. STRICTLY per-session — the old global latest-action
             // fallback painted some OTHER session's row onto whichever working
             // card rendered first, which read as wrong/meaningless info.
-            // Idle cards keep their milestone too (InkDeck parity: an idle
+            // Idle cards keep their milestone too (TRMNL 7.5" parity: an idle
             // session showing "what it last did" beats a blank card).
             const char* body = "";
             if (awaiting && mc[i].question[0]) body = mc[i].question;

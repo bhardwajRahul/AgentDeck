@@ -30,7 +30,7 @@
 #include <WiFi.h>
 #include <ArduinoJson.h>
 
-// Line buffer for incoming serial JSON. InkDeck gets headroom: a whitelisted
+// Line buffer for incoming serial JSON. TRMNL 7.5" gets headroom: a whitelisted
 // usage_update is ~1KB but a 10-session enriched sessions_list plus growth
 // must never hit the silent "Buffer overflow — discard line" path again
 // (an oversized line froze usage gauges on stale values for hours).
@@ -62,7 +62,7 @@ void serialWriteJsonLine(const char* buf) {
     // holes mid-line, 7/10 corrupt device_info replies). Pace one FIFO block
     // per drain so the newline-framed JSON the daemon parses arrives intact.
     // The T-Display-S3-Pro hits the same silicon path, harder: its 2.8 KB
-    // base64 photo_chunk lines still lost ~2 lines per upload at the InkDeck
+    // base64 photo_chunk lines still lost ~2 lines per upload at the TRMNL 7.5"
     // recipe (60 B / 300 µs) while daemon broadcasts streamed inbound — the
     // ack-only-keepalive note below already records that full-duplex raises
     // the drop odds. Sub-FIFO blocks with a longer settle survive it.
@@ -97,8 +97,8 @@ static void sendDeviceInfoSerial() {
     resp["board"] = "nm_epd_420";
     #elif defined(BOARD_LILYGO_EPD47)
     resp["board"] = "lilygo_epd47";
-    #elif defined(BOARD_INKDECK)
-    resp["board"] = "inkdeck";
+    #elif defined(BOARD_TRMNL_75)
+    resp["board"] = "trmnl_75";
     #elif defined(BOARD_TTGO)
     resp["board"] = "ttgo_t_display";
     #elif defined(BOARD_T_EMBED)

@@ -93,7 +93,7 @@ function normalizeCodexRateLimits(
   // short (< 1 day → the 5h window) → primary, long (≥ 1 day → weekly) →
   // secondary. Codex now reports the weekly (10080-min) window in its own
   // `primary` slot with `secondary` null once the 5h window resets; slot-based
-  // downstream clients (ESP32/InkDeck firmware label primary=5H, secondary=7D and
+  // downstream clients (ESP32/TRMNL 7.5" firmware label primary=5H, secondary=7D and
   // never read windowMinutes) would otherwise mislabel the weekly "5H" and drop
   // the 7D gauge. Length-based consumers still get windowMinutes, unaffected.
   let shortWindow: CodexRateLimitWindow | undefined;

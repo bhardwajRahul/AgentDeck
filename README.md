@@ -151,7 +151,7 @@ to the same daemon and can be added in any order:
 |---|---|
 | **macOS AgentDeck Dashboard** | [Download on the App Store](https://apps.apple.com/app/id6784822497) — the SwiftUI dashboard carries its own daemon, so it needs no Node.js |
 | **iOS / Android AgentDeck Companion** | iPhone/iPad use the same [App Store listing](https://apps.apple.com/app/id6784822497); Android installs from [Google Play](https://play.google.com/store/apps/details?id=dev.agentdeck). Both pair with a daemon over the LAN. |
-| **AgentDeck ESP32 Dashboard Firmware** | Flash panels and InkDeck from [**puritysb.github.io/AgentDeck/flash/**](https://puritysb.github.io/AgentDeck/flash/) or run `agentdeck esp32 flash <board>`. After the first USB flash, supported boards update over Wi-Fi OTA. |
+| **AgentDeck ESP32 Dashboard Firmware** | Flash LCD panels and the TRMNL 7.5" e-ink from [**puritysb.github.io/AgentDeck/flash/**](https://puritysb.github.io/AgentDeck/flash/) or run `agentdeck esp32 flash <board>`. After the first USB flash, supported boards update over Wi-Fi OTA. |
 | **Official Stream Deck integration** | Install for Stream Deck / Mini / XL / Plus / + XL from the [Elgato Marketplace](https://marketplace.elgato.com/product/agentdeck-dce3806b-176e-40f2-be7d-e029bec0f464). |
 | **Official Ulanzi integration** | Install from the [Ulanzi Studio Marketplace](https://ugc.ulanzistudio.com/contentView/1141). Version 1.0.3 is live for D200H; 1.0.4 is under review and adds D200X LCD-key support. D200X encoders remain unsupported. See the [listing/review status](marketplace/ulanzi/LISTING.md) or [build it yourself](plugin-ulanzi/VERIFY.md). |
 | **Official device integrations** | Pixoo64, TC001, Timebox, and iDotMatrix are driven by the daemon — see [docs/devices.md](docs/devices.md). |
@@ -201,11 +201,11 @@ Full build-from-source and manual steps: **[docs/install.md](docs/install.md)**.
 <td><b>Ulanzi D200H</b> — 14 keys and a 960×540 LCD, driven by the official Ulanzi Studio plugin</td>
 </tr>
 <tr>
-<td><img src="docs/media/inkdeck.jpg" alt="InkDeck 7.5-inch e-ink panel showing the AgentDeck session board"></td>
+<td><img src="docs/media/trmnl_75.jpg" alt="TRMNL 7.5-inch e-ink panel showing the AgentDeck session board"></td>
 <td><img src="docs/media/android-eink.jpg" alt="Android e-ink reader showing the AgentDeck session list with partial refresh"></td>
 </tr>
 <tr>
-<td><b>InkDeck e-ink</b> — 7.5" 800×480, custom firmware, updates over Wi-Fi OTA</td>
+<td><b>TRMNL 7.5" e-ink</b> — 7.5" 800×480, custom firmware, updates over Wi-Fi OTA</td>
 <td><b>Android e-ink</b> — reader-specific layouts with partial refresh</td>
 </tr>
 <tr>

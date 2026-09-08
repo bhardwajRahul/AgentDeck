@@ -206,7 +206,7 @@ final class ProtocolTests: XCTestCase {
                 "esp32Wifi": {
                     "available": true,
                     "devices": [
-                        {"board": "inkdeck", "ip": "192.168.68.64", "version": "0.1.2", "stale": false, "serialActive": false},
+                        {"board": "trmnl_75", "ip": "192.168.68.64", "version": "0.1.2", "stale": false, "serialActive": false},
                         {"board": "ulanzi_tc001", "ip": "192.168.68.57", "stale": false, "serialActive": true}
                     ]
                 },
@@ -231,7 +231,7 @@ final class ProtocolTests: XCTestCase {
 
         let wifi = try XCTUnwrap(e.moduleHealth?.esp32Wifi)
         XCTAssertEqual(wifi.devices.count, 2)
-        XCTAssertEqual(wifi.devices[0].board, "inkdeck")
+        XCTAssertEqual(wifi.devices[0].board, "trmnl_75")
         XCTAssertEqual(wifi.devices[0].ip, "192.168.68.64")
         XCTAssertFalse(wifi.devices[0].serialActive)
         // Dual-homed board carries serialActive so the rail can suppress it.

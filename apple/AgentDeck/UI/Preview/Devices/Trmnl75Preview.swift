@@ -1,4 +1,4 @@
-// InkDeckPreview.swift — InkDeck 7.5" e-ink (Seeed TRMNL OG DIY Kit) preview.
+// Trmnl75Preview.swift — TRMNL 7.5" e-ink (Seeed TRMNL OG DIY Kit) preview.
 //
 // Hand-maintained mirror of the firmware dashboard layout in
 // esp32/src/ui/eink/eink_display.cpp (drawDashboard). The responsive geometry
@@ -30,7 +30,7 @@
 //     the session grid reclaims the band;
 //   - recent-work strip: up to Snap::TICKER_ROWS (3) latest milestone timeline
 //     rows, newest at the top, gated on the live daemon link. Replaces the old
-//     single ticker line. The host-display-sleep card was removed — InkDeck is
+//     single ticker line. The host-display-sleep card was removed — TRMNL 7.5" is
 //     always USB-powered and keeps the dashboard retained instead.
 //
 // Sync pins (below) are the git blob hashes of the origin files at the last
@@ -38,12 +38,12 @@
 // fails CI when the firmware drifts ahead of this mirror. Update this view and
 // re-pin whenever the firmware layout changes.
 //
-// SYNC-HASH esp32/src/ui/eink/eink_display.cpp 05803febba5eda25e6bfc270f164e9473af28ea2
-// SYNC-HASH esp32/src/ui/eink/eink_dashboard_layout.h 9179d41777d6e2caff02735607ad7ca210de8bb8
+// SYNC-HASH esp32/src/ui/eink/eink_display.cpp aa6862755d4268f57724ac32522676d906e36c42
+// SYNC-HASH esp32/src/ui/eink/eink_dashboard_layout.h 97b1d2a6f5c84e9cf733b3e5b3145ad45f3136e7
 
 import SwiftUI
 
-struct InkDeckPreview: View {
+struct Trmnl75Preview: View {
     let selection: DevicePreviewSelection
 
     // 800×480 panel at 0.62× so the whole page fits the canvas.
@@ -64,7 +64,7 @@ struct InkDeckPreview: View {
                 page
             }
             .frame(width: panelW + 28, height: panelH + 28)
-            Text("InkDeck • 800×480 UC8179 e-ink (ESP32-S3)")
+            Text("TRMNL 7.5\" • 800×480 UC8179 e-ink (ESP32-S3)")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)
         }

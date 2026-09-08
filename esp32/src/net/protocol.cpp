@@ -1307,7 +1307,7 @@ static void sendDeviceInfo() {
 #else
     serializeJson(resp, buf, sizeof(buf));
     // Both transports: serial for the USB-attached identify flow, WS so a
-    // WiFi-only board (InkDeck) is registrable by the daemon without a cable.
+    // WiFi-only board (TRMNL 7.5") is registrable by the daemon without a cable.
     Net::serialWriteJsonLine(buf);
     if (Net::wsConnected()) Net::wsSend(buf);
 #endif

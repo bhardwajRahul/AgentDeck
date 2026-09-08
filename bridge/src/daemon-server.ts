@@ -162,7 +162,7 @@ import {
 import { enableClaudeUsageRecovery, fetchUsageFromApi, hasOAuthToken, resetConsecutiveFailures, type ApiUsageData, type UsageFetchResult } from './usage-api.js';
 import { TASK_JUDGE_DRAIN_WINDOW_MS } from './apme/runner.js';
 import { stopClaudeUsageRecoveryChildren } from './claude-usage-recovery.js';
-import { AGENT_IDLE_GAP_MS, resolveGatewayHealth } from '@agentdeck/shared';
+import { AGENT_IDLE_GAP_MS, canonicalBoardId, resolveGatewayHealth } from '@agentdeck/shared';
 import { getOrCreateToken, isLocalConnection, validateToken } from './auth.js';
 import { buildPublicHealth, gateHttpRequest, isAuthorizedHttpRequest } from './http-auth-gate.js';
 import {
@@ -306,7 +306,7 @@ function exitProcessNow(code = 0): void {
   process.exit(code);
 }
 
-// WiFi ESP32 boards (InkDeck) that announced device_info over the plugin WS.
+// WiFi ESP32 boards (TRMNL 7.5") that announced device_info over the plugin WS.
 // Keyed board:ip; entries age out after an hour so a re-IP'd board doesn't
 // leave ghosts in `agentdeck devices`.
 interface WifiEsp32Device {
@@ -581,7 +581,7 @@ function saveStagedFw(): void {
  *  board this daemon has not met yet is legitimate. */
 function resolveStagedFwBoard(target: string): string {
   for (const [key, device] of wifiEsp32Devices) {
-    if (key === target || device.board === target || device.ip === target) return device.board;
+    if (key === target || canonicalBoardId(device.board) === canonicalBoardId(target) || device.ip === target) return device.board;
   }
   // A pull-sync client ages out of the WS roster between wakes; the feed
   // tracker keeps its IP→board memory precisely for that gap.
@@ -688,7 +688,7 @@ function wifiEsp32Key(d: { board?: unknown; ip?: unknown }): string {
 
 /**
  * Single-path transport dedup. A physical ESP32 can be reachable over BOTH a
- * USB serial connection and a WiFi WebSocket at once (e.g. inkdeck/ttgo/tc001
+ * USB serial connection and a WiFi WebSocket at once (e.g. trmnl_75/ttgo/tc001
  * plugged in for flashing while still joined to the AP). Serial is the more
  * reliable, lower-latency path, so when a board is live on serial we drive it
  * over serial only and suppress the redundant WiFi copy — no board receives the
@@ -841,10 +841,14 @@ function waitForOtaAck(otaId: string, stage: string, seq: number | undefined, ti
 
 function findWifiOtaTarget(target: string): { key: string; device: WifiEsp32Device; ws: WebSocket } {
   const matches: Array<{ key: string; device: WifiEsp32Device; ws: WebSocket }> = [];
+  // A board renamed in the SSOT keeps reporting its OLD id until it takes the
+  // very OTA being targeted here, so both sides are compared canonically —
+  // otherwise the deployed unit is the one board the rename can never reach.
+  const canonicalTarget = canonicalBoardId(target);
   for (const [key, device] of wifiEsp32Devices) {
     const ws = wifiEsp32Sockets.get(key);
     if (!ws || ws.readyState !== WebSocket.OPEN) continue;
-    if (key === target || device.board === target || device.ip === target) {
+    if (key === target || canonicalBoardId(device.board) === canonicalTarget || device.ip === target) {
       matches.push({ key, device, ws });
     }
   }
@@ -2637,7 +2641,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       }
       (async () => {
         const board = surfaceIdentity?.board ?? parsedUrl.searchParams.get('board') ?? 'xteink_x3';
-        const preset = GLANCE_FRAME_BOARDS[board];
+        const preset = GLANCE_FRAME_BOARDS[canonicalBoardId(board)];
         const w = Number(parsedUrl.searchParams.get('w'));
         const h = Number(parsedUrl.searchParams.get('h'));
         const geometry = Number.isFinite(w) && Number.isFinite(h) && w >= 128 && h >= 128 && w <= 1600 && h <= 1600
@@ -4354,7 +4358,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       // Seed the last few timeline entries so a freshly (re)connected board's
       // ticker shows the real latest event instead of whatever its ring last
       // held. Kept to 6 entries — the whole line must stay well under the
-      // small (4KB) serial RX buffers on non-InkDeck boards; prepareForSerial
+      // small (4KB) serial RX buffers on non-TRMNL 7.5" boards; prepareForSerial
       // byte-caps each entry's raw/detail at send time.
       const recent = core.bridgeTimeline.getHistory().slice(-6);
       if (recent.length > 0) {
@@ -4396,7 +4400,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   });
 
   // WS-path display_state re-sync: the 5s serial heartbeat above only covers
-  // USB-attached boards. WiFi boards (InkDeck) receive display_state edge-
+  // USB-attached boards. WiFi boards (TRMNL 7.5") receive display_state edge-
   // triggered over the plugin WS — a missed wake edge would leave an e-ink
   // panel showing the sleep card forever. Re-broadcast at a slow cadence so
   // any board that missed the edge self-heals within 15s.

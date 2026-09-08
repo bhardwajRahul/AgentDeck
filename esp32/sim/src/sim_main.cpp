@@ -70,10 +70,10 @@ int main(int argc, char** argv) {
   return one(scene, page, out) ? 0 : 1;
 }
 
-#elif defined(BOARD_INKDECK)
-// ── InkDeck 800×480 1-bit e-ink ──────────────────────────────────────────────
+#elif defined(BOARD_TRMNL_75)
+// ── TRMNL 7.5" 800×480 1-bit e-ink ──────────────────────────────────────────────
 int main(int argc, char** argv) {
-  const char* label = arg(argc, argv, "--label", "inkdeck");
+  const char* label = arg(argc, argv, "--label", "trmnl_75");
   auto one = [&](const char* scene, const char* path) {
     bool ok = SimEink::renderToPng(scene, path);
     std::fprintf(stderr, "[sim] %-11s → %s (800x480 e-ink) %s\n", scene, path, ok ? "ok" : "FAILED");

@@ -248,7 +248,7 @@ bool SimScenes::apply(const char* name) {
     setStr(g_state.sessions[1].lastEventText, sizeof(g_state.sessions[1].lastEventText),
            "Wired the daemon milestone line into the session cards");
     setStr(g_state.sessions[1].lastEventTask, sizeof(g_state.sessions[1].lastEventTask),
-           "InkDeck timeline");
+           "TRMNL timeline");
     setStr(g_state.sessions[1].lastEventHm, sizeof(g_state.sessions[1].lastEventHm), "14:21");
     setStr(g_state.sessions[4].question, sizeof(g_state.sessions[4].question),
            "Bash 명령 실행을 허용할까요? rm -rf build/");

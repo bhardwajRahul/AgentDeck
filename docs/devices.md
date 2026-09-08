@@ -28,7 +28,7 @@ validators: [pnpm design-system:check]
 | **T-Display-S3-Pro Focus Strip** | USB Serial JSON + WiFi WebSocket | CDC 230400 / Daemon (9120) | Token (serial-provisioned for WiFi) | Port scan 10s / mDNS | Bidirectional (touch steering) | 6 + OTA ack/error + steering uplink |
 | **Pixoo64** | HTTP REST (Divoom) | LAN:80 | None | Cloud API / manual | Push only | 4 |
 | **Timebox Mini** | BLE GATT (ISSC transparent-UART) | `49535343-…` | Bluetooth pairing | `TimeBox-mini-light` BLE scan | Push only | 4 |
-| **InkDeck e-ink** | WebSocket JSON (WiFi) | Daemon (9120) | Token (serial-provisioned) | mDNS / port scan | Push + OTA control | dashboard frame + OTA ack/error |
+| **TRMNL 7.5" e-ink** | WebSocket JSON (WiFi) | Daemon (9120) | Token (serial-provisioned) | mDNS / port scan | Push + OTA control | dashboard frame + OTA ack/error |
 | **XTeink X3 / X4** (community fork) | WiFi WebSocket (+ UDP 9121 fallback) | Daemon (9120) | Token (explicitly provisioned) | mDNS / UDP broadcast | Push + steering (M2) | state/sessions/usage subset; registers via `client_register`(eink-device, macOS) + `device_info`(esp32-wifi, Node) |
 | **SSE** | HTTP SSE | Daemon (9120) | Token | Manual URL | Push only | All 13 |
 | **Gateway** | WebSocket Custom | 18789 | Ed25519 | Hardcoded | Bidirectional | N/A (adapter) |
@@ -54,19 +54,19 @@ The **LTR-553 ambient light sensor** makes this the first board where the displa
 
 Two operational constraints are load-bearing and documented in [hardware-compatibility.md](hardware-compatibility.md#esp32-board-specification-sheet): its USB CDC corrupts esptool streams above 230400 baud, and a WiFi join concurrent with display bring-up browns out the camera unit's 3.3 V rail — so the firmware never joins at boot and defers the join by ~25 s.
 
-## InkDeck e-ink (custom firmware)
+## TRMNL 7.5" e-ink (custom firmware)
 
-**InkDeck** is AgentDeck's wired 7.5" e-ink status panel. The hardware is a **Seeed TRMNL 7.5" OG DIY Kit** — a **XIAO ESP32-S3 Plus** wired to an 800×480 monochrome ePaper panel (GDEY075T7 / UC8179 controller), always **USB-powered** (no battery / deep-sleep).
+AgentDeck's wired e-ink status panel. The hardware is a **Seeed TRMNL 7.5" OG DIY Kit** — a **XIAO ESP32-S3 Plus** wired to an 800×480 monochrome ePaper panel (GDEY075T7 / UC8179 controller), always **USB-powered** (no battery / deep-sleep). The board id is `trmnl_75`; it shipped as **InkDeck** through 1.2.1, an invented name that told nobody which kit to buy, and `inkdeck` stays an accepted alias because a board flashed before the rename still reports itself that way until it takes an OTA.
 
-**Status: hardware-verified, shipping via WiFi OTA.** InkDeck is driven by custom AgentDeck ESP32 firmware under `esp32/` (PlatformIO env `inkdeck`). Both transports are implemented and verified on hardware: **USB serial** (TinyUSB CDC) and **WiFi WebSocket** (`device_info` on connect, daemon state push, OTA capability like the other directly flashed boards). Node and Swift daemons both register it, and routine updates deploy over WiFi OTA (`agentdeck esp32-ota inkdeck`). The dashboard UI — session cards, usage footer, timeline strip, partial/full refresh policy — has been through repeated on-device validation rounds. Residual operational caveats: serial reflashing must use the download-mode port with `boot_app0.bin` included (native-CDC re-enumeration breaks plain `pio -t upload`), and a crash in the prebuilt Espressif mDNS component is under observation (does not affect rendering or OTA).
+**Status: hardware-verified, shipping via WiFi OTA.** TRMNL 7.5" is driven by custom AgentDeck ESP32 firmware under `esp32/` (PlatformIO env `trmnl_75`). Both transports are implemented and verified on hardware: **USB serial** (TinyUSB CDC) and **WiFi WebSocket** (`device_info` on connect, daemon state push, OTA capability like the other directly flashed boards). Node and Swift daemons both register it, and routine updates deploy over WiFi OTA (`agentdeck esp32-ota trmnl_75`). The dashboard UI — session cards, usage footer, timeline strip, partial/full refresh policy — has been through repeated on-device validation rounds. Residual operational caveats: serial reflashing must use the download-mode port with `boot_app0.bin` included (native-CDC re-enumeration breaks plain `pio -t upload`), and a crash in the prebuilt Espressif mDNS component is under observation (does not affect rendering or OTA).
 
-**Display-sleep policy:** InkDeck keeps its dashboard visible when the host Mac's displays sleep or are turned off with a keyboard shortcut. Unlike LCD/OLED/LED devices, its e-ink image needs no panel refresh power to remain visible, and InkDeck is already continuously USB-powered. The firmware therefore ignores `display_state.displayOn` for rendering while continuing to receive and draw meaningful dashboard changes whenever the Mac itself remains awake.
+**Display-sleep policy:** TRMNL 7.5" keeps its dashboard visible when the host Mac's displays sleep or are turned off with a keyboard shortcut. Unlike LCD/OLED/LED devices, its e-ink image needs no panel refresh power to remain visible, and the panel is already continuously USB-powered. The firmware therefore ignores `display_state.displayOn` for rendering while continuing to receive and draw meaningful dashboard changes whenever the Mac itself remains awake.
 
 **Connection surface:** a missing daemon link is a retained `OFFLINE` sheet with a quiet search/transport hint. `no active sessions` is reserved for the distinct case where the daemon link is live and its roster is empty; a later timed repaint must not collapse those states.
 
 **Responsive dashboard:** the direct GxEPD2 renderer consumes the allocation-free layout model in `esp32/src/ui/eink/eink_dashboard_layout.h`. It derives header, card grid, usage, recent-activity, and control bands from the panel dimensions instead of 800×480 constants; the hardware-specific font/glyph/panel refresh code stays in `eink_display.cpp`.
 
-**Formerly "TRMNL" (BYOS pull) — removed.** AgentDeck previously drove this same physical panel through TRMNL's commercial **BYOS** (Bring Your Own Server) pull contract, where the panel polled `/api/setup` + `/api/display` and downloaded a server-rendered PNG. That integration was **removed** (Node commit `c71044bd`; the App Store Swift `Trmnl*` modules removed alongside). Stock / commercial TRMNL panels running the upstream `usetrmnl/firmware` are **no longer supported** — InkDeck reflashes the same hardware with AgentDeck firmware and treats it as a first-class ESP32 board.
+**The commercial BYOS pull integration — removed.** AgentDeck previously drove this same physical panel through TRMNL's own **BYOS** (Bring Your Own Server) pull contract, where the panel polled `/api/setup` + `/api/display` and downloaded a server-rendered PNG. That integration was **removed** (Node commit `c71044bd`; the App Store Swift `Trmnl*` modules removed alongside). Stock / commercial TRMNL panels running the upstream `usetrmnl/firmware` are **no longer supported**: AgentDeck reflashes the same hardware with its own firmware and treats it as a first-class ESP32 board. The name is shared with the kit, the protocol is not.
 
 ## XTeink X3 / X4 (external-fork client)
 
@@ -80,7 +80,7 @@ With the fork firmware SD-flashed, X3/X4 operate normally and register on both d
 
 The contract the fork ports from is [esp32-client-contract.md](esp32-client-contract.md); the port-sync discipline that keeps it from drifting is in [esp32.md § Downstream client port sync](esp32.md#downstream-client-port-sync). Spec/experimental-status detail: the X3/X4 rows and operational exceptions in [hardware-compatibility.md](hardware-compatibility.md).
 
-**Dashboard layout parity:** X3/X4 use the same mirrored `eink_dashboard_layout.h` geometry as InkDeck while retaining CrossPoint's GfxRenderer, CJK font loader, button hints, and detail/decision interaction. Column count follows orientation, not the model: `columns = portrait ? 1 : (width ≥ 1180 || (width ≥ 720 && sessions ≥ 5) ? 3 : 2)`. Both readers are portrait by default — X3 at 528×792 and X4 at 480×800 (the X4 datasheet quotes 800×480 long-axis-first, but the firmware declares 480×800 and CrossPoint boots `PORTRAIT`) — so both render a one-column paged card stack, and rotating a reader is what selects two columns. InkDeck's fixed 800×480 landscape surface always takes two, or three when five or more sessions need to fit. Density is separate and keys off the short edge, so X4 and InkDeck are both `Compact` while X3 is `Regular`. Attention sessions stay first and use a solid state chip; selection uses a double outline + rail, avoiding gray dither on partial refreshes.
+**Dashboard layout parity:** X3/X4 use the same mirrored `eink_dashboard_layout.h` geometry as TRMNL 7.5" while retaining CrossPoint's GfxRenderer, CJK font loader, button hints, and detail/decision interaction. Column count follows orientation, not the model: `columns = portrait ? 1 : (width ≥ 1180 || (width ≥ 720 && sessions ≥ 5) ? 3 : 2)`. Both readers are portrait by default — X3 at 528×792 and X4 at 480×800 (the X4 datasheet quotes 800×480 long-axis-first, but the firmware declares 480×800 and CrossPoint boots `PORTRAIT`) — so both render a one-column paged card stack, and rotating a reader is what selects two columns. the TRMNL's fixed 800×480 landscape surface always takes two, or three when five or more sessions need to fit. Density is separate and keys off the short edge, so X4 and TRMNL 7.5" are both `Compact` while X3 is `Regular`. Attention sessions stay first and use a solid state chip; selection uses a double outline + rail, avoiding gray dither on partial refreshes.
 
 ## Broadcast Architecture
 
@@ -121,7 +121,7 @@ WebSocket and SSE forward all 13 `BridgeEvent` types without filtering.
 ## Codex usage is a passive read of your own rollout files
 
 Every device that draws a Codex gauge — the Pixoo64 provider row, the iDotMatrix
-rails, the InkDeck `CODEX` row, the TC001/knob/pocket readouts, both deck strips —
+rails, the TRMNL 7.5" `CODEX` row, the TC001/knob/pocket readouts, both deck strips —
 consumes the same `codexRateLimits` block, and none of them can improve on it.
 Codex writes a `rate_limits` snapshot into `~/.codex/sessions/**/rollout-*.jsonl`
 on every completed turn; AgentDeck reads that file. No OpenAI API is contacted.
@@ -209,12 +209,12 @@ passive-only — see [appstore-feature-matrix.md](appstore-feature-matrix.md).
 - **Heartbeat**: Full state re-push every 5s via `setESP32StateProvider()`
 - **Events**: 6 types (`SERIAL_FORWARDED_EVENTS`)
 - **Direction**: Dashboard state push plus OTA control/ack messages on OTA-capable WiFi boards
-- **Boards**: IPS 3.5" (480×320), 86 Box 4" (480×480), Round AMOLED (360×360), TTGO T-Display, Ulanzi TC001, IPS 10.1", InkDeck
+- **Boards**: IPS 3.5" (480×320), 86 Box 4" (480×480), Round AMOLED (360×360), TTGO T-Display, Ulanzi TC001, IPS 10.1", TRMNL 7.5"
 
 ### ESP32 WiFi OTA
 
 - **Scope**: Only directly flashed AgentDeck ESP32 firmware targets with WiFi connectivity and a dual-OTA partition table. Non-AgentDeck firmware and devices we do not flash directly are excluded.
-- **Targets**: `inkdeck`, `ulanzi_tc001`/`led8x32`, `ttgo`, `ips35`, `round_amoled`/`amoled`, `86box`/`box_86`, `ips10`/`ips_10`. Any board on a single-app (non-dual-OTA) partition layout is out of scope and rejected before upload.
+- **Targets**: `trmnl_75`, `ulanzi_tc001`/`led8x32`, `ttgo`, `ips35`, `round_amoled`/`amoled`, `86box`/`box_86`, `ips10`/`ips_10`. Any board on a single-app (non-dual-OTA) partition layout is out of scope and rejected before upload.
 - **Control path**: CLI `agentdeck esp32-ota <target> [--build|--firmware <path>]` → daemon `POST /esp32/ota` → board WiFi WebSocket.
 - **Protocol**: daemon sends `esp32_ota_begin/chunk/end/abort`; firmware returns `esp32_ota_ack/error`. Firmware reports capability in `device_info` so the daemon can reject unsupported boards before upload.
 - **Migration**: `86box` and `ips10` became OTA-capable after 2026-07-05 16MB dual-OTA partition changes. Existing devices on older NO_OTA/factory layouts need one USB full flash first; future updates can use WiFi OTA.

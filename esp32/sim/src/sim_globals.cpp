@@ -12,10 +12,10 @@
 // lv_font_montserrat_12 with a Noto Sans KR fallback pointer; the sim bundles
 // the same Noto KR faces (fonts/font_noto_kr_*.c) so 한글 labels render exactly
 // as the panel does instead of degrading to .notdef boxes.
-// Guarded out for the non-LVGL boards (inkdeck = Adafruit GFX direct-draw,
+// Guarded out for the non-LVGL boards (trmnl_75 = Adafruit GFX direct-draw,
 // led8x32 = raw matrix): their build filters exclude fonts/, so referencing the
 // Noto face here is an undefined symbol at link.
-#if !defined(BOARD_INKDECK) && !defined(BOARD_LED8X32)
+#if !defined(BOARD_TRMNL_75) && !defined(BOARD_LED8X32)
 extern "C" const lv_font_t font_noto_kr_12;
 lv_font_t font_kr_12 = lv_font_montserrat_12;
 // Which larger Korean-safe faces exist is a per-board contract declared in

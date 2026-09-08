@@ -413,7 +413,7 @@ internal fun EinkAgentBlock(
                 modifier = Modifier.padding(start = 19.dp),
             )
         }
-        // Shared activity one-liner (bridge SSOT — same summary InkDeck cards
+        // Shared activity one-liner (bridge SSOT — same summary TRMNL 7.5" cards
         // and the tablet list show, so surfaces don't drift).
         if (activity != null) {
             Text(

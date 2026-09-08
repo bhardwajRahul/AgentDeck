@@ -369,7 +369,7 @@ describe('buildUsageEvent Codex window normalization', () => {
 
   it('routes a weekly window arriving in Codex\'s primary slot to the secondary (7D) wire slot', () => {
     // Codex reports the weekly (10080-min) window as `primary` with `secondary`
-    // null once the 5h window resets. Slot-based downstream clients (ESP32/InkDeck
+    // null once the 5h window resets. Slot-based downstream clients (ESP32/TRMNL 7.5"
     // firmware: primary=5H, secondary=7D) must receive it as `secondary`, and no
     // phantom `primary` (5h) window, so the 7D gauge shows and 5H stays empty.
     const future = new Date(Date.now() + 6 * 24 * 3600_000).toISOString();

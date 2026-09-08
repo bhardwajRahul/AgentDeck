@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 /**
- * InkDeck — 7.5" 800×480 1-bit e-ink dashboard (Seeed TRMNL OG DIY Kit,
+ * TRMNL 7.5" — 7.5" 800×480 1-bit e-ink dashboard (Seeed TRMNL OG DIY Kit,
  * XIAO ESP32-S3 Plus + GDEY075T7/UC8179 panel).
  *
  * Direct-draw path (no LVGL): renders the session dashboard into the GxEPD2

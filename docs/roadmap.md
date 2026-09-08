@@ -44,7 +44,7 @@ Eval results broadcast to every device simultaneously (Stream Deck/Apple/Android
 - [x] Apple TestFlight CI pipeline
 - [x] Mac App Store distribution — AgentDeck Dashboard 1.0.0 (2026-07-21), currently 1.0.8 (2026-08-22)
 - [x] ESP32 compact displays (Round AMOLED 1.8", IPS LCD 3.5", B86 Box 4", TTGO T-Display 1.14", IPS 10.1", Ulanzi TC001)
-- [x] InkDeck e-ink panel (Seeed TRMNL 7.5" OG DIY Kit, custom ESP32 firmware, WiFi/WS partial refresh, WiFi OTA updates)
+- [x] TRMNL 7.5" e-ink panel (Seeed TRMNL 7.5" OG DIY Kit, custom ESP32 firmware, WiFi/WS partial refresh, WiFi OTA updates)
 - [x] Ulanzi D200H Deck Dock (14-key HID + 960×540 LCD via official Ulanzi Studio plugin; direct-HID fallback retired)
 - [x] TUI terminal dashboard (Unicode Braille + ANSI)
 - [x] Pixoo64 LED matrix pixel art

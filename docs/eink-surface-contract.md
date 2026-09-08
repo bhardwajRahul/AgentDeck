@@ -86,7 +86,7 @@ mode.
 
 | Board | Delivery mode | Deep-sleep wake | PTT | Physical controls |
 |---|---|---|---|---|
-| InkDeck / Seeed TRMNL 7.5 | **Push**; USB-powered and continuously reachable | Not used by current firmware | None (no microphone) | `KEY1` cycles durable pages; `KEY2` returns to the live AgentDeck board |
+| TRMNL 7.5" / Seeed TRMNL 7.5 | **Push**; USB-powered and continuously reachable | Not used by current firmware | None (no microphone) | `KEY1` cycles durable pages; `KEY2` returns to the live AgentDeck board |
 | RockBase NM-EPD-420 | **Pull** by default; explicit tethered configuration may promote it to push | `BOOT` / GPIO0 | `BOOT` hold remains reserved until the ES8311 capture path is enabled. Playback is live: the codec answers at 0x18 (probed 2026-08-30) and the board advertises `audio_out`. | Home: `BOOT` opens/pages, `USER` returns home. Decision: `BOOT` advances the highlighted option; `USER` selects, then confirms it. |
 | LilyGo T5 ePaper S3 / EPD47 | **Pull** | User button / GPIO21; `BOOT` / GPIO0 is recovery fallback. Touch IRQ GPIO47 is not a wake source without a hardware reroute. | None (no onboard microphone) | Detected touch selects tabs/options; the owned unit answers at 0x5D once its P6 FPC is seated. Tabs render as plates and decision options drop their numeric prefix when a controller is present. If touch is unavailable, GPIO21 cycles `FOCUS → QUEUE → LIMITS`. |
 

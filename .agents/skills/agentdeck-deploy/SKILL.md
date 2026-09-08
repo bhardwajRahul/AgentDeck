@@ -25,7 +25,7 @@ Parse the argument string to determine target(s). Multiple targets can be combin
 | `apple` | iOS + macOS |
 | `esp32` | All connected ESP32 display boards (excludes Ulanzi TC001) |
 | `esp32-all` | All ESP32 boards including Ulanzi TC001 |
-| `inkdeck` | InkDeck e-ink only |
+| `trmnl_75` | TRMNL 7.5" e-ink only |
 | `nm_epd_420` / `nm` | RockBase NM-EPD-420 only |
 | `lilygo_epd47` / `epd47` | LilyGo T5 ePaper S3 only |
 | `ulanzi` / `tc001` | Ulanzi TC001 LED matrix only |
@@ -61,7 +61,7 @@ Parse the argument string to determine target(s). Multiple targets can be combin
 | **Round AMOLED** (360×360) | `amoled_18` | `amoled` | `/dev/cu.usbmodem*` | ESP32-S3, native USB |
 | **TTGO T-Display** (135×240) | `tft_114` | `ttgo` | `/dev/cu.wchusbserial*` | ESP32-D0WDQ6, CH340 |
 | **IPS 10.1"** (800×1280) | `ips_101` | `ips10` | `/dev/cu.wchusbserial*` | ESP32-P4 + C6 |
-| **InkDeck** (800×480 e-ink) | `inkdeck` | `inkdeck` | `/dev/cu.usbmodem*` | XIAO ESP32-S3 Plus |
+| **TRMNL 7.5"** (800×480 e-ink) | `trmnl_75` | `trmnl_75` | `/dev/cu.usbmodem*` | XIAO ESP32-S3 Plus |
 | **RockBase NM-EPD-420** (400×300 e-ink) | `nm_epd_420` | `nm_epd_420` | `/dev/cu.usbmodem*` | ESP32-S3 N16R8, native USB |
 | **LilyGo T5 ePaper S3** (960×540 e-ink) | `lilygo_epd47` | `lilygo_epd47` | `/dev/cu.usbmodem*` | ESP32-S3 N16R8, native USB |
 | **T-Embed CC1101** (170×320 + encoder) | `t_embed` | `t_embed` | `/dev/cu.usbmodem*` | ESP32-S3, native USB |
@@ -214,7 +214,7 @@ pnpm package
 
 **CRITICAL: Build and flash ONE AT A TIME** — PlatformIO lock + serial port conflicts.
 
-**Ulanzi TC001 is a separate target.** The `esp32` target deploys display boards only (86 Box, IPS 3.5", Round AMOLED, T-Embed CC1101, T-Display-S3-Pro, InkDeck, NM-EPD-420, and LilyGo EPD47). Use `ulanzi`, `tc001`, or `esp32-all` to include the Ulanzi TC001. This separation exists because:
+**Ulanzi TC001 is a separate target.** The `esp32` target deploys display boards only (86 Box, IPS 3.5", Round AMOLED, T-Embed CC1101, T-Display-S3-Pro, TRMNL 7.5", NM-EPD-420, and LilyGo EPD47). Use `ulanzi`, `tc001`, or `esp32-all` to include the Ulanzi TC001. This separation exists because:
 - Ulanzi uses a different chip (ESP32-D0WD classic vs ESP32-S3)
 - Ulanzi uses FastLED matrix rendering, not LVGL — UI changes to cloud.cpp/theme.h don't affect it
 - Ulanzi requires a different flash procedure (esptool full-flash vs PIO upload)
@@ -260,12 +260,12 @@ After flash: USB re-plug required for JTAG boards (IPS 3.5", Round AMOLED).
 #### Native e-ink boards
 
 All three must be identified by `device_info` before flashing because native USB
-port numbers change. InkDeck additionally re-enumerates to a distinct download
+port numbers change. TRMNL 7.5" additionally re-enumerates to a distinct download
 node; choose that new node after reset. NM and LilyGo use the confirmed 115200
 upload speed.
 
 ```bash
-./scripts/flash.sh inkdeck <device_info-confirmed-port>
+./scripts/flash.sh trmnl_75 <device_info-confirmed-port>
 ./scripts/flash.sh nm_epd_420 <device_info-confirmed-port>
 ./scripts/flash.sh lilygo_epd47 <device_info-confirmed-port>
 ```

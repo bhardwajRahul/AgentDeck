@@ -414,7 +414,7 @@ const moduleHealth = {
   esp32Wifi: {
     available: true,
     devices: [
-      { board: 'inkdeck', ip: '192.168.0.71', version: productVersion, stale: false, serialActive: false },
+      { board: 'trmnl_75', ip: '192.168.0.71', version: productVersion, stale: false, serialActive: false },
       { board: 'round_amoled', ip: '192.168.0.72', version: productVersion, stale: false, serialActive: false },
       { board: 'ttgo_t_display', ip: '192.168.0.73', version: productVersion, stale: false, serialActive: false },
     ],

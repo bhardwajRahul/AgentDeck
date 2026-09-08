@@ -134,7 +134,7 @@ extension DevicePreviewSelection {
 
 // MARK: - Live-aware display accessors
 //
-// Schematic previews (InkDeck, ESP32 boards, tablets) render a list of sessions
+// Schematic previews (TRMNL 7.5", ESP32 boards, tablets) render a list of sessions
 // and a usage band. In live-follow mode these accessors return the daemon's
 // REAL sessions/usage — actual project names, models, states, and usage % — so
 // the preview becomes an emulator; in manual mode they synthesize the exact same
@@ -343,7 +343,7 @@ struct PreviewMiniSessionList: View {
     var body: some View {
         // Live-follow → real sessions (project name + model state); manual → the
         // synthesized `<agent>-project` palette. Project-name primary matches
-        // the real device (and InkDeck / D200H).
+        // the real device (and TRMNL 7.5" / D200H).
         let sessions = selection.displaySessions
         return VStack(alignment: .leading, spacing: compact ? 3 : 4) {
             Text("SESSIONS")

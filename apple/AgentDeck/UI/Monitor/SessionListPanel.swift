@@ -134,7 +134,7 @@ struct SessionListPanel: View {
         /// the focus target.
         let sessionId: String?
         /// Shared activity one-liner (bridge SSOT) — same summary the
-        /// InkDeck cards and Android rows show, so surfaces don't drift.
+        /// TRMNL 7.5" cards and Android rows show, so surfaces don't drift.
         var activity: String?
         /// Live child-agent census. A SECOND axis to `state`: a parent whose
         /// turn closed is genuinely idle while its subagents keep working, and
@@ -384,7 +384,7 @@ struct SessionListPanel: View {
             sessionMetaRow(entry: entry, compact: compact)
 
             // Shared activity one-liner (bridge SSOT) — same summary the
-            // InkDeck cards and Android rows show, so surfaces don't drift.
+            // TRMNL 7.5" cards and Android rows show, so surfaces don't drift.
             if let activity = entry.activity, !activity.isEmpty {
                 Text(activity)
                     .font(.system(size: compact ? 9.5 : 10))

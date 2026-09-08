@@ -81,10 +81,10 @@ final class DevicePreviewSnapshotTests: XCTestCase {
         try snapshot(Esp32RoundPreview(selection: selection(.esp32Round, sessions: 1)), name: "round-amoled")
         try snapshot(Esp3235LandscapePreview(selection: selection(.esp32_35Landscape, sessions: 1)), name: "ips35-landscape")
 
-        // InkDeck — adaptive usage band (0/1/2 provider rows).
-        try snapshot(InkDeckPreview(selection: selection(.inkDeck, sessions: 2)), name: "inkdeck-2sess")
-        try snapshot(InkDeckPreview(selection: selection(.inkDeck, agent: .codex, sessions: 1)), name: "inkdeck-codex-only")
-        try snapshot(InkDeckPreview(selection: selection(.inkDeck, state: .disconnected, sessions: 0)), name: "inkdeck-offline")
+        // TRMNL 7.5" — adaptive usage band (0/1/2 provider rows).
+        try snapshot(Trmnl75Preview(selection: selection(.trmnl75, sessions: 2)), name: "trmnl_75-2sess")
+        try snapshot(Trmnl75Preview(selection: selection(.trmnl75, agent: .codex, sessions: 1)), name: "trmnl_75-codex-only")
+        try snapshot(Trmnl75Preview(selection: selection(.trmnl75, state: .disconnected, sessions: 0)), name: "trmnl_75-offline")
 
         // Stream Deck slot — RUNNING teal vs PERM amber split.
         try snapshot(StreamDeckPlusPreview(selection: selection(.streamDeckPlus, state: .processing, sessions: 1)), name: "sdplus-running")
@@ -115,17 +115,17 @@ final class DevicePreviewSnapshotTests: XCTestCase {
         try snapshot(IDotMatrixPreview(selection: livePixooSelection(.iDotMatrix)), name: "idotmatrix-live-emulator")
         try snapshot(TimeboxMiniPreview(selection: livePixooSelection(.timeboxMini)), name: "timebox-live-emulator")
 
-        // Schematic-preview live emulators — InkDeck + the ESP32 boards consume
+        // Schematic-preview live emulators — TRMNL 7.5" + the ESP32 boards consume
         // the shared displaySessions/displayUsageRows accessors: real project
         // cards + real Claude & Codex usage. (86Box uses PreviewMiniSessionList,
         // Round uses the tank-group HUD, IPS10 has its own office + cards pane,
         // TTGO the focused-session metric panel — all now live-aware.)
-        try snapshot(InkDeckPreview(selection: livePixooSelection(.inkDeck)), name: "inkdeck-live-emulator")
+        try snapshot(Trmnl75Preview(selection: livePixooSelection(.trmnl75)), name: "trmnl_75-live-emulator")
         // Dense page — more sessions than the fixed paper grid can hold. This
         // is the case the glance order exists for: every awaiting card must
         // survive and the header must name what was collapsed. The firmware
         // keeps an equivalent 10-session `dense` simulator scene.
-        try snapshot(InkDeckPreview(selection: denseInkDeckSelection()), name: "inkdeck-dense-hidden")
+        try snapshot(Trmnl75Preview(selection: denseTrmnl75Selection()), name: "trmnl_75-dense-hidden")
         try snapshot(Esp32Ips10Preview(selection: livePixooSelection(.esp32Ips10)), name: "ips10-live-emulator")
         try snapshot(Esp3286BoxPreview(selection: livePixooSelection(.esp32_86box)), name: "86box-live-emulator")
         try snapshot(Esp32RoundPreview(selection: livePixooSelection(.esp32Round)), name: "round-live-emulator")
@@ -169,7 +169,7 @@ final class DevicePreviewSnapshotTests: XCTestCase {
     /// drawSessionGrid that only appear over capacity: every awaiting card
     /// survives the trim, and the header reports "hidden: 2 working / 2 idle"
     /// instead of letting four sessions disappear silently.
-    private func denseInkDeckSelection() -> DevicePreviewSelection {
+    private func denseTrmnl75Selection() -> DevicePreviewSelection {
         var state = DashboardState()
         state.bridgeConnected = true
         state.state = .awaitingPermission
@@ -180,7 +180,7 @@ final class DevicePreviewSnapshotTests: XCTestCase {
             ("AgentDeck", "claude-code", "awaiting_permission"),
             ("BabelForge", "codex-cli", "awaiting_permission"),
             ("Terrarium", "opencode", "awaiting_permission"),
-            ("InkDeck", "kiro", "awaiting_permission"),
+            ("TRMNL", "kiro", "awaiting_permission"),
             ("Pixoo", "claude-code", "processing"),
             ("Bridge", "codex-cli", "processing"),
             ("Flasher", "antigravity", "processing"),
@@ -192,7 +192,7 @@ final class DevicePreviewSnapshotTests: XCTestCase {
             SessionInfo(id: "d\(index)", port: 9121 + index, projectName: row.0, agentType: row.1,
                         alive: true, state: row.2, modelName: nil, startedAt: nil)
         }
-        var sel = selection(.inkDeck, state: .awaitingPrompt, sessions: plan.count)
+        var sel = selection(.trmnl75, state: .awaitingPrompt, sessions: plan.count)
         sel.live = LivePreviewData.from(state)
         return sel
     }

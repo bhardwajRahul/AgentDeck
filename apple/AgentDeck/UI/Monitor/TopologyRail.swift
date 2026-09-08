@@ -780,7 +780,7 @@ struct TopologyRail: View {
     }
 
     /// WiFi-WS ESP32 boards with no live USB serial path (e.g. a wirelessly
-    /// deployed InkDeck). Dual-homed boards are suppressed here — they render
+    /// deployed TRMNL 7.5"). Dual-homed boards are suppressed here — they render
     /// as USB-serial rows above (single-path transport dedup, serial wins).
     @ViewBuilder
     private func wifiEsp32Section(health: ModuleHealthState) -> some View {

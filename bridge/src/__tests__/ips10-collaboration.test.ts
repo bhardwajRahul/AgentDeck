@@ -22,7 +22,7 @@ describe('IPS10 additive collaboration census', () => {
     const input = event({ active: 3, peak: 3, completed: 0 });
     const baseline = prepareForSerial(event());
     expect(prepareForSerial(input)).toEqual(baseline);
-    for (const board of ['86box', 'inkdeck', 'ips_35', 'future-board']) {
+    for (const board of ['86box', 'trmnl_75', 'ips_35', 'future-board']) {
       expect(prepareForSerial(input, { deviceInfo: { board } })).toEqual(baseline);
     }
   });

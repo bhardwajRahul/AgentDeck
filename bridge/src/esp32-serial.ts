@@ -298,7 +298,7 @@ export const SERIAL_SESSIONS_CAP = 10;
  * favour of an idle sibling. Order within a type is otherwise preserved (stable).
  */
 /** Total byte budget for a shipped timeline_history frame. The smallest board
- * line buffer is 4096 (InkDeck is 8192) — a larger line is discarded whole
+ * line buffer is 4096 (TRMNL 7.5" is 8192) — a larger line is discarded whole
  * on-device, so shipping it is pure waste at best and a WS-client killer at
  * worst. Mirrors ESP32Serial.timelineHistoryByteBudget (Swift daemon). */
 export const TIMELINE_HISTORY_BYTE_BUDGET = 3500;
@@ -449,7 +449,7 @@ export function prepareForSerial(event: BridgeEvent, _conn?: Pick<SerialConnecti
 
   if (event.type === 'timeline_event' || event.type === 'timeline_history') {
     // Panels have no local timezone — attach host-local "HH:MM" so the
-    // InkDeck ticker (and future e-ink timelines) shows wall-clock time.
+    // TRMNL 7.5" ticker (and future e-ink timelines) shows wall-clock time.
     const stamp = (entry: any) => {
       if (!entry || !Number.isFinite(entry.ts)) return entry;
       const d = new Date(entry.ts);
@@ -500,7 +500,7 @@ export function prepareForSerial(event: BridgeEvent, _conn?: Pick<SerialConnecti
         question: limitString(s.question, 159),
         elapsedSec: Number.isFinite(s.elapsedSec) ? Math.round(s.elapsedSec) : undefined,
         // Shared activity one-liner — the glanceable "what is it doing" line
-        // (InkDeck session cards render it; other boards ignore it).
+        // (TRMNL 7.5" session cards render it; other boards ignore it).
         activity: limitString(s.activity, 79),
         // Daemon-computed latest milestone (TIMELINE parity for the IPS10
         // cards). Omitted when absent to spare the 4KB serial line budget.
@@ -1280,7 +1280,7 @@ function sendHeartbeat(): void {
   // Gate on deviceInfoFresh, NOT conn.deviceInfo: a cache-seeded connection has
   // a non-null (stale) deviceInfo but deviceInfoFresh=false. Keying off
   // conn.deviceInfo froze such a connection at the cache seed forever — a board
-  // reflashed/OTA-updated on the same port (e.g. inkdeck round8→round9) would
+  // reflashed/OTA-updated on the same port (e.g. trmnl_75 round8→round9) would
   // keep reporting its old buildHash/no-OTA because no path ever re-requested.
   // deviceInfoFresh only flips true once a LIVE device_info lands on THIS
   // connection, so a fresh board stops the retries (capped at MAX) as before.

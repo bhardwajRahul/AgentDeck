@@ -96,13 +96,13 @@ int main() {
         assert(AgentDeckEpd47::hardClearDue(state, false, 1500u, 4, 2000u));
     }
 
-    const auto inkdeck = makeLayout(LayoutInput{800, 480, 68, 0, 28, 21, 2, 1, 6, 2});
-    assert(!inkdeck.portrait);
-    assert(inkdeck.columns == 3);
-    assert(inkdeck.rows == 2);
-    assert(inkdeck.capacity == 6);
-    assert(inkdeck.card(0).x == inkdeck.cards.x);
-    assert(inkdeck.card(5).bottom() <= inkdeck.cards.bottom());
+    const auto trmnl_75 = makeLayout(LayoutInput{800, 480, 68, 0, 28, 21, 2, 1, 6, 2});
+    assert(!trmnl_75.portrait);
+    assert(trmnl_75.columns == 3);
+    assert(trmnl_75.rows == 2);
+    assert(trmnl_75.capacity == 6);
+    assert(trmnl_75.card(0).x == trmnl_75.cards.x);
+    assert(trmnl_75.card(5).bottom() <= trmnl_75.cards.bottom());
 
     const auto x3 = makeLayout(LayoutInput{528, 792, 64, 52, 24, 20, 2, 0, 6, 5});
     assert(x3.portrait);

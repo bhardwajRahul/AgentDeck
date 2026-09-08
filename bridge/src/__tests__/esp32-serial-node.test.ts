@@ -133,10 +133,10 @@ describe('handleSerialLine (source)', () => {
 
   it('parses device_info message and updates deviceInfo', () => {
     const conn = mockConn();
-    handleSerialLine(conn, '{"type":"device_info","board":"inkdeck","version":"1.0.0","wifiConfigured":false,"wifiConnected":false,"repaintCount":2757,"fullRefreshCount":461}');
+    handleSerialLine(conn, '{"type":"device_info","board":"trmnl_75","version":"1.0.0","wifiConfigured":false,"wifiConnected":false,"repaintCount":2757,"fullRefreshCount":461}');
 
     expect(conn.deviceInfo).not.toBeNull();
-    expect(conn.deviceInfo!.board).toBe('inkdeck');
+    expect(conn.deviceInfo!.board).toBe('trmnl_75');
     expect(conn.deviceInfo!.version).toBe('1.0.0');
     expect(conn.deviceInfo!.repaintCount).toBe(2757);
     expect(conn.deviceInfo!.fullRefreshCount).toBe(461);
@@ -852,7 +852,7 @@ describe('half-open identified UART recovery', () => {
 // A cache-seeded connection carries a stale deviceInfo (old buildHash / pre-OTA
 // fields) but deviceInfoFresh=false. The heartbeat identify loop must keep
 // re-requesting until a LIVE reply lands, or a board reflashed/OTA-updated on
-// the same port (e.g. inkdeck round8→round9) freezes at the cache seed in
+// the same port (e.g. trmnl_75 round8→round9) freezes at the cache seed in
 // /devices. Regression guard for the conn.deviceInfo→conn.deviceInfoFresh gate.
 
 const identifyConn = (over: Partial<SerialConnection> = {}): SerialConnection =>
@@ -870,14 +870,14 @@ describe('device-info re-identify gating', () => {
     expect(shouldRetryDeviceInfoIdentify(identifyConn())).toBe(true);
   });
 
-  it('retries a CACHE-SEEDED connection (stale deviceInfo, not yet fresh) — the inkdeck bug', () => {
+  it('retries a CACHE-SEEDED connection (stale deviceInfo, not yet fresh) — the trmnl_75 bug', () => {
     // Non-null deviceInfo used to freeze this connection at the cache seed.
-    const c = identifyConn({ deviceInfo: { board: 'inkdeck', buildHash: 'b6744e8f-dirty' } });
+    const c = identifyConn({ deviceInfo: { board: 'trmnl_75', buildHash: 'b6744e8f-dirty' } });
     expect(shouldRetryDeviceInfoIdentify(c)).toBe(true);
   });
 
   it('STOPS once a live device_info has landed on this connection', () => {
-    expect(shouldRetryDeviceInfoIdentify(identifyConn({ deviceInfoFresh: true, deviceInfo: { board: 'inkdeck' } }))).toBe(false);
+    expect(shouldRetryDeviceInfoIdentify(identifyConn({ deviceInfoFresh: true, deviceInfo: { board: 'trmnl_75' } }))).toBe(false);
   });
 
   it('stops after the request budget is exhausted', () => {

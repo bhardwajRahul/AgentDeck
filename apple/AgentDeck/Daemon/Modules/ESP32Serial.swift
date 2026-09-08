@@ -1162,7 +1162,7 @@ actor ESP32Serial {
     static let serialSessionsCap = 10
 
     /// Total byte budget for a shipped timeline_history frame. The smallest
-    /// board line buffer is 4096 (util/line_buffer defaults; InkDeck is 8192)
+    /// board line buffer is 4096 (util/line_buffer defaults; TRMNL 7.5" is 8192)
     /// — anything larger is discarded whole on-device, so shipping it is pure
     /// waste at best and a WS-client killer at worst.
     static let timelineHistoryByteBudget = 3500
@@ -1287,7 +1287,7 @@ actor ESP32Serial {
                             "alive": s["alive"] ?? true,
                             "currentTool": lim(s["currentTool"], 39),
                             // Clean per-session one-liner ("Editing auth.ts") from the
-                            // shared activity pipeline — glance surfaces (InkDeck cards,
+                            // shared activity pipeline — glance surfaces (TRMNL 7.5" cards,
                             // XTeink X3/X4 rows) render this instead of the raw tool name.
                             // Without it the device falls back to "Bash". Mirrors the Node
                             // bridge serial map (bridge/src/esp32-serial.ts activity cap 79).

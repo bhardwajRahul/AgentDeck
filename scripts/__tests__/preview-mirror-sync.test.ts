@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 // The preview mirror pin check used to run only as a CI step, which is the
 // one place a Swift/firmware-only workflow never looks: on 2026-09-01 the
-// same pin (InkDeckPreview → eink_display.cpp) broke master twice in one
+// same pin (Trmnl75Preview → eink_display.cpp) broke master twice in one
 // day, each time from work verified green locally against vitest, the Swift
 // suite, and hardware — none of which executed the check. Running it inside
 // vitest puts it in every `pnpm test`, so a moved renderer fails on the

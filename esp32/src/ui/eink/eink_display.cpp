@@ -67,8 +67,8 @@ void epd_draw_image(LilyEpdRect area, uint8_t* data, int mode);
 #define AGENTDECK_NM_UI 1
 #endif
 
-#if defined(BOARD_INKDECK) && !defined(BOARD_SIM_PULL)
-#define AGENTDECK_INKDECK_UI 1
+#if defined(BOARD_TRMNL_75) && !defined(BOARD_SIM_PULL)
+#define AGENTDECK_TRMNL_75_UI 1
 #endif
 
 namespace {
@@ -134,7 +134,7 @@ constexpr uint32_t FULL_MAX_AGE_MS         = 10UL * 60UL * 1000UL;
 // that can show more than two levels, and until 2026-08-30 the canvas collapsed
 // every colour to pure black or pure white — a 4-bit framebuffer carrying 2 of
 // its 16 levels, which is why its frames read as a fax next to the 1-bit
-// InkDeck. Levels are expressed as RGB565 greys and decoded from the 6-bit
+// TRMNL 7.5". Levels are expressed as RGB565 greys and decoded from the 6-bit
 // green channel, so the firmware canvas and the host simulator share one
 // decode and no per-backend colour table can drift.
 constexpr uint16_t einkGray(uint8_t level) {   // 0 = black ink … 15 = paper
@@ -151,7 +151,7 @@ constexpr uint16_t EINK_INK_MUTED = einkGray(7);    // captions, units, counts
 constexpr uint16_t EINK_INK_RULE  = einkGray(10);   // hairlines, dividers
 constexpr uint16_t EINK_INK_TINT  = einkGray(13);   // zebra fills, gauge tracks
 #else
-// The 1-bit InkDeck glass and the tri-color NM glass have no intermediate
+// The 1-bit TRMNL 7.5" glass and the tri-color NM glass have no intermediate
 // levels, and GxEPD2 maps EVERY non-white colour to solid ink — so handing a
 // grey to a shared helper does not degrade gracefully, it paints the shape
 // solid black. drawMiniUsage() is exactly such a helper (EPD47 QUEUE + FOCUS
@@ -906,7 +906,7 @@ void drawBrandHeader(const Snap& s, const AgentDeckEink::Layout& layout) {
         textRight(chipX - 14, 38, cnt, countFont);
     }
 
-#if defined(AGENTDECK_INKDECK_UI)
+#if defined(AGENTDECK_TRMNL_75_UI)
     // These are the only two front-panel actions. Keep them visible on every
     // dashboard face instead of relying on a manual or hidden button cycle.
     textAt(286, 58, "KEY1 VIEW  |  KEY2 HOME", CLASSIC_FONT);
@@ -963,7 +963,7 @@ bool drawProviderUsage(int16_t y, const char* agentType, const char* label,
 }
 
 // Provider usage rows that will actually draw (mirrors the p5<0 && p7<0 gate
-// above). This count feeds the shared geometry engine used by InkDeck + XTeink.
+// above). This count feeds the shared geometry engine used by TRMNL 7.5" + XTeink.
 static int usageRowCount(const Snap& s) {
     int n = 0;
     if (s.fiveH >= 0.0f || s.sevenD >= 0.0f) n++;
@@ -976,7 +976,7 @@ AgentDeckEink::Layout dashboardLayout(const Snap& s) {
     return AgentDeckEink::makeLayout(AgentDeckEink::LayoutInput{
         W, H,
         68,  // product header + double rule
-        0,   // InkDeck has no persistent button-hint bar
+        0,   // TRMNL 7.5" has no persistent button-hint bar
         28, 21,
         (uint8_t)usageRowCount(s), activityRows,
         s.rowCount, 2,
@@ -991,7 +991,7 @@ AgentDeckEink::Layout dashboardLayout(const Snap& s) {
 // What is NOT responsive is the horizontal composition *inside* a band: the
 // wordmark, glyph, label and the two gauge slots below use absolute x constants
 // tuned for this panel's 800px width (drawBrandHeader, drawProviderUsage). That
-// is fine — this renderer only ever runs on InkDeck's 800x480 — but it means
+// is fine — this renderer only ever runs on TRMNL 7.5"'s 800x480 — but it means
 // rendering this file at another width is not a preview of that panel. The
 // esp32/sim `xteink_x3`/`xteink_x4` diagnostic envs do exactly that to inspect
 // the shared *geometry*; their squashed header and off-panel second gauge are
@@ -999,7 +999,7 @@ AgentDeckEink::Layout dashboardLayout(const Snap& s) {
 // XTeink fork draws (it has its own GfxRenderer). Measured 2026-08-05: bands
 // are clean at 800x480 / 528x792 / 480x800; the 2nd gauge slot (x=490, ~288px
 // wide) simply does not exist on a 480px panel. Make these width-derived only
-// when a second e-ink size actually ships — it moves InkDeck's shipped pixels.
+// when a second e-ink size actually ships — it moves TRMNL 7.5"'s shipped pixels.
 void drawUsageFooter(const Snap& s, bool showIdentity, const AgentDeckEink::Layout& layout) {
     if (!layout.usage.empty()) {
         display.fillRect(0, layout.usage.y, W, 2, GxEPD_BLACK);
@@ -1244,7 +1244,7 @@ void drawSessionGrid(const Snap& s, const AgentDeckEink::Layout& layout) {
 
 // ===== Paper faces =====
 // A face is a different information contract, not a visual theme. The push
-// InkDeck exposes the full five-face set. Pull-default readers expose the
+// TRMNL 7.5" exposes the full five-face set. Pull-default readers expose the
 // durable GLANCE/DIGEST/ROSTER base set. DECISION and ANSWER become eligible
 // only while a physical action has opened an eight-minute interactive lease.
 enum class PaperFace : uint8_t { Glance, Decision, Answer, Digest, Roster };
@@ -1280,7 +1280,7 @@ bool epd47DecisionButtonTracking = false;
 uint8_t nmDecisionSelection = 0;
 uint32_t nmSelectionDecisionHash = 0;
 #endif
-#if defined(AGENTDECK_INKDECK_UI)
+#if defined(AGENTDECK_TRMNL_75_UI)
 uint8_t inkDecisionSelection = 0;
 uint32_t inkSelectionDecisionHash = 0;
 #endif
@@ -1333,7 +1333,7 @@ bool epd47TouchAvailable() {
 #endif
 
 bool interactiveLeaseActive(uint32_t now) {
-#if defined(BOARD_INKDECK) && !defined(BOARD_SIM_PULL)
+#if defined(BOARD_TRMNL_75) && !defined(BOARD_SIM_PULL)
     (void)now;
     return true;
 #else
@@ -1843,7 +1843,7 @@ void drawEp47Queue(const Snap& s) {
         textRight(936, 440, more, &FreeSansBold9pt7b);
     }
     // Shorter rows free ~250px. Spend it on the provider limits rail rather than
-    // white paper: the InkDeck board already proves a permanent usage strip is
+    // white paper: the TRMNL 7.5" board already proves a permanent usage strip is
     // worth its space, and QUEUE previously made the user change tabs for it.
     // Only the windows the account exposes; the survivors share the width.
     constexpr int16_t railY = 452;
@@ -1956,7 +1956,7 @@ void drawGlanceFace(const Snap& s) {
         }
     }
 #if defined(AGENTDECK_NM_UI)
-    // Usage adopts the InkDeck footer grammar at 400px: brand GLYPH per
+    // Usage adopts the TRMNL 7.5" footer grammar at 400px: brand GLYPH per
     // provider, one row per window the account actually exposes (the Stream
     // Deck dial rule, #269 — no empty frames), reset countdown inline beside
     // each gauge instead of a cryptic composite line below them. A provider
@@ -2077,7 +2077,7 @@ void drawDecisionFace(const Snap& s) {
         const int16_t oh = W <= 420 ? 31 : 42;
         // Keep red geometry fixed across DECISION content so option text can
         // update through the panel's B/W differential waveform.
-#if defined(AGENTDECK_NM_UI) || defined(AGENTDECK_INKDECK_UI)
+#if defined(AGENTDECK_NM_UI) || defined(AGENTDECK_TRMNL_75_UI)
 #if defined(AGENTDECK_NM_UI)
         const bool selected = o == nmDecisionSelection;
 #else
@@ -2095,7 +2095,7 @@ void drawDecisionFace(const Snap& s) {
         char option[56]; snprintf(option, sizeof(option), "%u  %s", (unsigned)(o + 1), s.options[o]);
         char fitted[64]; smartFitText(fitted, sizeof(fitted), option, W - pad * 2 - 20, &FreeSans9pt7b);
         smartTextAt(pad + 10, oy + (W <= 420 ? 21 : 28), fitted, &FreeSans9pt7b);
-#if defined(AGENTDECK_NM_UI) || defined(AGENTDECK_INKDECK_UI)
+#if defined(AGENTDECK_NM_UI) || defined(AGENTDECK_TRMNL_75_UI)
         if (selected) setInk(false);
 #endif
         oy += oh + 7;
@@ -2112,7 +2112,7 @@ void drawDecisionFace(const Snap& s) {
     } else {
         textAt(pad, H - 10, "RESPOND ON COMPUTER OR DECK", CLASSIC_FONT);
     }
-#elif defined(AGENTDECK_INKDECK_UI)
+#elif defined(AGENTDECK_TRMNL_75_UI)
     display.drawFastHLine(pad, H - 34, W - pad * 2, GxEPD_BLACK);
     if (s.optionCount > 0) {
         textAt(pad, H - 12, "KEY1  NEXT", &FreeSansBold9pt7b);
@@ -2263,8 +2263,8 @@ void drawDashboard(const Snap& s) {
         default:
 #if defined(AGENTDECK_EPD47_UI)
             drawEp47Glance(s);
-#elif defined(BOARD_INKDECK) && !defined(BOARD_SIM_PULL)
-            // InkDeck's home is the live board itself. GLANCE is only the
+#elif defined(BOARD_TRMNL_75) && !defined(BOARD_SIM_PULL)
+            // TRMNL 7.5"'s home is the live board itself. GLANCE is only the
             // arbitration name; restoring the proven session-grid hierarchy
             // keeps active work and provider limits visible together.
             {
@@ -2541,7 +2541,7 @@ void update(float /*dt*/) {
             }
         }
 #endif
-#if defined(AGENTDECK_INKDECK_UI)
+#if defined(AGENTDECK_TRMNL_75_UI)
         if (!keyHandled && renderFace == PaperFace::Decision && lastDecisionHash != 0) {
             static Snap decisionSnap;
             snapshot(decisionSnap);
@@ -2571,7 +2571,7 @@ void update(float /*dt*/) {
             faceHoldUntilMs = 0;
             interactiveLeaseUntilMs = 0;
         } else {
-#if defined(BOARD_INKDECK) && !defined(BOARD_SIM_PULL)
+#if defined(BOARD_TRMNL_75) && !defined(BOARD_SIM_PULL)
             switch (manualFace) {
                 case PaperFace::Glance: manualFace = PaperFace::Digest; break;
                 case PaperFace::Digest: manualFace = PaperFace::Answer; break;
@@ -2705,7 +2705,7 @@ void render() {
     uint32_t now = millis();
     static Snap s; snapshot(s);  // static: see init() — Snap outgrew the task stack
 
-    // InkDeck intentionally ignores the host Mac's display-sleep state. E-ink
+    // TRMNL 7.5" intentionally ignores the host Mac's display-sleep state. E-ink
     // retains the dashboard without panel refresh power, and this board is
     // always USB-powered, so replacing useful status with an asleep card saves
     // no meaningful display energy. Content updates continue while the Mac is
@@ -2762,7 +2762,7 @@ void render() {
         nmDecisionSelection = 0;
     }
 #endif
-#if defined(AGENTDECK_INKDECK_UI)
+#if defined(AGENTDECK_TRMNL_75_UI)
     if (lastDecisionHash != inkSelectionDecisionHash) {
         inkSelectionDecisionHash = lastDecisionHash;
         inkDecisionSelection = 0;

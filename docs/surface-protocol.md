@@ -38,7 +38,7 @@ Official products are maintained and released by the AgentDeck project:
 
 - macOS AgentDeck Dashboard;
 - iOS and Android AgentDeck Companion apps;
-- AgentDeck ESP32 Dashboard Firmware, including InkDeck;
+- AgentDeck ESP32 Dashboard Firmware, including TRMNL 7.5";
 - official Elgato Stream Deck and Ulanzi Studio integrations.
 
 Official status describes ownership and release responsibility. It does not grant a
@@ -449,7 +449,7 @@ An update target is the tuple:
 
 - `productId` identifies the product/firmware line, for example
   `dev.agentdeck.dashboard-firmware` or `io.pocketdaily.reader`.
-- `board` identifies the hardware and image geometry, for example `inkdeck`,
+- `board` identifies the hardware and image geometry, for example `trmnl_75`,
   `xteink_x3`, or `xteink_x4`.
 - `updateChannel` identifies the product-owned release stream, such as `stable`,
   `beta`, or `nightly`.

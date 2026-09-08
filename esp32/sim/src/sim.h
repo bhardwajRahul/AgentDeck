@@ -44,8 +44,8 @@ bool renderToPng(const char* scene, const char* page, int frames, int scale, con
 }  // namespace SimMatrix
 
 namespace SimEink {
-// Render the InkDeck 800×480 1-bit e-ink dashboard for a scene to PNG. Only
-// defined for the BOARD_INKDECK env.
+// Render the TRMNL 7.5" 800×480 1-bit e-ink dashboard for a scene to PNG. Only
+// defined for the BOARD_TRMNL_75 env.
 bool renderToPng(const char* scene, const char* path);
 }  // namespace SimEink
 

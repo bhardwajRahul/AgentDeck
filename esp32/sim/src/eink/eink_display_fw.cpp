@@ -1,5 +1,5 @@
-// Unity-include wrapper for the real InkDeck e-ink render tree (direct-draw
-// GxEPD2, no LVGL). Self-gated on BOARD_INKDECK. See fw/renderer.cpp for the
+// Unity-include wrapper for the real TRMNL 7.5" e-ink render tree (direct-draw
+// GxEPD2, no LVGL). Self-gated on BOARD_TRMNL_75. See fw/renderer.cpp for the
 // per-env compilation rationale.
 //
 // The SimEink render entry point lives HERE (after the include) rather than in a
@@ -8,7 +8,7 @@
 // framebuffer the GxEPD2_BW shim accumulated.
 #include "../../../src/ui/eink/eink_display.cpp"
 
-#ifdef BOARD_INKDECK
+#ifdef BOARD_TRMNL_75
 #include "../sim.h"
 #include <Arduino.h>
 #include <cstdlib>
@@ -56,4 +56,4 @@ bool SimEink::renderToPng(const char* scene, const char* path) {
   std::free(img);
   return ok;
 }
-#endif  // BOARD_INKDECK
+#endif  // BOARD_TRMNL_75

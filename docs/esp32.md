@@ -14,7 +14,7 @@ validators: [bash esp32/robot/run.sh build]
 ---
 # ESP32 Firmware
 
-PlatformIO Arduino firmware for LVGL touch displays (ESP32-S3: 86Box 480×480, IPS 3.5" 480×320 landscape / 320×480 portrait, Round AMOLED 360×360; ESP32-P4: Guition JC8012P4A1C 10.1" IPS 800×1280 portrait native + ESP32-C6 co-processor), three e-ink surfaces (InkDeck 800×480, RockBase NM-EPD-420 400×300 tri-color, LilyGo EPD47 960×540 grayscale), SPI TFT displays (ESP32 classic: LilyGO TTGO T-Display 1.14" 135×240 with a 160px terrarium viewport + 80px metric strip), and a WS2812B LED matrix (ESP32 classic: Ulanzi TC001 8×32). Board-specific `#ifdef`, per-board partition tables, FastLED matrix renderer bypasses LVGL entirely. IPS 3.5" supports runtime portrait↔landscape switching via `set_orientation` protocol command or Settings toggle (NVS persistent, `g_screenW`/`g_screenH` runtime globals).
+PlatformIO Arduino firmware for LVGL touch displays (ESP32-S3: 86Box 480×480, IPS 3.5" 480×320 landscape / 320×480 portrait, Round AMOLED 360×360; ESP32-P4: Guition JC8012P4A1C 10.1" IPS 800×1280 portrait native + ESP32-C6 co-processor), three e-ink surfaces (TRMNL 7.5" 800×480, RockBase NM-EPD-420 400×300 tri-color, LilyGo EPD47 960×540 grayscale), SPI TFT displays (ESP32 classic: LilyGO TTGO T-Display 1.14" 135×240 with a 160px terrarium viewport + 80px metric strip), and a WS2812B LED matrix (ESP32 classic: Ulanzi TC001 8×32). Board-specific `#ifdef`, per-board partition tables, FastLED matrix renderer bypasses LVGL entirely. IPS 3.5" supports runtime portrait↔landscape switching via `set_orientation` protocol command or Settings toggle (NVS persistent, `g_screenW`/`g_screenH` runtime globals).
 
 ## Host simulator (no-hardware preview)
 
@@ -36,7 +36,7 @@ Covers all board classes: LCD terrarium + HUD (`box_86` 480×480, `ips35` 480×3
 office" + sidebar mosaic (`ips10` 1280×800), the two companion render trees
 (`t_embed` 320×170 encoder knob, `t_display_pro` 480×222 focus strip), the TC001
 8×32 LED matrix (`led8x32`, usage/agents pages), and the three paper-face layouts
-(`inkdeck` 800×480, `nm_epd_420_preview` 400×300, and
+(`trmnl_75` 800×480, `nm_epd_420_preview` 400×300, and
 `lilygo_epd47_preview` 960×540). LCD boards render the **real** composed screen via
 the board's own builder — `Screens::aquariumCreate()`, `Knob::create()` or
 `Ticker::create()`. Two further envs (`xteink_x3`, `xteink_x4`) are layout
@@ -70,7 +70,7 @@ the commands are the first two blocks.
 
 ```bash
 agentdeck esp32 flash 86box            # release image, auto-detected port
-agentdeck esp32 flash inkdeck -p /dev/cu.usbmodem3111101
+agentdeck esp32 flash trmnl_75 -p /dev/cu.usbmodem3111101
 agentdeck esp32 flash ttgo --tag esp32-v1.0.7   # pin a release
 agentdeck esp32 flash 86box -f .pio/build/box_86/firmware.bin   # local build
 ```
@@ -99,7 +99,7 @@ Both tools identify the chip **before** writing and refuse on a mismatch:
 | Chip family | the chip on the wire is not the board's family | an S3 image on a classic ESP32 bricks it |
 | Flash size | the image declares **more** flash than the part reports | the header claims a geometry the chip cannot serve |
 
-The size check is **directional** — declaring *less* is fine, and on InkDeck it is
+The size check is **directional** — declaring *less* is fine, and on TRMNL 7.5" it is
 mandatory (the XIAO ESP32-S3 Plus is physically 16MB but its BSP bakes an 8MB
 field). An unreadable flash id stays **unknown**: `detectFlashSize()` silently
 answers `"4MB"` when it cannot decode the id, so trusting it would turn "no
@@ -132,7 +132,7 @@ Every serial open toggles DTR/RTS and **resets the board**, so a daemon holding
 ### Native-USB boards re-enumerate
 
 Entering download mode gives a native-USB board a **different device node** from
-the one it runs on (measured: InkDeck failed on its original node and connected
+the one it runs on (measured: TRMNL 7.5" failed on its original node and connected
 on `usbmodem3111101`). Hold BOOT, tap RST, release BOOT — then pick the port that
 *appears*, not the one you saw before.
 
@@ -206,7 +206,7 @@ WiFi OTA는 **우리가 직접 AgentDeck 펌웨어를 플래싱하는 ESP32 계�
 
 ```bash
 agentdeck devices                         # WiFi ESP32 연결 및 board 이름 확인
-agentdeck esp32-ota inkdeck --build       # 해당 env 빌드 후 OTA 전송
+agentdeck esp32-ota trmnl_75 --build       # 해당 env 빌드 후 OTA 전송
 agentdeck esp32-ota ips_10 --firmware esp32/.pio/build/ips10/firmware.bin
 ```
 
@@ -226,7 +226,7 @@ OTA 대상 SSOT. **`agentdeck esp32-ota <target>`의 `<target>`은 로컬 Platfo
 
 | Target aliases | PlatformIO env | OTA slot size | 운영 메모 |
 |---|---|---:|---|
-| `inkdeck` | `inkdeck` | ~3.3MB | Seeed XIAO ESP32-S3 Plus BSP와 일치하도록 8MB layout 유지 |
+| **`trmnl_75`**, `inkdeck` | `trmnl_75` | ~3.3MB | Seeed XIAO ESP32-S3 Plus BSP와 일치하도록 8MB layout 유지. `inkdeck` 은 1.2.1 이전 이름 — 그 펌웨어로 남아 있는 보드가 자신을 그렇게 보고하므로 계속 받는다 |
 | **`lilygo_epd47`**, `epd47` | `lilygo_epd47` | ~6.25MB | T5 ePaper S3 N16R8; 4-bit 프레임버퍼는 PSRAM에 1회 할당 |
 | `ulanzi_tc001`, `led8x32` | `led8x32` | ~3.0MB | FastLED matrix, LVGL 미사용 |
 | **`ttgo_t_display`**, `ttgo` | `ttgo` | ~6.0MB | PSRAM 없는 classic ESP32, 작은 렌더 버퍼 유지 |
@@ -295,6 +295,6 @@ AgentDeck esp32/src/net/protocol"*). C3(no-PSRAM/ArduinoJson)에는 C++ 코드�
 | LilyGO T-Embed CC1101 (Companion Knob) | `t_embed` | 320×170 + 8-LED ring | ESP32-S3 | `/dev/cu.usbmodem2101` (Native USB) | ✅ 연결됨 |
 | LilyGO T-Display-S3-Pro (Focus Strip, 무카메라) | `t_display_pro` | 480×222 가로 (Ticker UI) | ESP32-S3 | `/dev/cu.usbmodem3111201` (Native USB) | ✅ 연결됨 |
 | LilyGO T-Display-S3-Pro (Pocket, GC0308 카메라) | `t_display_pro` | 222×480 세로 (Pocket UI) | ESP32-S3 | WiFi 상주 (부팅 시 카메라 감지 → 세로 전환) | ✅ 연결됨 |
-| Seeed TRMNL / InkDeck | `inkdeck` | 800×480 가로 | XIAO ESP32-S3 Plus | `/dev/cu.usbmodem1CDBD474F4D81` (runtime; download node 재열거) | ✅ 2026-08-30 확인 |
+| Seeed TRMNL / TRMNL 7.5" | `trmnl_75` | 800×480 가로 | XIAO ESP32-S3 Plus | `/dev/cu.usbmodem1CDBD474F4D81` (runtime; download node 재열거) | ✅ 2026-08-30 확인 |
 | RockBase NM-EPD-420 | `nm_epd_420` | 400×300 가로 | ESP32-S3 N16R8 | `/dev/cu.usbmodem83201` (Native USB) | ✅ 2026-08-30 확인 |
 | LilyGo T5 ePaper S3 V2.4 | `lilygo_epd47` | 960×540 가로 | ESP32-S3 N16R8 | `/dev/cu.usbmodem21401` (Native USB) | ✅ 2026-08-30 확인 |

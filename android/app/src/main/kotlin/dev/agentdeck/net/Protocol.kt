@@ -357,7 +357,7 @@ data class SessionInfo(
     // Shared per-session "what is this agent doing" one-liner, computed by the
     // bridge (session-activity.ts heuristic → Foundation Models upgrade).
     // SSOT for the session summary line — render this instead of hand-rolling
-    // model/state strings so all surfaces (InkDeck/Android/Apple) agree.
+    // model/state strings so all surfaces (TRMNL 7.5"/Android/Apple) agree.
     val activity: String? = null,
     // Live child-agent census. A SECOND axis to [state], not a correction to
     // it: a parent whose turn closed is genuinely idle while its subagents keep
