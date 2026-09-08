@@ -6,7 +6,7 @@
  * - Detail View: button 1=BACK, button 2=session info, buttons 3-7=options, button 8=ESC/STOP
  */
 import type { SessionInfo, StatusCardTone, StatusIconKind, CodexRateLimits, ScopedUsageLimit } from '@agentdeck/shared';
-import { State, sortSessions, assignDisplayNames, foldCodexSessionsForDisplay, aliasModelName, Brand, formatScopedLabel, scopedLimitClaimsUsageKey, codexWindowsBeside, usageWindowKind, usageWindowLabel, codexUsageFootnote, summarizeQuestionForKey, approvalReasonHead, UI } from '@agentdeck/shared';
+import { State, sortSessions, assignDisplayNames, foldCodexSessionsForDisplay, aliasModelName, Brand, formatScopedLabel, scopedLimitClaimsUsageKey, codexWindowsBeside, usageStripRank, usageWindowKind, usageWindowLabel, codexUsageFootnote, summarizeQuestionForKey, approvalReasonHead, UI } from '@agentdeck/shared';
 import type { PromptOption } from '@agentdeck/shared';
 import { dlog } from './log.js';
 import { stateFromSession } from './focused-detail-state.js';
@@ -37,6 +37,10 @@ export interface UsageGauge {
   /** Scoped per-model cap that isn't the binding one — drawn muted rather than
    *  on the critical ramp (mirrors the D200H scoped tile and the E2 encoder). */
   inactive?: boolean;
+  /** True for the per-model scoped cap. It renders as a Claude gauge, so this is
+   *  the only thing that tells it apart from a 5H/7D window when seating the
+   *  strip in `USAGE_STRIP_ORDER`. */
+  scoped?: boolean;
 }
 
 /** Max bottom-row keys usage may claim: Claude 5h/7d + Codex 5h/7d (or, when
@@ -425,10 +429,18 @@ export class SessionSlotManager {
   }
 
   /**
-   * Present water-tank gauges in left-to-right (then bottom-row) display order:
-   * Claude 5h, Claude 7d, then Codex — with the worst per-model scoped cap
-   * competing for one of Codex's keys (see below). Hide-if-absent throughout: an
-   * agent with no live quota contributes nothing, so it claims no keys.
+   * Every live gauge in RANK order — which is not display order.
+   *
+   * Rank answers "what survives a scarce strip": Claude 5h/7d, then an ACTIVE
+   * scoped cap (a binding per-model weekly cap outranks Codex, issue #99), then
+   * Codex, and last an inactive cap, which is informational and must not push a
+   * live Codex window onto page 2. Where each survivor SITS is a separate
+   * question, answered canonically by `usageGaugesForDisplay` — answering both
+   * with this one list is what made the cap swap seats with Codex when it went
+   * active, with nothing on screen saying why.
+   *
+   * Hide-if-absent throughout: an agent with no live quota contributes nothing,
+   * so it claims no keys.
    */
   private usageGauges(): UsageGauge[] {
     const gauges: UsageGauge[] = [];
@@ -449,11 +461,10 @@ export class SessionSlotManager {
     // neither of which a classic Stream Deck / XL user necessarily has. Whether it
     // earns one of the reserved keys is `scopedLimitClaimsUsageKey`, and what Codex
     // keeps once it has is `codexWindowsBeside` — both shared with the D200H strip
-    // so the two decks can't disagree about which limit the user is looking at. An
-    // ACTIVE cap is the binding one, goes ahead of Codex and TAKES one of its keys
-    // (the reserve is carved out of session keys, so a replacement must not
-    // quietly become an addition); an inactive one only lands on a key Codex left
-    // spare, which is the ordinary state of a free ChatGPT tier.
+    // so the two decks can't disagree about which limit the user is looking at.
+    // Neither drops a known window any more; the strip pages instead. What
+    // `active` still buys the cap here is RANK: a binding cap is placed ahead of
+    // Codex in this list, so on a strip that must page it stays on page one.
     const allCodexWindows = [this._codexPrimary, this._codexSecondary]
       .filter((w): w is CodexWindowSnapshot => w != null);
     const scoped = this._worstScoped;
@@ -468,6 +479,7 @@ export class SessionSlotManager {
             // Missing `active` (relayed/legacy) → NOT binding, so an inactive cap
             // renders muted rather than latching the critical ramp (CLAUDE.md).
             inactive: scoped.active !== true,
+            scoped: true,
           }
         : undefined;
     if (scopedGauge && scoped?.active === true) gauges.push(scopedGauge);
@@ -486,6 +498,25 @@ export class SessionSlotManager {
     }
     if (scopedGauge && scoped?.active !== true) gauges.push(scopedGauge);
     return gauges;
+  }
+
+  /**
+   * The gauges visible on one page, seated in `USAGE_STRIP_ORDER` — Claude
+   * rolling windows, then the scoped per-model cap, then Codex. Stable: the cap
+   * is a Claude limit and sits with the Claude readings whether or not it is
+   * currently binding. `active` still decides the ramp (in `usageGauges`) and,
+   * through rank, which reading lands on the second page.
+   *
+   * A plain sort, so equal-rank gauges keep the order `usageGauges` built them
+   * in (5H before 7D, and each Codex window by its own length).
+   */
+  private usageGaugesForDisplay(gauges: UsageGauge[]): UsageGauge[] {
+    const seat = (g: UsageGauge): number =>
+      usageStripRank(g.scoped === true ? 'scoped' : g.agent === 'codex' ? 'codex' : 'claude');
+    return gauges
+      .map((g, i) => ({ g, i }))
+      .sort((a, b) => seat(a.g) - seat(b.g) || a.i - b.i)
+      .map(({ g }) => g);
   }
 
   /**
@@ -758,7 +789,8 @@ export class SessionSlotManager {
 
     // Pin water-tank quota gauges to the last keys (every page; usage is global).
     // The reserved block is contiguous at the bottom-right; present gauges fill
-    // it left→right in display order (Claude 5h/7d, then Codex 5h/7d).
+    // it left→right in `USAGE_STRIP_ORDER` (Claude 5h/7d, the scoped per-model
+    // cap, then Codex).
     if (usageReserve > 0) {
       const blockStart = layout.keyCount - usageReserve;
       if (slot >= blockStart) {
@@ -773,7 +805,12 @@ export class SessionSlotManager {
           return { type: 'usage-page', label: `${(this._usagePage % pages) + 1}/${pages}` };
         }
         const perPage = overflow ? usageReserve - 1 : usageReserve;
-        const g = gauges[this._usagePage * perPage + idx];
+        // Page by RANK, seat by `USAGE_STRIP_ORDER`: the page is chosen from the
+        // ranked list, then reordered so the tiles never move between renders.
+        const page = this.usageGaugesForDisplay(
+          gauges.slice(this._usagePage * perPage, this._usagePage * perPage + perPage),
+        );
+        const g = page[idx];
         if (g) {
           return {
             type: 'usage',

@@ -58,10 +58,11 @@ export const GRID_COLS = 5;
  * key falls out of the strip and flows back to sessions instead of leaving a
  * hole in the middle of the row.
  *
- * Its length caps usage at three physical keys. When four or five windows are
- * present, `buildUsageTiles` compacts same-provider 5H+7D windows into a dual
- * readout so no real limit is dropped. Scoped per-model caps still contribute
- * at most one tile.
+ * Its length caps usage at three physical keys. When four or five readings are
+ * present, `buildUsageTiles` pairs two of them onto one key as a dual readout so
+ * no real limit is dropped — the Codex 5H+7D pair first, then the two WEEKLY
+ * Claude readings (7D + the per-model cap), which leaves the fast-moving 5H
+ * gauge whole. Scoped per-model caps still contribute at most one tile.
  */
 const USAGE_PREFERRED_POS = ['0_2', '1_2', '2_2'];
 
@@ -465,15 +466,25 @@ function buildUsageTiles(state: DashState): SessionDeckCell[] {
   //
   // Inclusion comes from `scopedLimitClaimsUsageKey`, and the Codex windows to
   // retain from `codexWindowsBeside` — both shared with the Stream Deck keypad.
-  // Active caps sort ahead of Codex; inactive caps follow it. Capacity pressure
-  // is solved by compacting provider pairs below, never by deleting a window.
+  // The cap always sits with the Claude readings, ahead of Codex, active or not
+  // (`USAGE_STRIP_ORDER`). Capacity pressure is solved by pairing readings on
+  // one key below, never by deleting a window.
   const cx = state.codexRateLimits;
   const allCodexWindows = [cx?.primary, cx?.secondary].filter((w): w is CodexRateLimitWindow => w != null);
   const worstScoped = known ? state.scopedLimits?.[0] : undefined;
   const scopedClaims = scopedLimitClaimsUsageKey(worstScoped, allCodexWindows.length);
   const codexWindows = codexWindowsBeside(allCodexWindows, scopedClaims);
-  const scopedTile: SessionDeckCell | undefined = scopedClaims && worstScoped
-    ? { svg: renderUsageGauge({ agent: 'claude' as const, window: '7d' as const, label: formatScopedLabel(worstScoped.label, 6), usedPercent: worstScoped.percent, resetsAt: worstScoped.resetsAt, known: true, inactive: worstScoped.active !== true }), action }
+  // Kept as tank DATA, not only as a rendered cell: under strip pressure the cap
+  // pairs with 7D on one key (below), and a pre-rendered cell cannot be paired.
+  const scopedTank: UsageTankData | undefined = scopedClaims && worstScoped
+    ? {
+        agent: 'claude', window: '7d', label: formatScopedLabel(worstScoped.label, 6),
+        usedPercent: worstScoped.percent, resetsAt: worstScoped.resetsAt, known: true,
+        inactive: worstScoped.active !== true,
+      }
+    : undefined;
+  const scopedTile: SessionDeckCell | undefined = scopedTank
+    ? { svg: renderUsageGauge(scopedTank), action }
     : undefined;
   // Codex windows carry the same short "5H"/"7D" labels — the brand dot conveys
   // the agent, not a "CX " prefix. Label each present window by its own length
@@ -501,7 +512,14 @@ function buildUsageTiles(state: DashState): SessionDeckCell[] {
   const logicalCount = claudeWindows.length + codexWindowData.length + (scopedTile ? 1 : 0) + (creditsTile ? 1 : 0);
   const compactCodex = logicalCount > USAGE_PREFERRED_POS.length && codexWindowData.length === 2;
   const afterCodex = logicalCount - (compactCodex ? 1 : 0);
-  const compactClaude = afterCodex > USAGE_PREFERRED_POS.length && claudeWindows.length === 2;
+  const stillOverflows = afterCodex > USAGE_PREFERRED_POS.length;
+  // WHICH Claude readings share a key when the strip is one short. 5H is the
+  // window that actually moves during a session — it is the reading a user
+  // glances at — while 7D and the per-model weekly cap are both weekly and are
+  // read together anyway. So the cap pairs with 7D and 5H keeps its full gauge,
+  // rather than 5H+7D pairing and the cap taking a whole key to itself.
+  const pairScopedWith7D = stillOverflows && scopedTank != null && claudeWindows.length === 2;
+  const compactClaude = stillOverflows && !pairScopedWith7D && claudeWindows.length === 2;
   const cellsFor = (agent: 'claude' | 'codex', windows: UsageTankData[], compact: boolean): SessionDeckCell[] => {
     if (compact && windows.length === 2) {
       return [{ svg: renderUsagePairGauge(agent, [windows[0], windows[1]]), action }];
@@ -509,11 +527,18 @@ function buildUsageTiles(state: DashState): SessionDeckCell[] {
     return windows.map((window) => ({ svg: renderUsageGauge(window), action }));
   };
 
-  const tiles: SessionDeckCell[] = cellsFor('claude', claudeWindows, compactClaude);
-  if (scopedTile && worstScoped?.active === true) tiles.push(scopedTile);
+  // Order is `USAGE_STRIP_ORDER` (Claude → scoped cap → Codex → credits) and is
+  // the same whether or not the cap is currently binding: `active` drives the
+  // ramp, never the seat. See `scopedLimitClaimsUsageKey`.
+  const tiles: SessionDeckCell[] = pairScopedWith7D && scopedTank
+    ? [
+        { svg: renderUsageGauge(claudeWindows[0]), action },
+        { svg: renderUsagePairGauge('claude', [claudeWindows[1], scopedTank]), action },
+      ]
+    : cellsFor('claude', claudeWindows, compactClaude);
+  if (scopedTile && !pairScopedWith7D) tiles.push(scopedTile);
   tiles.push(...cellsFor('codex', codexWindowData, compactCodex));
   if (creditsTile) tiles.push(creditsTile);
-  if (scopedTile && worstScoped?.active !== true) tiles.push(scopedTile);
   return tiles;
 }
 

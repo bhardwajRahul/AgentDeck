@@ -319,4 +319,51 @@ final class DevicePreviewSnapshotTests: XCTestCase {
         XCTAssertEqual(codexPair?.map(\.label), ["5H", "7D"])
         XCTAssertEqual(codexPair?.map(\.percent), [23, 51])
     }
+
+    /// The three-key usage strip: how five readings are packed, and where the
+    /// per-model cap sits. Mirrors `buildUsageTiles` in shared/src/d200h-layout.ts
+    /// (`session-deck-usage.test.ts` pins the same two facts on the TS side).
+    func testUsageStripPacksWeeklyReadingsAndSeatsTheCapWithClaude() throws {
+        func strip(capActive: Bool) -> [(kind: D200HSlotKind, label: String)] {
+            let usage = D200HUsage(
+                fiveHourPercent: 42,
+                sevenDayPercent: 17,
+                known: true,
+                scopedLimits: [D200HScopedLimit(label: "Fable", percent: 98, active: capActive)],
+                codexPrimaryPercent: 30,
+                codexPrimaryWindowMinutes: 300,
+                codexSecondaryPercent: 10,
+                codexSecondaryWindowMinutes: 10080
+            )
+            let input = D200HDeckInput(
+                state: "IDLE",
+                sessions: (0..<2).map {
+                    D200HSession(id: "s\($0)", agentType: "claude-code", state: "idle", projectName: "p\($0)")
+                },
+                usage: usage
+            )
+            return D200HLayoutModel.buildSessionDeck(input, view: D200HDeckView(mode: .list))
+                .compactMap { slot in
+                    switch slot.kind {
+                    case .usageGauge, .usagePair: return (slot.kind, slot.label)
+                    default: return nil
+                    }
+                }
+        }
+
+        // 5H alone (it is the window that moves), 7D + the weekly cap paired,
+        // Codex 5H+7D paired: five readings, three keys, nothing dropped.
+        let active = strip(capActive: true)
+        XCTAssertEqual(active.map(\.label), ["5H", "7D · FABLE", "5H · 7D"])
+
+        // `active` may change the ramp, never the seat.
+        let idle = strip(capActive: false)
+        XCTAssertEqual(idle.map(\.label), active.map(\.label))
+        if case .usagePair(let agent, let windows) = idle[1].kind {
+            XCTAssertEqual(agent, "claude")
+            XCTAssertEqual(windows.map(\.inactive), [false, true])
+        } else {
+            XCTFail("expected 7D + cap to share one key, got \(idle[1].kind)")
+        }
+    }
 }

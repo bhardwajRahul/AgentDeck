@@ -409,7 +409,7 @@ private struct D200HSlotTile: View {
                                 ZStack(alignment: .leading) {
                                     Rectangle().fill(.white.opacity(0.12))
                                     Rectangle()
-                                        .fill(gaugeColor(percent: window.percent, known: true, stale: dim))
+                                        .fill(gaugeColor(percent: window.percent, known: true, stale: dim, inactive: window.inactive))
                                         .frame(width: geo.size.width * min(1, max(0, window.percent / 100)))
                                 }
                             }

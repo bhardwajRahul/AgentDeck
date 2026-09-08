@@ -286,8 +286,13 @@ describe('buildSessionDeck list-view usage tiles', () => {
 });
 
 // The scoped per-model cap (e.g. the weekly "Fable" limit) shares the fixed
-// usage strip with Codex. The Stream Deck keypad applies the shared inclusion
-// and ordering rules, then compacts provider windows rather than dropping them.
+// three-key usage strip with Codex. Two rules are pinned here. SEAT: the cap is
+// a Claude limit and always sits with the Claude readings, ahead of Codex —
+// `active` changes its ramp, never its position (it used to swap seats with
+// Codex as it went active, so the same strip read differently hour to hour with
+// nothing on screen saying why). PACKING: when the readings outnumber the keys,
+// the two WEEKLY Claude readings (7D + the cap) share one key so the
+// fast-moving 5H gauge stays whole — nothing is ever dropped.
 describe('buildSessionDeck scoped cap within the fixed usage strip', () => {
   const FABLE = { label: 'Fable', percent: 98, active: true };
   const FABLE_IDLE = { label: 'Fable', percent: 61, active: false };
@@ -313,43 +318,68 @@ describe('buildSessionDeck scoped cap within the fixed usage strip', () => {
     expect(tiles[2]).toContain('>61<');
   });
 
-  it('keeps an ACTIVE cap and the live Codex window by compacting Claude', () => {
+  it('pairs the cap with 7D and leaves 5H a whole gauge', () => {
     const tiles = svgs({ ...codexWeekly, scopedLimits: [FABLE] });
     expect(tiles).toHaveLength(3);
+    // 5H alone — the window that actually moves during a session.
     expect(tiles[0]).toContain(CLAUDE_MARK);
     expect(tiles[0]).toContain('>42<');
-    expect(tiles[0]).toContain('>17<');
+    expect(tiles[0]).not.toContain('FABLE');
+    // 7D + the weekly per-model cap share the second key.
+    expect(tiles[1]).toContain(CLAUDE_MARK);
+    expect(tiles[1]).toContain('>17<');
     expect(tiles[1]).toContain('FABLE');
     expect(tiles[1]).toContain('>98<');
     expect(tiles[2]).toContain(CODEX_MARK);
     expect(tiles[2]).toContain('>10<');
   });
 
-  it('compacts both providers when an active scoped cap would otherwise overflow', () => {
-    const bothWindows = {
-      codexRateLimits: {
-        primary: { usedPercent: 30, windowMinutes: 300 },
-        secondary: { usedPercent: 10, windowMinutes: 10080 },
-        planType: 'plus',
-      },
-    };
+  const bothWindows = {
+    codexRateLimits: {
+      primary: { usedPercent: 30, windowMinutes: 300 },
+      secondary: { usedPercent: 10, windowMinutes: 10080 },
+      planType: 'plus',
+    },
+  };
+
+  it('fits five readings in three keys: 5H | 7D+cap | Codex pair', () => {
     const tiles = svgs({ ...bothWindows, scopedLimits: [FABLE] });
-    // Claude pair, FABLE, Codex pair: five logical readings in three keys.
     expect(tiles).toHaveLength(3);
-    expect(tiles[0]).toContain(CLAUDE_MARK);
     expect(tiles[0]).toContain('>42<');
-    expect(tiles[0]).toContain('>17<');
+    expect(tiles[0]).not.toContain('>17<');
+    expect(tiles[1]).toContain('>17<');
     expect(tiles[1]).toContain('FABLE');
+    expect(tiles[1]).toContain('>98<');
     expect(tiles[2]).toContain(CODEX_MARK);
     expect(tiles[2]).toContain('>30<');
     expect(tiles[2]).toContain('>10<');
   });
 
+  it('seats the cap identically whether or not it is binding', () => {
+    // The regression this exists for: the strip read `5H 7D FABLE CODEX` while
+    // the cap was active and `5H 7D CODEX FABLE` once it was not. Only the ramp
+    // may depend on `active` — never the seat — so the two layouts differ in
+    // nothing but the cap's own percent.
+    const active = svgs({ ...bothWindows, scopedLimits: [FABLE] });
+    const idle = svgs({ ...bothWindows, scopedLimits: [FABLE_IDLE] });
+    expect(idle).toHaveLength(active.length);
+    expect(active.map((t) => t.indexOf('FABLE') >= 0))
+      .toEqual(idle.map((t) => t.indexOf('FABLE') >= 0));
+    expect(active.map((t) => t.includes(CODEX_MARK)))
+      .toEqual(idle.map((t) => t.includes(CODEX_MARK)));
+    expect(active[1]).toContain('>98<');
+    expect(idle[1]).toContain('>61<');
+  });
+
   it('keeps an INACTIVE cap without displacing a live Codex window', () => {
+    // Still the point of the rule — nothing is dropped — but the cap now rides
+    // the 7D key instead of taking Codex's seat at the end of the strip.
     const tiles = svgs({ ...codexWeekly, scopedLimits: [FABLE_IDLE] });
     expect(tiles).toHaveLength(3);
-    expect(tiles[1]).toContain(CODEX_MARK);
-    expect(tiles[2]).toContain('FABLE');
+    expect(tiles[1]).toContain('FABLE');
+    expect(tiles[1]).toContain('>17<');
+    expect(tiles[2]).toContain(CODEX_MARK);
+    expect(tiles[2]).toContain('>10<');
   });
 
   it('shows nothing but Claude when neither Codex nor a scoped cap exists', () => {

@@ -915,6 +915,31 @@ describe('SessionSlotManager scoped cap vs the Codex usage keys', () => {
     expect(tiles[3]).toMatchObject({ usageAgent: 'codex' });
   });
 
+  it('pages by rank and seats each page canonically', () => {
+    // Two questions, two answers. RANK decides what a scarce strip shows first:
+    // an informational (inactive) cap must not push a live Codex window onto
+    // page two, so it ranks last. SEAT decides where the survivors sit: within
+    // whatever page you are looking at, the Claude cap still comes before Codex.
+    const manager = new SessionSlotManager();
+    manager.updateUsage({
+      fiveHourPercent: 42, sevenDayPercent: 17,
+      codexRateLimits: {
+        primary: { usedPercent: 30, windowMinutes: 300 },
+        secondary: { usedPercent: 12, windowMinutes: 10080 },
+      },
+      scopedLimits: [FABLE_IDLE],
+    });
+    manager.updateSessions(fewSessions(3));
+    const page = () => Array.from({ length: 15 }, (_, i) => manager.getSlotConfig(i, SD_CLASSIC_LAYOUT))
+      .filter((c) => c.type === 'usage')
+      .map((c) => c.usageLabel);
+    // Five gauges over four keys: three readings + a page toggle.
+    expect(page()).toEqual(['5H', '7D', '5H']);
+    manager.cycleUsagePage();
+    // The cap is a Claude limit, so it leads its page even here.
+    expect(page()).toEqual(['FABLE', '7D']);
+  });
+
   it('keeps Codex windows beside active Fable and enables paging when >4 gauges exist', () => {
     const tiles = gauges({
       fiveHourPercent: 42, sevenDayPercent: 17,
@@ -929,14 +954,27 @@ describe('SessionSlotManager scoped cap vs the Codex usage keys', () => {
     expect(tiles.map((t) => t.usageLabel)).toEqual(['5H', '7D', 'FABLE']);
   });
 
-  it('places an inactive cap after live Codex windows on 4 reserved keys', () => {
-    const tiles = gauges({
+  it('seats an inactive cap where the active one sat — ramp changes, position does not', () => {
+    // The regression: the cap is a Claude limit but was ordered by whether it
+    // was BINDING, so the same strip read `5H 7D FABLE CODEX` while Fable was
+    // active and `5H 7D CODEX FABLE` an hour later. Nothing on screen said why,
+    // and position is what a user's muscle memory is built on. `active` may
+    // still change the ramp (`usageInactive`) and the paging rank — never the
+    // seat.
+    const idle = gauges({
       fiveHourPercent: 42, sevenDayPercent: 17,
       codexRateLimits: CODEX_WEEKLY, scopedLimits: [FABLE_IDLE],
     });
-    expect(tiles.map((t) => t.usageLabel)).toEqual(['5H', '7D', '7D', 'FABLE']);
-    expect(tiles[2]).toMatchObject({ usageAgent: 'codex' });
-    expect(tiles[3]).toMatchObject({ usageLabel: 'FABLE', usageInactive: true });
+    const active = gauges({
+      fiveHourPercent: 42, sevenDayPercent: 17,
+      codexRateLimits: CODEX_WEEKLY, scopedLimits: [FABLE],
+    });
+    expect(idle.map((t) => t.usageLabel)).toEqual(['5H', '7D', 'FABLE', '7D']);
+    expect(idle.map((t) => t.usageLabel)).toEqual(active.map((t) => t.usageLabel));
+    expect(idle.map((t) => t.usageAgent)).toEqual(active.map((t) => t.usageAgent));
+    expect(idle[2]).toMatchObject({ usageLabel: 'FABLE', usageInactive: true });
+    expect(active[2]).toMatchObject({ usageLabel: 'FABLE', usageInactive: false });
+    expect(idle[3]).toMatchObject({ usageAgent: 'codex' });
   });
 
   it('drops the scoped cap along with the Claude gauges when usage goes stale', () => {
