@@ -382,6 +382,36 @@ describe('buildSessionDeck scoped cap within the fixed usage strip', () => {
     expect(tiles[2]).toContain('>10<');
   });
 
+  it('draws no tile for a window the API did not report — but still draws a real 0%', () => {
+    // The two Claude windows are reported INDEPENDENTLY, so a subscription can
+    // carry 7D and no 5H. `parseState` used to fill the missing one with `?? 0`,
+    // which is indistinguishable from "0% used" to every reader downstream: the
+    // strip spent a whole key on a phantom `5H 0%` gauge for a window that does
+    // not exist, and the Swift preview (optional-typed) disagreed with it.
+    // Read the rendered TEXT, never the raw SVG: an `H` path command after a
+    // digit puts the literal "5H" inside the Claude brand mark, so a substring
+    // assertion on the markup passes for a tile that draws no such label.
+    const strip = (over: Record<string, unknown>) => usageCells(buildSessionDeck(
+      { ...baseState(2), ...over }, { mode: 'list', showUsage: true }, POS,
+    )).map((c) => [...c.svg.matchAll(/<text[^>]*>([^<]*)</g)].map((m) => m[1]).join(' '));
+
+    const sevenOnly = strip({ fiveHourPercent: undefined, sevenDayPercent: 17 });
+    expect(sevenOnly).toHaveLength(1);
+    expect(sevenOnly[0]).toContain('7D');
+    expect(sevenOnly[0]).not.toContain('5H');
+
+    const fiveOnly = strip({ fiveHourPercent: 42, sevenDayPercent: undefined });
+    expect(fiveOnly).toHaveLength(1);
+    expect(fiveOnly[0]).toContain('5H');
+    expect(fiveOnly[0]).not.toContain('7D');
+
+    // A measured zero is a reading, not an absence — it must still render.
+    const bothZero = strip({ fiveHourPercent: 0, sevenDayPercent: 0 });
+    expect(bothZero).toHaveLength(2);
+    expect(bothZero[0]).toContain('0');
+    expect(bothZero[1]).toContain('0');
+  });
+
   it('shows nothing but Claude when neither Codex nor a scoped cap exists', () => {
     expect(svgs(codexFree)).toHaveLength(2);
   });

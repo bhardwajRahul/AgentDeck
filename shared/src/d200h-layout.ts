@@ -76,8 +76,13 @@ export interface DashState {
   modelName: string;
   mode: string;
   agentType: string;
-  fiveHourPercent: number;
-  sevenDayPercent: number;
+  /** Claude 5h window used%. **Absent means the window was not reported**, which
+   *  is not the same as 0% — the API can carry one window and not the other, and
+   *  folding that into a number draws a confident empty gauge for a quota that
+   *  does not exist. Every consumer is hide-if-absent. */
+  fiveHourPercent?: number;
+  /** Claude 7d window used%. Absent = not reported (see `fiveHourPercent`). */
+  sevenDayPercent?: number;
   totalTokens: number;
   totalCost: number;
   options: PromptOption[];
@@ -123,8 +128,11 @@ export function parseState(evt: any): DashState {
     modelName: evt?.modelName ?? '',
     mode: evt?.mode ?? 'default',
     agentType: evt?.agentType ?? 'claude-code',
-    fiveHourPercent: evt?.fiveHourPercent ?? 0,
-    sevenDayPercent: evt?.sevenDayPercent ?? 0,
+    // NOT `?? 0`: an absent window is unknown, and a zero here is indistinguishable
+    // from "0% used" to every reader downstream — which is how a subscription that
+    // reports only the weekly window drew a phantom "5H 0%" tile on the strip.
+    fiveHourPercent: typeof evt?.fiveHourPercent === 'number' && Number.isFinite(evt.fiveHourPercent) ? evt.fiveHourPercent : undefined,
+    sevenDayPercent: typeof evt?.sevenDayPercent === 'number' && Number.isFinite(evt.sevenDayPercent) ? evt.sevenDayPercent : undefined,
     totalTokens: evt?.totalTokens ?? 0,
     totalCost: evt?.totalCost ?? 0,
     // Keep the server-assigned `index`: it is what a press must send back, and
@@ -169,10 +177,12 @@ function gaugeColor(pct: number): string {
   return pct > 80 ? '#ef4444' : pct > 50 ? '#eab308' : '#22c55e';
 }
 
-export function renderUsageButton(label: string, percent: number, color: string, known = true): string {
-  // When the subscription quota is unknown (no OAuth data / stale hub), draw a
-  // muted "—" instead of a confident 0% that would read as "fully available".
-  if (!known) {
+export function renderUsageButton(label: string, percent: number | undefined, color: string, known = true): string {
+  // When the subscription quota is unknown (no OAuth data / stale hub / a window
+  // the API did not report at all), draw a muted "—" instead of a confident 0%
+  // that would read as "fully available". An absent percent IS unknown, whatever
+  // the caller passed for `known` — the two can only disagree by mistake.
+  if (!known || percent == null) {
     const dim = '#475569';
     const elements = [
       `<text x="72" y="36" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" fill="#94a3b8">${escXml(label)}</text>`,
@@ -660,8 +670,8 @@ export function computeLayout(state: DashState, animFrame = 0, animated = false)
       slots.push(awaitingActionSlot(state, isAwaiting, i, col, row));
     }
     slots.push({ col: 2, row: 1, svg: renderInfoButton('MODEL', state.modelName.slice(0, 12) || 'N/A'), label: '', command: null });
-    slots.push({ col: 3, row: 1, svg: renderUsageButton('5H', state.fiveHourPercent, '#28a0b4', state.usageKnown !== false), label: '', command: { type: 'usage_toggle' } });
-    slots.push({ col: 4, row: 1, svg: renderUsageButton('7D', state.sevenDayPercent, '#2850a0', state.usageKnown !== false), label: '', command: { type: 'usage_toggle' } });
+    slots.push({ col: 3, row: 1, svg: renderUsageButton('5H', state.fiveHourPercent, '#28a0b4', state.usageKnown !== false && state.fiveHourPercent != null), label: '', command: { type: 'usage_toggle' } });
+    slots.push({ col: 4, row: 1, svg: renderUsageButton('7D', state.sevenDayPercent, '#2850a0', state.usageKnown !== false && state.sevenDayPercent != null), label: '', command: { type: 'usage_toggle' } });
   }
 
   // Row 2 shared actions: STOP/ESC, TOKENS, COST
@@ -707,10 +717,10 @@ export function buildLayoutMap(stateEvt: any, animFrame = 0, animated = false): 
   }
   // Per-key usage tiles for the right side of row 2 (direct-HID merges these).
   if (!map.has('3_2')) {
-    map.set('3_2', { svg: renderUsageButton('5H', state.fiveHourPercent, '#28a0b4', state.usageKnown !== false), command: { type: 'usage_toggle' } });
+    map.set('3_2', { svg: renderUsageButton('5H', state.fiveHourPercent, '#28a0b4', state.usageKnown !== false && state.fiveHourPercent != null), command: { type: 'usage_toggle' } });
   }
   if (!map.has('4_2')) {
-    map.set('4_2', { svg: renderUsageButton('7D', state.sevenDayPercent, '#2850a0', state.usageKnown !== false), command: { type: 'usage_toggle' } });
+    map.set('4_2', { svg: renderUsageButton('7D', state.sevenDayPercent, '#2850a0', state.usageKnown !== false && state.sevenDayPercent != null), command: { type: 'usage_toggle' } });
   }
   return map;
 }

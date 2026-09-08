@@ -977,6 +977,23 @@ describe('SessionSlotManager scoped cap vs the Codex usage keys', () => {
     expect(idle[3]).toMatchObject({ usageAgent: 'codex' });
   });
 
+  it('reserves no key for a Claude window the API did not report', () => {
+    // 5h and 7d are reported independently, so a subscription can carry one and
+    // not the other. Pushing the pair whenever EITHER was known spent a reserved
+    // key drawing "—" for a window that does not exist — `updateUsage`'s own
+    // comment already called that hide-if-absent.
+    const sevenOnly = gauges({ sevenDayPercent: 17, codexRateLimits: CODEX_FREE });
+    expect(sevenOnly.map((t) => t.usageLabel)).toEqual(['7D']);
+
+    const fiveOnly = gauges({ fiveHourPercent: 42, codexRateLimits: CODEX_FREE });
+    expect(fiveOnly.map((t) => t.usageLabel)).toEqual(['5H']);
+
+    // A measured zero is a reading, not an absence.
+    const zeros = gauges({ fiveHourPercent: 0, sevenDayPercent: 0, codexRateLimits: CODEX_FREE });
+    expect(zeros.map((t) => t.usageLabel)).toEqual(['5H', '7D']);
+    expect(zeros.every((t) => t.usageKnown)).toBe(true);
+  });
+
   it('drops the scoped cap along with the Claude gauges when usage goes stale', () => {
     // `usageStale` says the whole Claude account half is untrustworthy; a scoped
     // cap read from that same payload is no more current than the 5H/7D beside it.

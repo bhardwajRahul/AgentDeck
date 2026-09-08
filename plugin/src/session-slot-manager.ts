@@ -444,16 +444,22 @@ export class SessionSlotManager {
    */
   private usageGauges(): UsageGauge[] {
     const gauges: UsageGauge[] = [];
-    if (this._fiveHourKnown || this._sevenDayKnown) {
+    // Per WINDOW, not per account. The API reports 5h and 7d independently, so a
+    // subscription can carry one and not the other; pushing the pair whenever
+    // EITHER was known reserved a key for a window that does not exist and drew
+    // it as "—", which is the same "reserve no key" rule `updateUsage` states.
+    if (this._fiveHourKnown) {
       gauges.push({
         agent: 'claude', window: '5h', label: '5H',
         percent: this._fiveHourPercent, resetsAt: this._fiveHourResetsAt,
-        known: this._fiveHourKnown, color: CLAUDE_USAGE_COLOR,
+        known: true, color: CLAUDE_USAGE_COLOR,
       });
+    }
+    if (this._sevenDayKnown) {
       gauges.push({
         agent: 'claude', window: '7d', label: '7D',
         percent: this._sevenDayPercent, resetsAt: this._sevenDayResetsAt,
-        known: this._sevenDayKnown, color: CLAUDE_USAGE_COLOR,
+        known: true, color: CLAUDE_USAGE_COLOR,
       });
     }
     // The worst per-model scoped cap (e.g. the weekly "Fable" limit) is otherwise

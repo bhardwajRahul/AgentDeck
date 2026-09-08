@@ -78,10 +78,33 @@ CHANGELOG 항목의 "InkDeck" 표기는 그대로 둔다 — 그때 그 이름�
     5H  42%   |  7D 17%  / FABLE 98%  |  CX 5H 30% / 7D 10%
 
 **검증.** TS 엔진과 Swift 프리뷰 미러(`D200HLayoutModel`)를 각각 실행해 6개 시나리오
-문자열을 대조했다. 현실적인 5개는 완전히 동일. 6번째(5h 없이 7d만)는 **기존 비대칭**이
-드러난 것으로 이번 변경과 무관하다 — TS `parseState` 가 `fiveHourPercent ?? 0` 으로
-채워서 Pro 계정(주간만)에 `5H 0%` 유령 타일을 그리는 반면 Swift 는 optional 이라 생략한다.
-범위 밖이라 손대지 않고 여기 기록만 남긴다.
+문자열을 대조했다. 5개는 완전히 동일했고, 6번째(5h 없이 7d만)가 아래의 **유령 타일**을
+드러냈다.
+
+### 없는 창을 0%로 채우면 "0% 썼다"와 구별되지 않는다
+
+Claude 5h/7d 두 창은 **독립적으로 보고된다** — `parseUtilization` 이 여러 응답 모양을
+관대하게 파싱하는 이유가 그것이고, 한쪽이 없으면 `usage_update` 는 그 키를 아예 빼고
+나간다(`fiveHourPercent?: number`). 프로듀서는 처음부터 옳았다.
+
+무너진 곳은 소비자 **두 군데**였고 둘 다 `?? 0` 이었다: `parseState`
+(`shared/src/d200h-layout.ts`)와 `plugin-ulanzi/src/state-store.ts`. 데크를 실제로
+그리는 건 플러그인 번들이므로 **`parseState` 만 고쳤으면 기기에서는 그대로였다.**
+`usageKnown` 은 "쿼터 소스가 있느냐"는 **계정 단위** 플래그라 창 단위 질문에 답할 수
+없다 — 그래서 `if (known && state.fiveHourPercent != null)` 가 항상 참이었고, 주간만
+있는 구독이 `5H 0%` 게이지에 키 하나를 통째로 썼다. 같은 표면의 Swift 미러는 optional
+이라 생략했으니, **양 데몬이 같은 입력에 다른 그림을 그리고 있었다.**
+
+수정: 두 소비자 모두 없는 값을 `undefined` 로 통과시키고, `renderUsageButton` 은
+percent 가 없으면 caller 가 뭐라 했든 unknown("—")으로 그린다. Stream Deck 키패드도
+같은 결함의 약한 버전이 있었다 — 창 하나만 알아도 **쌍으로** push 해서 없는 창에
+"—" 타일로 키를 예약했다(자기 주석은 이미 hide-if-absent 라고 적고 있었다). 창별로
+분리했다.
+
+**측정한 0% 는 판독이지 부재가 아니다** — 세 표면 테스트 모두 실제 0% 는 계속 그리는지
+같이 고정한다. 테스트 함정 하나: SVG 원문에 `not.toContain('5H')` 를 걸면 안 된다.
+Claude 마크의 path 데이터에 `...5H24...` 같은 `H`(horizontal lineto) 명령이 들어 있어서
+라벨이 없는 타일에도 통과한다 — `<text>` 내용을 뽑아서 비교할 것.
 
 렌더까지 확인(rsvg): 바인딩 캡은 빨간 임계 램프, 비바인딩 캡은 정보성 시안으로
 같은 자리에 그려진다. Swift 미러는 pair 행이 캡을 실을 수 있게 되었으므로

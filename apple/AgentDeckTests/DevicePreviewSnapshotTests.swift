@@ -366,4 +366,29 @@ final class DevicePreviewSnapshotTests: XCTestCase {
             XCTFail("expected 7D + cap to share one key, got \(idle[1].kind)")
         }
     }
+
+    /// The two Claude windows are reported independently, so one can be absent.
+    /// This mirror has always modelled them as optionals; the TS engine filled a
+    /// missing one with `?? 0` until 2026-09-08 and drew a phantom `5H 0%`, so
+    /// this case is where the two used to disagree.
+    func testAWindowTheApiDidNotReportDrawsNoTile() throws {
+        func labels(_ usage: D200HUsage) -> [String] {
+            let input = D200HDeckInput(
+                state: "IDLE",
+                sessions: [D200HSession(id: "s0", agentType: "claude-code", state: "idle", projectName: "p0")],
+                usage: usage
+            )
+            return D200HLayoutModel.buildSessionDeck(input, view: D200HDeckView(mode: .list))
+                .compactMap { slot in
+                    switch slot.kind {
+                    case .usageGauge, .usagePair: return slot.label
+                    default: return nil
+                    }
+                }
+        }
+        XCTAssertEqual(labels(D200HUsage(sevenDayPercent: 17, known: true)), ["7D"])
+        XCTAssertEqual(labels(D200HUsage(fiveHourPercent: 42, known: true)), ["5H"])
+        // A measured zero is a reading, not an absence.
+        XCTAssertEqual(labels(D200HUsage(fiveHourPercent: 0, sevenDayPercent: 0, known: true)), ["5H", "7D"])
+    }
 }
