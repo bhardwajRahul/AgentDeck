@@ -46,6 +46,33 @@ health monitor 는 계속 돌면서 아무것도 안 한다.
 박힌 채** 남아, state holder 의 재연결 사다리도 CLI 데몬을 찾을 수 없다. DaemonService
 쪽을 고치면 항상 종단 상태에 도달해 `onReady` 가 다시 불리므로 같이 풀린다.
 
+### 그 분기는 드물지 않다 — 두 번 쳤고, 한 번만 살아남았다
+
+같은 날 로그에 같은 ERROR 가 **2회** 있다. 첫 번째(14:22:39)는 살아남았는데, 그건
+분기가 옳아서가 아니라 **다른 재시도가 마침 같이 돌고 있어서**다:
+
+```
+14:22:38Z ERROR External daemon on port 9120 disappeared — promoting this app to own the daemon
+14:22:39Z ERROR Server listener failed: Address already in use     ← Node 데몬이 돌아와 9120 을 잡음
+14:22:39Z INFO  Daemon stopped
+14:22:39Z ERROR External daemon detected, but port lookup failed   ← 1회차, 막다른 분기
+14:22:39Z ERROR Daemon listener bind failed: Address already in use ← 이게 살렸다
+14:22:41Z INFO  Port 9120 held by external process — falling back to 9122 immediately
+```
+
+두 번째(14:23:11)는 CLI 의 stray sweep 이 9122 를 `/shutdown` 한 뒤라 옆에서 도는
+bind-failure 경로가 없었다 → 23시간. 즉 이 분기는 **평소에도 닿고**, 우연히 다른
+재시도가 겹칠 때만 안 터진다.
+
+### "영원히" 의 정확한 뜻
+
+살아있는 데몬이 9120 을 계속 쥐고 있는 한 스스로 못 돌아온다. 오늘 install 검증
+때문에 `launchctl bootout` 으로 데몬을 **완전히** 없앴더니(22:38Z) 앱이 스스로
+승격했고, 돌아온 데몬이 그걸 다시 내리는 과정에서 이번엔 레지스트리가 답을 줘서
+클라이언트로 붙었다 — 22:41Z 부터 60초마다 `Merged external daemon activity`,
+ESTABLISHED 2개. 복귀 조건이 "데몬이 잠깐 사라졌다가 새로 뜬다" 라는 것 자체가
+증상이다.
+
 ### 방아쇠 (Node)
 
 `daemon-server.ts` 는 Swift 데몬을 **`/shutdown`** 으로 쫓아내는 자리가 4곳이었다.
