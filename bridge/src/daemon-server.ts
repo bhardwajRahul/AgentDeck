@@ -138,6 +138,7 @@ import {
   findExistingDaemon,
   probeDaemonHealth,
   requestDaemonShutdown,
+  requestDaemonStandDown,
   scanDaemonPortWindow,
   shouldConcedePortToOccupant,
   waitForDaemonExit,
@@ -1405,6 +1406,31 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   // what this daemon is allowed to do.
   const posture = resolveDaemonPosture({ local: opts.local, loopback: opts.loopback });
 
+  // Evict an app-owned Swift in-process daemon so this CLI daemon can take over.
+  //
+  // `/stand-down` first, `/shutdown` only as the fallback for app builds that
+  // predate the endpoint — and the difference is not politeness. `/stand-down`
+  // TELLS the app which port to become a client of (its canonical one, the one
+  // we are about to bind); `/shutdown` leaves the app resolving that port from
+  // a registry that is empty at exactly this moment — our daemon.json row is
+  // being torn down and the incoming daemon has not bound yet. That resolution
+  // failing is what left the macOS app daemonless and clientless for 23 hours
+  // (#305, measured 2026-09-09; same signature 09-07 and 09-10). The app side
+  // is fixed too, but this path was ALSO asking the wrong question of it.
+  //
+  // One helper rather than the four copies this rule used to have here: the
+  // CLI's own takeover (`negotiateIncumbentDaemon`) has preferred stand-down
+  // since it was written, and these four sites — the ones that actually run
+  // inside `daemon start --foreground` — never learned it.
+  const evictSwiftDaemon = async (port: number, where: string): Promise<void> => {
+    log(`[agentdeck] Swift daemon detected ${where}. Requesting stand-down to take over...`);
+    if (!(await requestDaemonStandDown(port))) {
+      log(`[agentdeck] Stand-down was not acknowledged — falling back to /shutdown.`);
+      await requestDaemonShutdown(port);
+    }
+    await waitForDaemonExit(port);
+  };
+
   // ===== Singleton guard + port allocation =====
   // 1. Check daemon.json and sessions.json for existing daemon
   const existingInfo = readDaemonInfo();
@@ -1413,9 +1439,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     const health = await probeDaemonHealth(probePort);
     if (health?.mode === 'daemon') {
       if (health.isSwift) {
-        log(`[agentdeck] Swift daemon detected on port ${probePort}. Requesting shutdown to take over...`);
-        await requestDaemonShutdown(probePort);
-        await waitForDaemonExit(probePort);
+        await evictSwiftDaemon(probePort, `on port ${probePort}`);
         // …and until the socket is actually released. NWListener.cancel()
         // returns before the port is free, so "stopped answering" alone would
         // let the bind below land on a fallback port.
@@ -1435,9 +1459,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     const health = await probeDaemonHealth(existingSession.port);
     if (health?.mode === 'daemon') {
       if (health.isSwift) {
-        log(`[agentdeck] Swift daemon detected on port ${existingSession.port}. Requesting shutdown to take over...`);
-        await requestDaemonShutdown(existingSession.port);
-        await waitForDaemonExit(existingSession.port);
+        await evictSwiftDaemon(existingSession.port, `on port ${existingSession.port}`);
         removeDaemonSession(existingSession);
       } else {
         log(`[agentdeck] Daemon already running on port ${existingSession.port} (PID ${existingSession.pid}).`);
@@ -1473,9 +1495,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       port = await findAvailablePort();
     } else if (preferredOccupant.mode === 'daemon') {
       if (preferredOccupant.isSwift) {
-        log(`[agentdeck] Swift daemon detected on port ${requestedPort} via /health. Requesting shutdown to take over...`);
-        await requestDaemonShutdown(requestedPort);
-        await waitForDaemonExit(requestedPort);
+        await evictSwiftDaemon(requestedPort, `on port ${requestedPort} via /health`);
         await waitForPortBindable(requestedPort);
       } else {
         // Daemon alive but not in our registry — race condition or stale state
@@ -1508,9 +1528,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       continue;
     }
     if (stray.health.isSwift) {
-      log(`[agentdeck] Swift daemon detected on fallback port ${stray.port}. Requesting shutdown to take over...`);
-      await requestDaemonShutdown(stray.port);
-      await waitForDaemonExit(stray.port);
+      await evictSwiftDaemon(stray.port, `on fallback port ${stray.port}`);
     } else if (shouldConcedePortToOccupant(stray.health, process.pid)) {
       log(`[agentdeck] Daemon already running on port ${stray.port} (detected via port scan).`);
       process.exit(0);

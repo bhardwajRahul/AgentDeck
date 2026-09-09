@@ -356,12 +356,47 @@ final class DaemonService: ObservableObject {
         readyUrl = nil
     }
 
+    /// Which port to look for an external daemon on.
+    ///
+    /// Split out as a pure function because the registry answer is EMPTY at
+    /// exactly the moment this matters. The in-process server's `onShutdown`
+    /// handler calls `connectToExternalDaemon()` with no port, and it runs
+    /// while our own `daemon.json` row is being torn down and the incoming CLI
+    /// daemon has not bound yet — it is still waiting out our teardown and the
+    /// ~14s NECP hold. All three registry lookups return nil there.
+    ///
+    /// Resolving that to nil was a terminal dead end: the caller set `port = 0`
+    /// and returned with no rescheduled `start()`, unlike every other failure
+    /// branch in that function — and `port = 0` also neuters
+    /// `checkDaemonHealth`'s `guard currentPort > 0`, so the health monitor
+    /// that exists to catch this could never fire either. Measured on this desk
+    /// 2026-09-09: `ERROR External daemon detected, but port lookup failed` is
+    /// the last connection line the app ever logged, and it then sat daemonless
+    /// and clientless for 23 hours with its terrarium canvas still animating —
+    /// the reason it looks alive. Same signature on 09-07 and 09-10 (#305).
+    ///
+    /// The canonical port is the honest last resort: probing it either finds
+    /// the incoming daemon or falls through to the stale-registry branch, which
+    /// DOES reschedule `start()`. A wrong guess self-heals; nil could not.
+    nonisolated static func resolveExternalDaemonPort(
+        knownPort: Int?,
+        registryPort: Int?,
+        canonicalPort: Int
+    ) -> Int? {
+        if let knownPort, knownPort > 0 { return knownPort }
+        if let registryPort, registryPort > 0 { return registryPort }
+        return canonicalPort > 0 ? canonicalPort : nil
+    }
+
     private func connectToExternalDaemon(port knownPort: Int? = nil) async {
         let registry = SessionRegistry.shared
-        let resolvedPort = knownPort
-            ?? registry.findDaemonPort()
-            ?? registry.readDaemonInfo()?.port
-            ?? registry.findExistingDaemon()?.port
+        let resolvedPort = Self.resolveExternalDaemonPort(
+            knownPort: knownPort,
+            registryPort: registry.findDaemonPort()
+                ?? registry.readDaemonInfo()?.port
+                ?? registry.findExistingDaemon()?.port,
+            canonicalPort: AppPreferences.shared.daemonPort
+        )
 
         guard let resolvedPort else {
             self.server = nil
@@ -371,6 +406,16 @@ final class DaemonService: ObservableObject {
             self.readyUrl = nil
             self.errorMessage = "External daemon detected, but port lookup failed"
             DaemonLogger.shared.error(self.errorMessage!)
+            // Unreachable while the canonical port is valid, and still wired:
+            // a branch that leaves the app with no daemon and no client must be
+            // correct on its own terms, because THIS is the branch that wedged
+            // the app for 23 hours. Same scheduled-retry idiom as the
+            // stale-registry and foreign-daemon exits below — never inline,
+            // since `start()`'s `isStarting` guard is still held here.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                self?.start()
+            }
             return
         }
 

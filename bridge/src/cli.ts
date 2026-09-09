@@ -41,6 +41,8 @@ import {
   supervisorLivenessProbe,
   oneOffFlagsBlockingSupervisor,
   routeDaemonLifecycle,
+  supervisorJobRunning,
+  classifySupervision,
   type SupervisorFacts,
 } from './daemon-supervisor.js';
 import {
@@ -349,6 +351,122 @@ async function stopDaemon(port: number, opts: { supervisor?: SupervisorFacts | n
   } catch {
     log('Daemon is not running');
   }
+}
+
+/**
+ * Leave `daemon install` with the machine in the state it just promised.
+ *
+ * Registering the unit is not the same as the unit owning the daemon. The
+ * job's ExecStart is `daemon start --foreground`, so when an unsupervised
+ * daemon already holds the port the job exits 0 against the incumbent guard
+ * and the install reports success over `state = not running` — the daemon on
+ * this machine has no parent, and nothing brings it back until the next login.
+ * That is the same hole `daemon stop` and `daemon restart` already had, from a
+ * third side, and it gets the same answer: hand the daemon to the unit.
+ *
+ * Only one of the five states is acted on. `foreign` and `unknown` act on
+ * nothing by rule; `supervised` and `no-daemon` are reported, because an
+ * install that changed nothing and an install that could not start a daemon
+ * are different outcomes and the user cannot tell them apart from silence.
+ *
+ * The settle window exists because the job was started milliseconds ago: right
+ * after a load its state is `running` whether it is about to serve the port or
+ * about to exit 0 against an incumbent, so a single reading taken now answers
+ * the wrong question. `unsupervised` is the one verdict that cannot un-happen
+ * on its own, so it short-circuits; everything else is read at the end.
+ */
+async function convergeInstalledSupervision(
+  supervisor: SupervisorFacts | null,
+  unitPosture: string[],
+): Promise<void> {
+  if (!supervisor) return;
+  const {
+    probeDaemonHealth, readDaemonInfo, findDaemonPort, waitForDaemonExit,
+  } = await import('./session-registry.js');
+  const { isForeignDaemon } = await import('./daemon-takeover.js');
+  const { resolveDaemonPort } = await import('./daemon-port.js');
+  const { distBuildId } = await import('./daemon-build-identity.js');
+  const preferred = resolveDaemonPort({});
+
+  const settleUntil = Date.now() + 8_000;
+  let health: Awaited<ReturnType<typeof probeDaemonHealth>> = null;
+  let port = preferred.port;
+  let state = classifySupervision({ daemonAnswering: false, daemonIsForeign: false, jobRunning: undefined });
+  for (;;) {
+    const info = readDaemonInfo();
+    port = info?.httpPort ?? info?.port ?? findDaemonPort() ?? preferred.port;
+    health = await probeDaemonHealth(port);
+    state = classifySupervision({
+      daemonAnswering: health?.mode === 'daemon',
+      daemonIsForeign: isForeignDaemon(health),
+      jobRunning: supervisorJobRunning(supervisor),
+    });
+    if (state === 'unsupervised' || state === 'foreign' || Date.now() >= settleUntil) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  const who = describeSupervisor(supervisor);
+  if (state === 'foreign') {
+    log(`Port ${port} is held by another user's daemon — leaving it alone. The ${who} is registered and `
+      + `will start your own daemon on a free port.`);
+    return;
+  }
+  if (state === 'unknown') {
+    log(`Could not read the ${who}'s state, so this install did not check whether it owns the daemon. `
+      + `'agentdeck daemon status' shows what is serving.`);
+    return;
+  }
+  if (state === 'no-daemon') {
+    log(`The ${who} is registered, but no daemon answered within 8s. Run 'agentdeck daemon start' — `
+      + `and 'agentdeck daemon status' if it still does not come up.`);
+    return;
+  }
+  if (state === 'supervised') {
+    if (health?.mode === 'daemon') {
+      log(`Daemon running under the ${who} (PID ${health.pid ?? 'unknown'}, port ${port}).`);
+    } else {
+      log(`The ${who}'s job is running — the daemon will bind shortly.`);
+    }
+    return;
+  }
+
+  // state === 'unsupervised'
+  const stoppedPid = typeof health?.pid === 'number' ? health.pid : undefined;
+  log(`A daemon is already running outside the ${who} (PID ${stoppedPid ?? 'unknown'}, port ${port}). `
+    + `The unit's job exits immediately against it, so the machine would stay unsupervised — handing it over.`);
+  const runningPosture = daemonPostureArgs({
+    local: health?.posture?.noDeviceModules === true,
+    loopback: health?.posture?.loopbackOnly === true,
+  });
+  if (runningPosture.join(' ') !== unitPosture.join(' ')) {
+    log(`Note: the running daemon's posture (${runningPosture.join(' ') || 'default'}) is replaced by the `
+      + `one you just installed (${unitPosture.join(' ') || 'default'}).`);
+  }
+  await stopDaemon(port, { supervisor });
+  if (!(await waitForDaemonExit(port, 8000))) {
+    log(`Warning: the daemon on port ${port} was still answering when the stop budget ran out.`);
+  }
+  const started = runSupervisorPlan(supervisorStartPlan(supervisor));
+  if (!started.ok) {
+    const detail = started.ran.find((r) => !r.ok)?.detail;
+    log(`Could not start the ${who}${detail ? ` — ${detail.split('\n')[0]}` : ''}.`);
+    log(`Run 'agentdeck daemon start' to bring a daemon back.`);
+    return;
+  }
+  const verdict = await waitForRestartedDaemon({
+    stoppedPid,
+    preferredPort: preferred.port,
+    probeHealth: probeDaemonHealth,
+    readDaemonInfo, findDaemonPort,
+    expectedBuild: distBuildId(),
+    isChildAlive: supervisorLivenessProbe(supervisor),
+    onStillWaiting: () => log(`Still starting — waiting for the supervised daemon to bind.`),
+  });
+  if (verdict.ok) {
+    log(`Daemon now running under the ${who} (PID ${verdict.daemon.pid}, port ${verdict.daemon.port}).`);
+    return;
+  }
+  reportDaemonWaitFailure(verdict, 'start');
 }
 
 async function isDaemonPort(port: number): Promise<boolean> {
@@ -1862,6 +1980,7 @@ daemon
       } catch {
         log('Task registered; immediate start failed — it will start on next logon.');
       }
+      await convergeInstalledSupervision(detectSupervisor(), postureArgs);
       await refreshClaudeHooks();
       await refreshKiroHooks();
       // Install Codex lifecycle hooks for parity with the macOS install path.
@@ -1898,6 +2017,7 @@ daemon
           installUnit(postureArgs);
           startUnit();
           log(`systemd user unit '${SERVICE_NAME}' installed and started.`);
+          await convergeInstalledSupervision(detectSupervisor(), postureArgs);
           log(`Unit file: ${getUnitPath()}`);
           if (process.env.AGENTDECK_DATA_DIR) {
             log(`Data dir: ${getDataDir()} (AGENTDECK_DATA_DIR persisted into the unit — re-run 'agentdeck daemon install' to change it)`);
@@ -1947,6 +2067,7 @@ daemon
     try { execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`); } catch {}
     execSync(`launchctl load "${PLIST_PATH}"`);
     log('LaunchAgent loaded. Daemon will auto-start on login.');
+    await convergeInstalledSupervision(detectSupervisor(), postureArgs);
     await refreshClaudeHooks();
     await refreshKiroHooks();
     // Install Codex lifecycle hooks parallel to the LaunchAgent install

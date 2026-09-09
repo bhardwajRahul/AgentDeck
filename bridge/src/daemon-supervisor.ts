@@ -323,6 +323,47 @@ export function supervisorJobRunning(f: SupervisorFacts): boolean | undefined {
 }
 
 /**
+ * Is the daemon this machine is running the one the supervisor owns?
+ *
+ * `daemon install` registers the unit and starts its job — and that job runs
+ * `daemon start --foreground`, which hits the incumbent guard and exits 0 the
+ * moment an unsupervised daemon already holds the port. The install then
+ * reports success over `state = not running`: the unit is registered, nothing
+ * supervises the daemon, and nothing will until the next login. Measured on
+ * this fleet 2026-09-09 (`runs = 7, last exit code = 0, state = not running`
+ * beside a ppid-1 daemon serving 9120).
+ *
+ * A truth table rather than ifs at the three platform branches, and two of its
+ * rules are about NOT acting. A foreign daemon is another user's and is never
+ * touched however this machine is supervised. And a supervisor that did not
+ * answer is `unknown`, not "unsupervised" — the same polarity as every other
+ * probe in this codebase: "I could not look" must never be laundered into a
+ * fact, least of all one whose remedy is stopping a healthy daemon.
+ */
+export type SupervisionState =
+  /** The unit's job is running — it owns whatever daemon is or is about to be up. */
+  | 'supervised'
+  /** A daemon of ours answers, and the unit's job is not running. Converge. */
+  | 'unsupervised'
+  /** The port belongs to another OS user. Leave it alone. */
+  | 'foreign'
+  /** Nothing answers and the job is not running. The unit registered; no daemon came up. */
+  | 'no-daemon'
+  /** The supervisor did not answer. Report, act on nothing. */
+  | 'unknown';
+
+export function classifySupervision(args: {
+  daemonAnswering: boolean;
+  daemonIsForeign: boolean;
+  jobRunning: boolean | undefined;
+}): SupervisionState {
+  if (args.daemonIsForeign) return 'foreign';
+  if (args.jobRunning === undefined) return 'unknown';
+  if (args.jobRunning) return 'supervised';
+  return args.daemonAnswering ? 'unsupervised' : 'no-daemon';
+}
+
+/**
  * A throttled liveness probe for `waitForRestartedDaemon`.
  *
  * It is asked once per 300ms poll once past the floor, and each answer costs a

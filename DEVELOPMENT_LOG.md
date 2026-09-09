@@ -1,5 +1,109 @@
 # AgentDeck Development Log
 
+## 2026-09-10 — stand-down 당한 macOS 앱이 23시간 동안 데몬도 클라이언트도 아니었다 (#305)
+
+9/7·9/9·9/10 세 번 재현했지만 이슈도 없던 버그. 이번엔 **굳은 상태 그대로** 잡아서
+원인 줄까지 짚었다. 앱은 살아 보인다 — 테라리움 캔버스가 계속 돌아 CPU 36%, 창도
+반응한다 — 그런데 아무 데도 붙어 있지 않고 영원히 재연결하지 않는다.
+
+### 계측 (앱 pid 53038, 실행 22h48m)
+
+앱 로그(`~/Library/Containers/…/AgentDeck/swift-daemon.log`)가 그 줄에서 끝난다:
+
+```
+14:22:43Z INFO  Daemon running on port 9122 — all modules wired
+14:23:07Z INFO  Daemon shutting down...
+14:23:11Z INFO  Daemon stopped
+14:23:11Z INFO  In-process daemon shutdown completed, transitioning to external daemon...
+14:23:11Z ERROR External daemon detected, but port lookup failed      ← 연결에 관한 마지막 줄
+```
+
+프로세스 상태 — 세 계측이 세트다. `lsof` 는 9120 으로 가는 **CLOSED 소켓 4개**,
+60회 연속 폴링에도 새 소켓 0. `nettop -P -x -L 25` 는 **25초 동안 바이트 카운터가
+완전 정지**(5초 health probe 조차 안 돈다는 확정 증거). `sample 53038 3` 에는
+daemon/websocket/reconnect 계열 심볼이 **0개**, 메인 스레드는 통째로
+`TerrariumRenderer.draw → WaterEffect.drawCausticLayer`. 그 동안 9120 에는 멀쩡한
+CLI 데몬(pid 70990, build `4d1148c6e88f`)이 있었고 양쪽 토큰도 일치했다 — 인증 문제가
+아니다.
+
+### 결함 (Swift)
+
+`DaemonService.connectToExternalDaemon(port:)` 의 포트 해석 실패 분기 하나만
+**재시도를 예약하지 않는다**. 같은 함수의 stale-registry·foreign-daemon 분기는 전부
+`Task { … self?.start() }` 를 건다. 게다가 그 분기가 쓰는 `port = 0` 은
+`checkDaemonHealth` 의 `guard currentPort > 0` 을 무력화한다 — **포기하는 코드와
+상태를 지우는 코드가 같은 실패 모드를 공유**하는, 1.0.4 때와 같은 모양이다. 5초
+health monitor 는 계속 돌면서 아무것도 안 한다.
+
+그 분기에 닿는 경로는 인프로세스 서버의 `onShutdown` 핸들러
+(`connectToExternalDaemon()` — **포트 인자 없음**)이고, 그건 레지스트리가 **비어 있는
+게 보장된** 순간에 돈다: 우리 `daemon.json` 행은 치워지는 중이고, 들어오는 CLI 데몬은
+우리 teardown + macOS NECP ~14초 를 기다리느라 아직 bind 하지 않았다. 세 lookup 이
+전부 nil.
+
+두 번째 절반도 있다. `AgentStateHolder.preferredLocalBridgeUrl` 은 오직
+`daemonService.onReady` 만 쓴다. 위에서 bail 하면 그 핀이 **앱 자신의 죽은 포트에
+박힌 채** 남아, state holder 의 재연결 사다리도 CLI 데몬을 찾을 수 없다. DaemonService
+쪽을 고치면 항상 종단 상태에 도달해 `onReady` 가 다시 불리므로 같이 풀린다.
+
+### 방아쇠 (Node)
+
+`daemon-server.ts` 는 Swift 데몬을 **`/shutdown`** 으로 쫓아내는 자리가 4곳이었다.
+CLI 자신의 `negotiateIncumbentDaemon` 은 처음부터 `/stand-down` 을 선호했는데, 실제로
+`daemon start --foreground` 안에서 도는 이 4곳은 그걸 배운 적이 없다. 차이는 예의가
+아니다 — `/stand-down` 은 앱에게 **어느 포트의 클라이언트가 되라고 알려주고**,
+`/shutdown` 은 위의 빈 레지스트리에서 앱이 스스로 알아내게 둔다.
+
+### 고침
+
+- `DaemonService.resolveExternalDaemonPort` (순수 함수, 그래서 seam 없는 액터 밖에서
+  테스트된다): known › registry › **canonical 포트**. 마지막 폴백이 요점이다 —
+  틀린 추측은 stale-registry 분기가 `start()` 를 다시 걸어 스스로 낫지만, nil 은
+  낫지 못했다. 0 은 답이 아니다(모든 teardown 경로가 `port = 0` 을 쓰므로 그럴듯한
+  숫자로 도착한다).
+- 이제 도달 불가능해진 nil 분기도 재시도를 예약한다 — 앱을 23시간 굳힌 게 바로 그
+  분기다. 방어 분기는 자기 자신으로 옳아야 한다.
+- Node 4곳을 `evictSwiftDaemon` 하나로: `/stand-down` 우선, `/shutdown` 은 엔드포인트
+  이전 앱 빌드용 폴백.
+
+**아직 남은 것**: 실기 확인은 고친 앱 빌드를 설치해야 되고, 데스크의 `/Applications/
+AgentDeck.app` 은 1.2.1 dev 빌드다. Swift 테스트 12개는 green.
+
+## 2026-09-10 — `daemon install` 이 감시 밖 데몬을 유닛에 넘긴다
+
+유닛을 등록하는 것과 유닛이 데몬을 소유하는 것은 다른 사실이다. job 의 ExecStart 는
+`daemon start --foreground` 이라, 감시 밖 데몬이 이미 포트를 쥐고 있으면 job 은
+incumbent 가드에 걸려 exit 0 하고 install 은 `state = not running` 위에 성공을
+보고했다. `daemon stop`·`daemon restart` 가 이미 가진 구멍의 세 번째 면이고, 답도
+같다 — 데몬을 유닛에 넘긴다.
+
+`classifySupervision`(`daemon-supervisor.ts`)의 5상태 중 **행동하는 건 하나**다.
+`foreign` 과 `unknown` 은 규칙상 아무것도 안 한다 — `unsupervised` 의 처방이 "데몬을
+멈춘다" 이므로 "못 봤다" 를 그 판정으로 세탁하면 멀쩡한 데몬을 근거 없이 멈춘다.
+`supervised` 와 `no-daemon` 은 보고만 한다(아무것도 안 바뀐 install 과 데몬을 못 띄운
+install 은 다른 결과이고, 침묵으로는 구분이 안 된다).
+
+settle 창(8초)이 필요한 이유: load 직후 job 은 포트를 서비스하려던 것이든 incumbent
+에 걸려 exit 0 하려던 것이든 `state = running` 이라, 지금 한 번 읽는 건 다른 질문에
+답하는 것이다. `unsupervised` 만 스스로 풀릴 수 없는 판정이라 short-circuit 한다.
+
+**실기 확인 (2026-09-10)**. 감시 상태에서 install → `Daemon running under the launchd
+unit … (PID 38363, port 9120)`, 핸드오버 없음. 그 다음 `launchctl bootout` +
+`daemon start --foreground` 로 감시 밖 데몬(pid 39833, ppid 39831)을 만들고 job 을
+없앤 뒤 install → 한 줄로 상태를 말하고 넘긴다:
+
+```
+A daemon is already running outside the launchd unit dev.agentdeck.daemon (PID 39833,
+port 9120). The unit's job exits immediately against it, so the machine would stay
+unsupervised — handing it over.
+…
+Daemon now running under the launchd unit dev.agentdeck.daemon (PID 40879, port 9120).
+```
+
+이후 `launchctl print` = `state = running, runs = 1, pid = 40879`, `/health` 의 pid 도
+40879, 보드 20대 재접속. 포스처가 다르면 유닛의 포스처로 **바뀐다는 사실을 출력한다**
+— install 은 유닛을 선언하는 명령이므로 바꾸는 건 맞지만, 조용히 바꾸면 안 된다.
+
 ## 2026-09-10 — 유령 PERM: 게이트웨이가 15분 전에 버린 승인을 데크가 들고 있었다
 
 사용자가 "왜 지금 OpenClaw 세션이 PERMIT 인가, 정상인가" 라고 물었고, 답은 **시작은

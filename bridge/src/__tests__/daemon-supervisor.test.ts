@@ -17,6 +17,7 @@ import {
   runSupervisorPlan,
   supervisorJobRunning,
   supervisorLivenessProbe,
+  classifySupervision,
   describeSupervisor,
   PLIST_LABEL,
   type SupervisorFacts,
@@ -238,5 +239,39 @@ describe('supervisorJobRunning / supervisorLivenessProbe', () => {
     expect(probe()).toBe(false);
     // Second call must not re-exec; it can only return the cached answer.
     expect(probe()).toBe(false);
+  });
+});
+
+describe('classifySupervision — does the unit own the daemon this machine is running', () => {
+  const c = (daemonAnswering: boolean, jobRunning: boolean | undefined, daemonIsForeign = false) =>
+    classifySupervision({ daemonAnswering, daemonIsForeign, jobRunning });
+
+  it('a daemon answering with the job not running is the state install must converge', () => {
+    // The measured shape: `runs = 7, last exit code = 0, state = not running`
+    // beside a ppid-1 daemon serving 9120. The unit is registered and owns
+    // nothing.
+    expect(c(true, false)).toBe('unsupervised');
+  });
+
+  it('a running job owns whatever daemon is up, or is about to be', () => {
+    expect(c(true, true)).toBe('supervised');
+    expect(c(false, true)).toBe('supervised');
+  });
+
+  it('nothing answering with the job down is a failed start, not a handover', () => {
+    expect(c(false, false)).toBe('no-daemon');
+  });
+
+  it('a supervisor that did not answer is unknown, never unsupervised', () => {
+    // The remedy for `unsupervised` is stopping a daemon. Laundering "I could
+    // not look" into that verdict would stop a healthy one on no evidence.
+    expect(c(true, undefined)).toBe('unknown');
+    expect(c(false, undefined)).toBe('unknown');
+  });
+
+  it("another user's daemon is never touched, whatever this machine's job is doing", () => {
+    for (const job of [true, false, undefined]) {
+      expect(c(true, job, true)).toBe('foreign');
+    }
   });
 });
