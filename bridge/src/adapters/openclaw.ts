@@ -31,6 +31,7 @@ import type {
 } from '../types.js';
 import type { AdapterContext, ChatEventPayload } from '@agentdeck/shared';
 import {
+  isApprovalGoneError,
   parseExecApprovalRequest,
   decisionForOptionIndex,
   decisionForRespondValue,
@@ -94,6 +95,43 @@ function extractGatewayTokenFromJson(json: unknown): string | null {
 type GatewayMessage = GatewayResponseFrame | GatewayEventFrame;
 
 /**
+ * An RPC rejection that still carries the Gateway's own error frame.
+ *
+ * The Gateway classifies its approval failures by a structured `code` plus a
+ * `details.reason`, and keeps the message text only as a legacy channel for
+ * older gateways. Rejecting with `new Error(message)` threw the durable half
+ * away, so every caller was left matching sentences.
+ */
+function gatewayRpcError(error: { code?: string; message?: string; details?: unknown }): Error {
+  const err = new Error(error.message || 'RPC error') as Error & {
+    gatewayCode?: string; details?: unknown;
+  };
+  if (typeof error.code === 'string') err.gatewayCode = error.code;
+  if (error.details !== undefined) err.details = error.details;
+  return err;
+}
+
+/**
+ * The rows of an `exec.approval.list` answer, or null when the payload cannot
+ * be read as one.
+ *
+ * Null is not an empty list — "I could not read the answer" must never close a
+ * prompt. The boxed `{ approvals: [...] }` shape is accepted because the Swift
+ * adapter already reads it, and one daemon deciding an approval is gone while
+ * the other cannot even parse the reply is the drift this reader removes.
+ */
+type ApprovalListRow = Record<string, unknown> & { id?: unknown; createdAtMs?: number };
+
+function approvalListRows(payload: unknown): ApprovalListRow[] | null {
+  if (Array.isArray(payload)) return payload as ApprovalListRow[];
+  if (payload && typeof payload === 'object') {
+    const boxed = (payload as { approvals?: unknown }).approvals;
+    if (Array.isArray(boxed)) return boxed as ApprovalListRow[];
+  }
+  return null;
+}
+
+/**
  * OpenClaw adapter — connects to OpenClaw Gateway via WebSocket.
  *
  * Protocol: Custom framing (req/res/event), Ed25519 device auth handshake,
@@ -142,6 +180,12 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
    *  emitting `exec.approval.resolved`, so without this the deck would keep
    *  offering buttons that resolve to "unknown or expired approval id". */
   private approvalExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Polls `exec.approval.list` while a prompt is up. The expiry timer above
+   *  reads the RECORD's clock (30 min by default), but the run that asked for
+   *  the approval dies on its own, much shorter, schedule — measured 2026-09-09
+   *  at 15m 9s — and the Gateway drops the record then with no event at all. So
+   *  the only honest close is to ask what is still pending. */
+  private approvalReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   // Chat tracking for timeline events
   private chatStarted = false;
@@ -207,6 +251,10 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
   private reconnectDelay = 1000;
   private static readonly MAX_RECONNECT_DELAY = 30_000;
   private static readonly RPC_TIMEOUT = 10_000;
+  /** How often to ask the Gateway whether a displayed approval still exists.
+   *  Bounded by how long a ghost prompt may sit on a deck, not by cost: the
+   *  poll runs only while one is up, and it is one RPC. */
+  private static readonly APPROVAL_RECONCILE_MS = 30_000;
 
   constructor(options?: string | OpenClawAdapterOptions) {
     super();
@@ -520,8 +568,8 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
    * catch-up) once it is answered.
    */
   private async adoptPendingApprovals(): Promise<void> {
-    const pending = await this.rpcCall('exec.approval.list', {});
-    if (!Array.isArray(pending) || pending.length === 0) return;
+    const pending = approvalListRows(await this.rpcCall('exec.approval.list', {}));
+    if (!pending || pending.length === 0) return;
     const oldest = [...pending].sort(
       (a, b) => (a?.createdAtMs ?? 0) - (b?.createdAtMs ?? 0),
     )[0];
@@ -562,6 +610,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       );
       this.approvalExpiryTimer.unref?.();
     }
+    this.startApprovalReconcile();
   }
 
   private clearPendingApproval(): void {
@@ -569,7 +618,56 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       clearTimeout(this.approvalExpiryTimer);
       this.approvalExpiryTimer = null;
     }
+    if (this.approvalReconcileTimer) {
+      clearInterval(this.approvalReconcileTimer);
+      this.approvalReconcileTimer = null;
+    }
     this.pendingApproval = null;
+  }
+
+  /**
+   * Ask the Gateway what is still pending while a prompt is on screen.
+   *
+   * The expiry timer alone is structurally late. An approval carries TWO
+   * lifetimes and AgentDeck only ever saw the longer one: the record's
+   * `expiresAtMs` is `DEFAULT_EXEC_APPROVAL_TIMEOUT_MS` (30 min in
+   * openclaw 2026.9.3), while the agent run waiting on it gives up far sooner —
+   * measured 2026-09-09 as a 908,788 ms `exec.approval.waitDecision`, after
+   * which the Gateway refused the follow-up with `agent runtime authority is no
+   * longer active` and dropped the record. No `exec.approval.resolved` is
+   * emitted on that path, so the deck offered an unanswerable prompt for the
+   * remaining 15 minutes and the user's press failed with `unknown or expired
+   * approval id`.
+   *
+   * Only a READABLE answer that does not contain our id closes the prompt. A
+   * transport failure, an RPC timeout, or a payload this cannot parse are all
+   * "no information" and leave it exactly where it is — the same polarity as
+   * every other probe here, and the one that cannot discard a live approval the
+   * agent is still blocked on.
+   */
+  private startApprovalReconcile(): void {
+    if (this.approvalReconcileTimer) return;
+    this.approvalReconcileTimer = setInterval(() => {
+      void this.reconcilePendingApproval();
+    }, OpenClawAdapter.APPROVAL_RECONCILE_MS);
+    this.approvalReconcileTimer.unref?.();
+  }
+
+  private async reconcilePendingApproval(): Promise<void> {
+    const prompt = this.pendingApproval;
+    if (!prompt) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    let rows: ApprovalListRow[] | null;
+    try {
+      rows = approvalListRows(await this.rpcCall('exec.approval.list', {}));
+    } catch {
+      return; // silence is not an answer
+    }
+    if (!rows) return; // an unreadable answer is not "gone" either
+    if (rows.some((row) => row?.id === prompt.id)) return;
+    // It may have been answered or replaced while we were asking.
+    if (this.pendingApproval?.id !== prompt.id) return;
+    this.abandonPendingApproval(prompt.id, 'No longer pending');
   }
 
   /**
@@ -622,6 +720,17 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
           ts: Date.now(), type: 'error',
           raw: `Approval failed: ${err instanceof Error ? err.message : String(err)}`,
         });
+        // Two failures, two answers. The Gateway naming this approval as
+        // unknown, expired or already resolved is not a retryable error — it is
+        // the answer, and re-offering the prompt re-arms a button that can only
+        // fail the same way. That is exactly what happened on 2026-09-09: the
+        // press at 23:40:37 came back `unknown or expired approval id` and put
+        // the dead prompt straight back on every surface. A transport failure
+        // stays retryable, because there we know nothing.
+        if (isApprovalGoneError(err)) {
+          this.abandonPendingApproval(prompt.id, 'No longer pending');
+          return;
+        }
         // Put the prompt back on every surface so the user can retry rather
         // than staring at a deck that silently did nothing.
         this.rebroadcastPendingApproval();
@@ -856,6 +965,12 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
 
     // Cancel any pending idle-gap timer so it doesn't fire after shutdown.
     this.clearAllIdleGapTimers();
+
+    // And the approval timers. `ws.close()` below does reach the 'close'
+    // handler that abandons a pending approval, but shutdown must not depend on
+    // a socket callback firing — an interval that outlives the adapter polls a
+    // Gateway this process no longer talks to.
+    this.clearPendingApproval();
 
     for (const [id, pending] of this.pendingRpc) {
       pending.reject(new Error('Adapter shutting down'));
@@ -1103,7 +1218,11 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
         this.pendingRpc.delete(msg.id);
         if (!msg.ok && msg.error) {
           debug('adapter:openclaw', `RPC error (${pending.method}): ${JSON.stringify(msg.error)}`);
-          pending.reject(new Error(msg.error.message || 'RPC error'));
+          // Carry the frame's own `code`/`details` onto the rejection. The
+          // Gateway's structured reason is the durable channel — its message
+          // text is explicitly the legacy path — and dropping it here left every
+          // caller classifying failures by sentence.
+          pending.reject(gatewayRpcError(msg.error));
         } else {
           debug('adapter:openclaw', `← ${pending.method} (id=${msg.id})`);
           pending.resolve(msg.payload);

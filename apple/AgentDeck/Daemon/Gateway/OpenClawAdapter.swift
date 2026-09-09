@@ -223,6 +223,16 @@ actor OpenClawAdapter {
     /// every surface with nothing to show but "PERMIT?".
     private var pendingApproval: OpenClawApprovalPrompt?
     private var pendingApprovalId: String? { pendingApproval?.id }
+    /// Polls `exec.approval.list` (and the record's own expiry) while a prompt
+    /// is up. An approval carries TWO lifetimes and this daemon only ever saw
+    /// the resolved event: the record's `expiresAtMs` is 30 minutes by default,
+    /// while the agent run waiting on it gives up far sooner — measured
+    /// 2026-09-09 at 15m 9s — after which the Gateway drops the record and
+    /// emits NOTHING. Until this existed a dropped approval was a PERM the deck
+    /// showed forever: nothing here cleared `pendingApproval` except a resolved
+    /// event that, on that path, never comes.
+    private var pendingApprovalWatch: Task<Void, Never>?
+    private static let approvalReconcileNanoseconds: UInt64 = 30_000_000_000
     private struct RPCResponse: @unchecked Sendable {
         let ok: Bool
         let payload: [String: Any]?
@@ -292,6 +302,8 @@ actor OpenClawAdapter {
         reconnectTask = nil
         sessionsPollTask?.cancel()
         sessionsPollTask = nil
+        pendingApprovalWatch?.cancel()
+        pendingApprovalWatch = nil
         if let task = wsTask {
             task.cancel(with: .goingAway, reason: nil)
             // Resolve any RPC continuations bound to this task before nil-ing.
@@ -554,7 +566,8 @@ actor OpenClawAdapter {
             // here: everything the user needs to see lives under `request`, and
             // reading it flat (`payload["tool"]`, which never exists) is what
             // shipped an approval with no command on it.
-            pendingApproval = OpenClawApprovalRules.parse(payload, nowMs: Date().timeIntervalSince1970 * 1000)
+            setPendingApproval(
+                OpenClawApprovalRules.parse(payload, nowMs: Date().timeIntervalSince1970 * 1000))
             var approvalEvent: [String: Any] = ["type": "gateway_approval", "payload": payload]
             if let prompt = pendingApproval {
                 approvalEvent["prompt"] = Self.promptDict(prompt)
@@ -567,7 +580,7 @@ actor OpenClawAdapter {
             if let resolvedId = payload["id"] as? String, resolvedId != pendingApproval?.id {
                 // Not ours — leave the pending prompt alone.
             } else {
-                pendingApproval = nil
+                setPendingApproval(nil)
             }
             self._onEvent?(["type": "gateway_approval_resolved", "payload": payload])
         case ADGatewayEventName.presence.rawValue, ADGatewayEventName.systemPresence.rawValue:
@@ -784,6 +797,11 @@ actor OpenClawAdapter {
         sessionsSubscribed = false
         sessionsPollTask?.cancel()
         sessionsPollTask = nil
+        // Pending approvals are Gateway-process state: a reconnect issues new
+        // ids, so holding the old one offers buttons that resolve to "unknown
+        // or expired approval id". The Node adapter has always done this; here
+        // the prompt used to survive every reconnect.
+        abandonPendingApproval(reason: "Gateway disconnected")
 
         if wasConnected {
             self._onConnectionChanged?(false)
@@ -1026,13 +1044,82 @@ actor OpenClawAdapter {
                 oldest, nowMs: Date().timeIntervalSince1970 * 1000),
               prompt.id != pendingApproval?.id
         else { return }
-        pendingApproval = prompt
+        setPendingApproval(prompt)
         DaemonLogger.shared.debug("OpenClaw", "adopted pending approval \(prompt.id) on connect")
         self._onEvent?([
             "type": "gateway_approval",
             "payload": oldest,
             "prompt": Self.promptDict(prompt),
         ])
+    }
+
+    /// Install (or clear) the prompt every surface renders, and arm the watch
+    /// that is the only thing able to close it when the Gateway says nothing.
+    private func setPendingApproval(_ prompt: OpenClawApprovalPrompt?) {
+        pendingApproval = prompt
+        pendingApprovalWatch?.cancel()
+        pendingApprovalWatch = nil
+        guard prompt != nil else { return }
+        pendingApprovalWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.approvalReconcileNanoseconds)
+                if Task.isCancelled { return }
+                await self?.reconcilePendingApproval()
+            }
+        }
+    }
+
+    /// The approval went away without a decision — it expired, its run was
+    /// cancelled, or the link dropped. The Gateway emits no
+    /// `exec.approval.resolved` for any of those, so this is the only path that
+    /// takes the prompt off the deck.
+    private func abandonPendingApproval(reason: String) {
+        guard let prompt = pendingApproval else { return }
+        setPendingApproval(nil)
+        DaemonLogger.shared.info(
+            "OpenClaw: pending approval \(prompt.id) abandoned — \(reason)")
+        _onEvent?([
+            "type": "gateway_approval_abandoned",
+            "id": prompt.id,
+            "reason": reason,
+        ])
+    }
+
+    /// Ask the Gateway whether the displayed approval still exists.
+    ///
+    /// Only a READABLE answer that does not contain our id closes the prompt. A
+    /// transport failure, a socket that is down, or a payload this cannot parse
+    /// are all "no information" and leave it exactly where it is — a wrong
+    /// "gone" discards a live approval the agent is still blocked on.
+    ///
+    /// The record's own expiry is checked on the same tick, because it is the
+    /// one bound that still applies while the link is down.
+    private func reconcilePendingApproval() async {
+        guard let prompt = pendingApproval else { return }
+        if let expiresAtMs = prompt.expiresAtMs,
+           expiresAtMs <= Date().timeIntervalSince1970 * 1000 {
+            abandonPendingApproval(reason: "Expired")
+            return
+        }
+        guard isConnected, wsTask != nil else { return }
+        let response = await rpcRequest(method: "exec.approval.list", params: [:])
+        guard response.ok else { return }
+        guard let rows = Self.approvalListRows(response.payload) else { return }
+        if rows.contains(where: { ($0["id"] as? String) == prompt.id }) { return }
+        // It may have been answered or replaced while we were asking.
+        guard pendingApproval?.id == prompt.id else { return }
+        abandonPendingApproval(reason: "No longer pending")
+    }
+
+    /// Rows of an `exec.approval.list` answer, or nil when the payload cannot be
+    /// read as one. Nil is not an empty list: "I could not read the answer" must
+    /// never close a prompt.
+    private static func approvalListRows(_ payload: Any?) -> [[String: Any]]? {
+        if let list = payload as? [[String: Any]] { return list }
+        if let dict = payload as? [String: Any], let list = dict["approvals"] as? [[String: Any]] {
+            return list
+        }
+        return nil
     }
 
     /// Answer the pending approval from a device command (`select_option` /
@@ -1075,8 +1162,29 @@ actor OpenClawAdapter {
                 "OpenClaw", "approval \(type) named no allowed decision — ignored")
             return false
         }
-        sendRPC(method: "exec.approval.resolve", params: ["id": prompt.id, "decision": decision.rawValue])
+        // Await the answer rather than firing and forgetting. Two failures, two
+        // outcomes: the Gateway naming this approval as unknown, expired or
+        // already resolved IS the answer — the prompt is not answerable by
+        // anyone and must come off the deck — while a transport failure tells us
+        // nothing and leaves it up to press again.
+        Task { [weak self] in
+            guard let self else { return }
+            let response = await self.rpcRequest(
+                method: "exec.approval.resolve",
+                params: ["id": prompt.id, "decision": decision.rawValue])
+            await self.handleApprovalResolveResponse(response, promptId: prompt.id)
+        }
         return true
+    }
+
+    private func handleApprovalResolveResponse(_ response: RPCResponse, promptId: String) {
+        guard !response.ok else { return }
+        DaemonLogger.shared.error(
+            "OpenClaw: exec.approval.resolve failed: "
+            + "\(response.error?["message"] as? String ?? "unknown")")
+        guard pendingApproval?.id == promptId else { return }
+        guard OpenClawApprovalRules.isApprovalGoneError(response.error) else { return }
+        abandonPendingApproval(reason: "No longer pending")
     }
 
     /// Truncation-tolerant echo compare. Devices cap the question they display,

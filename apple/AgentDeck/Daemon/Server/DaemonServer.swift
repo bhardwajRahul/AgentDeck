@@ -8118,6 +8118,18 @@ final class DaemonServer {
                 .flatMap { $0.split(separator: " ").first.map(String.init) }
             broadcastStateUpdate()
             broadcastSessionsList()
+        case "gateway_approval_abandoned":
+            // The approval went away without a decision — expired, its run was
+            // cancelled, or the link dropped. The Gateway emits no
+            // `exec.approval.resolved` for those, and this daemon caches the
+            // prompt (the Node one reads it live off the adapter), so without
+            // this case the row keeps offering a PERM nobody can answer.
+            // `idle`, never `processing`: nothing was allowed to run.
+            gatewaySessionState = "idle"
+            gatewayPendingApproval = nil
+            gatewayCurrentTool = nil
+            broadcastStateUpdate()
+            broadcastSessionsList()
         case "gateway_approval_resolved":
             let resolvedPayload = event["payload"] as? [String: Any]
             let decision = resolvedPayload?["decision"] as? String
