@@ -93,6 +93,35 @@ CLI 자신의 `negotiateIncumbentDaemon` 은 처음부터 `/stand-down` 을 선�
 - Node 4곳을 `evictSwiftDaemon` 하나로: `/stand-down` 우선, `/shutdown` 은 엔드포인트
   이전 앱 빌드용 폴백.
 
+### 실기 검증 (2026-09-10, 고친 빌드 설치 후)
+
+서명된 Debug 번들을 만들어 `/Applications/AgentDeck.app` 을 교체하고(구버전은
+백업), 그 시나리오를 그대로 재현했다 — `daemon stop` → 앱이 폴백 포트로 승격 →
+`daemon start`:
+
+```
+22:52:33Z INFO Daemon running on port 9122 — all modules wired
+22:52:46Z INFO Stand-down requested by CLI daemon — yielding port 9122, becoming a client of 9120
+22:52:50Z INFO Daemon stopped
+22:52:53Z INFO External daemon detected on port 9120 — connecting as client     ← 7초, 복귀
+```
+
+한 번에 두 절반이 확인된다. stray sweep 이 **"Stand-down requested by CLI daemon"**
+이라고 찍는다(예전엔 "Requesting shutdown to take over") → `evictSwiftDaemon` 이 산다.
+그리고 같은 실행 22:52:25 에 옛 막다른 경로에 한 번 닿았는데
+(`In-process daemon shutdown completed, transitioning to external daemon...`) 이번엔
+`External daemon detected, but port lookup failed` 가 **안 따라오고**
+`External daemon on port 9121 is stale — starting local daemon instead` 로 떨어졌다 —
+`start()` 를 다시 거는 그 분기다. canonical 폴백이 존재 이유대로 동작한 게 로그에
+찍혔다.
+
+끝 상태: 앱=9120 클라이언트(ESTABLISHED 3), 데몬 `state = running, pid 83187`, 보드 14대.
+
+**부수 발견 (#306)**: 22:52:22-25 의 실패한 9121 폴백 바인드가 **NWListener 를
+흘린다** — 앱이 클라이언트인데 `*:9121 (LISTEN)` 을 계속 들고 있고, 접속은 받되
+아무 답도 안 한다. 9121 은 세션 브리지 대역(9121-9139)이다. #305 의 회귀가 아니라,
+#305 가 고쳐져서 승격/축출 사이클이 끝까지 돌아간 덕에 보이게 된 것.
+
 **같은 규칙의 세 번째 면**: `stopDaemon` 도 Swift 인컴번트를 무조건 `/shutdown` 했다.
 `handover` 옵션을 받아 — 이 포트로 데몬이 **돌아온다**는 뜻 — Swift 상대에겐
 `/stand-down` 을 먼저 보낸다(`daemon restart`, install 수렴). 맨 `daemon stop` 은
