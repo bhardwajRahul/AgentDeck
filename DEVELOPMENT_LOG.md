@@ -67,6 +67,32 @@ throw 경로의 cancel 은 포트를 흘리지 않고(pre-bind 라 바인드된 
 하고, 그건 CLAUDE.md 에 이미 선행 조건으로 적혀 있다. 순수 seam 하나로 "테스트 있다"고
 말하지 않기 위해 테스트 파일에 그 한계를 적어뒀다.
 
+### 실기 검증 (설치본, 08:0x~08:16)
+
+고친 빌드를 `/Applications` 에 설치하고 이슈에 적힌 재현 절차를 그대로 돌렸다. 교체 전
+앱(pid 82084)은 `*:9121 (LISTEN)` 1개 보유.
+
+```
+설치 후 기동            LISTEN 0, 9120 에 ESTABLISHED 3        ← 클라이언트, 리스너 없음
+daemon stop            → 9120 사라짐
+23:16:16  EADDRINUSE   ← 9120 시도(NECP hold), 그 인스턴스는 23:16:17 정상 정리
+23:16:19  9121 listening / 23:16:20 all modules wired          ← 승격, 리스너 정확히 1개
+daemon start           → CLI 데몬 복귀(pid 40026)
+23:16:36  Stand-down requested — yielding 9121
+23:16:40  Teardown stage 'module + relay teardown' exceeded 4.0s — abandoning it
+23:16:40  Daemon stopped
+23:16:48  External daemon detected on port 9120 — connecting as client
+최종                    LISTEN 0                               ← 고아 없음
+```
+
+두 가지가 같이 나왔다. **고아 리스너 0** 이 이 수정의 결과이고, 그 stand-down 에서
+`module + relay teardown` budget 이 **실제로 발화했는데도 포트가 풀렸다** — 이슈가 의심한
+가설(budget abandon 이 리스너를 흘린다)이 독립적으로 반증된 것이다.
+
+이번 사이클은 stale 분기가 새 바인드보다 **먼저** 깨어나(23:16:18 < 23:16:19) 원래의 경합
+자체는 재현되지 않았다. 즉 이 실기는 "고아가 생기지 않는다"를 보였고, epoch 가드가
+발화하는 순간은 보지 못했다 — 발화하면 `Abandoning client transition at <stage>` 가 남는다.
+
 ### 곁가지
 
 앱 로그 `swift-daemon.log` 가 **518 MB** 다. 로테이션이 없다. 별건.
