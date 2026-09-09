@@ -310,8 +310,13 @@ export function buildPlist(extraArgs: string[] = []): string {
  * This is a stop, not an uninstall: the unit stays installed and starts again
  * at the next login, or at the next `agentdeck daemon start`.
  */
-async function stopDaemon(port: number, opts: { supervisor?: SupervisorFacts | null } = {}): Promise<void> {
-  const { readDaemonInfo, findDaemonPort, probeDaemonHealth } = await import('./session-registry.js');
+async function stopDaemon(
+  port: number,
+  opts: { supervisor?: SupervisorFacts | null; handover?: boolean } = {},
+): Promise<void> {
+  const {
+    readDaemonInfo, findDaemonPort, probeDaemonHealth, requestDaemonStandDown,
+  } = await import('./session-registry.js');
   const { isForeignDaemon } = await import('./daemon-takeover.js');
 
   // First, because the alternative is a race with the daemon's own parent: a
@@ -337,10 +342,26 @@ async function stopDaemon(port: number, opts: { supervisor?: SupervisorFacts | n
   // The registry resolves to this user's own daemon, but the `-p` fallback
   // resolves to whatever is on that port — which on a shared host is somebody
   // else's daemon, and `/shutdown` is trusted purely for being local.
-  if (isForeignDaemon(await probeDaemonHealth(targetPort))) {
+  const incumbent = await probeDaemonHealth(targetPort);
+  if (isForeignDaemon(incumbent)) {
     log(`Port ${targetPort} is held by another user's daemon — refusing to stop it.`);
     log(`You have no daemon of your own running.`);
     return;
+  }
+  // `handover` says a daemon is coming BACK on this port, which changes what an
+  // app-owned Swift incumbent should be told. `/stand-down` names the port it
+  // must become a client of; `/shutdown` leaves it resolving that from a
+  // registry that is empty at exactly this moment, which is what left the app
+  // daemonless and clientless for 23 hours (#305). Plain `daemon stop` keeps
+  // `/shutdown` on purpose: there, "become a client" is a lie — nothing is
+  // coming, and the app would re-promote after its yield window, so the stop
+  // would have stopped nothing.
+  if (opts.handover && incumbent?.isSwift) {
+    if (await requestDaemonStandDown(targetPort)) {
+      log(`Asked the AgentDeck app to stand down from port ${targetPort} (it stays running as a client).`);
+      return;
+    }
+    log(`Stand-down was not acknowledged — falling back to /shutdown.`);
   }
   try {
     await fetch(`http://127.0.0.1:${targetPort}/shutdown`, {
@@ -442,7 +463,7 @@ async function convergeInstalledSupervision(
     log(`Note: the running daemon's posture (${runningPosture.join(' ') || 'default'}) is replaced by the `
       + `one you just installed (${unitPosture.join(' ') || 'default'}).`);
   }
-  await stopDaemon(port, { supervisor });
+  await stopDaemon(port, { supervisor, handover: true });
   if (!(await waitForDaemonExit(port, 8000))) {
     log(`Warning: the daemon on port ${port} was still answering when the stop budget ran out.`);
   }
@@ -1505,7 +1526,7 @@ daemon
     // Stops the unit too (see stopDaemon): whether or not the supervisor
     // performs the restart, it must not respawn the old daemon into the middle
     // of this one.
-    await stopDaemon(runningPort, { supervisor });
+    await stopDaemon(runningPort, { supervisor, handover: true });
     // Wait for the old daemon to stop ANSWERING — a real condition, not the
     // 1500ms guess that used to sit here and merely outlasted the common case.
     //

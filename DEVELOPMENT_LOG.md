@@ -66,6 +66,12 @@ CLI 자신의 `negotiateIncumbentDaemon` 은 처음부터 `/stand-down` 을 선�
 - Node 4곳을 `evictSwiftDaemon` 하나로: `/stand-down` 우선, `/shutdown` 은 엔드포인트
   이전 앱 빌드용 폴백.
 
+**같은 규칙의 세 번째 면**: `stopDaemon` 도 Swift 인컴번트를 무조건 `/shutdown` 했다.
+`handover` 옵션을 받아 — 이 포트로 데몬이 **돌아온다**는 뜻 — Swift 상대에겐
+`/stand-down` 을 먼저 보낸다(`daemon restart`, install 수렴). 맨 `daemon stop` 은
+`/shutdown` 을 유지한다: 거기선 "클라이언트가 되라" 가 거짓말이고(오는 게 없다), 앱은
+yield 창 후 다시 승격해 stop 이 아무것도 멈추지 않게 된다.
+
 **아직 남은 것**: 실기 확인은 고친 앱 빌드를 설치해야 되고, 데스크의 `/Applications/
 AgentDeck.app` 은 1.2.1 dev 빌드다. Swift 테스트 12개는 green.
 
