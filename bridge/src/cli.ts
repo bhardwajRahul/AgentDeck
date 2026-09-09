@@ -1301,16 +1301,45 @@ daemon
     // old port still held) exits within a second, and this command used to
     // announce `Daemon restarted (PID …)` regardless, so a failed restart was
     // indistinguishable from a good one and the real reason sat unread in the
-    // daemon log. Verify by asking the daemon who it is.
+    // daemon log. Verify by asking the daemon that came up who it is — but ask
+    // it for its IDENTITY, not for this command's own child pid: on a
+    // supervised machine the winner is routinely a process this command never
+    // forked (see `waitForRestartedDaemon`).
     const spawnedPid = child.pid;
-    const started = spawnedPid !== undefined
-      ? await waitForDaemonPid(spawnedPid, preferredPort.port, probeHealth, readDaemonInfo, findDaemonPort,
-          PREFERRED_PORT_RECLAIM_MS, () => childAlive, undefined,
-          (p) => log(`Still starting — child PID ${p} is alive; waiting for it to bind.`))
-      : null;
+    const { distBuildId } = await import('./daemon-build-identity.js');
+    const onDiskBuild = distBuildId();
+    const verdict = await waitForRestartedDaemon({
+      spawnedPid,
+      // The one answer that is NOT a restart. Read before the stop, so it is
+      // the pid of the daemon this command actually asked to go away.
+      stoppedPid: running?.pid,
+      preferredPort: preferredPort.port,
+      probeHealth,
+      readDaemonInfo,
+      findDaemonPort,
+      expectedBuild: onDiskBuild,
+      timeoutMs: PREFERRED_PORT_RECLAIM_MS,
+      isChildAlive: () => childAlive,
+      onStillWaiting: () => log(`Still starting — waiting for a daemon to bind.`),
+    });
 
-    if (!started) {
-      log(`Daemon restart FAILED — no daemon with PID ${spawnedPid ?? '?'} is answering.`);
+    if (!verdict.ok) {
+      if (verdict.reason === 'stop-failed') {
+        log(`Daemon restart FAILED — the daemon you asked to restart (PID ${verdict.pid}) `
+          + `is still answering on port ${verdict.port}. The stop did not take.`);
+      } else if (verdict.reason === 'stale-build') {
+        // A daemon IS serving, so say that first — the remedy for this is not
+        // "try again", it is "the process that won the port is a different
+        // install of AgentDeck". Reporting it as "no daemon" would send the
+        // user looking for a crash that never happened.
+        log(`Daemon restart FAILED to put this build live — PID ${verdict.pid} is serving port `
+          + `${verdict.port} on build ${verdict.build}, but the build on disk is ${verdict.expected}.`);
+        log(`Something other than this command owns that port — most likely an autostart unit `
+          + `pointed at a different install (macOS: ~/Library/LaunchAgents/${PLIST_LABEL}.plist). `
+          + `Check the 'agentdeck' it launches, then 'agentdeck daemon restart' again.`);
+      } else {
+        log(`Daemon restart FAILED — no daemon is answering.`);
+      }
       // Both streams, not just stderr: the likeliest failure is the child
       // hitting `daemon start`'s incumbent guard, which reports through `log()`
       // — i.e. stdout. Naming only stderr pointed at the empty file.
@@ -1318,54 +1347,121 @@ daemon
         + ` or ${join(homedir(), '.agentdeck', 'daemon-stderr.log')}.`);
       process.exit(1);
     }
+
+    const started = verdict.daemon;
     if (started.port !== preferredPort.port) {
       log(`Daemon restarted (PID ${started.pid}) on port ${started.port} — it could not take ${preferredPort.port}.`);
     } else {
       log(`Daemon restarted (PID ${started.pid}) on port ${started.port}`);
     }
+    if (!started.ours) {
+      // Not a warning — a fact the user would otherwise have to reconstruct
+      // from `ps`. The daemon SIGKILLs itself on /shutdown, every supervisor
+      // reads that as a failure, and the respawn beats this command's own
+      // child to the port. Naming it here is what stops the next reader from
+      // diagnosing a restart that worked.
+      log(`(PID ${started.pid} is not the process this command forked (PID ${spawnedPid ?? '?'}) — `
+        + `an autostart supervisor respawned the daemon first and won the port. It is serving `
+        + `build ${started.build ?? 'unknown'}.)`);
+    }
     process.exit(0);
   });
 
 /**
- * Poll until a daemon reporting `pid` answers `/health`, or give up.
+ * The identity of the daemon this restart produced — or why there isn't one.
  *
- * The pid comparison is the load-bearing part: probing the port alone can be
- * satisfied by the daemon we were trying to REPLACE (a stop that silently
- * failed), which would report a restart that never happened. The fallback-port
- * sweep exists because the daemon is allowed to land elsewhere when it cannot
- * win its preferred port — that is a different outcome from "did not start",
- * and the caller says so rather than calling it a failure.
+ * `ours` says whether it is the process `daemon restart` forked. On a
+ * supervised machine it very often is not, and that is a successful restart.
  */
-export async function waitForDaemonPid(
-  pid: number,
-  preferredPort: number,
-  probeHealth: (port: number) => Promise<{ pid?: number } | null>,
-  readDaemonInfo: () => { httpPort?: number; port?: number } | null,
-  findDaemonPort: () => number | null,
-  timeoutMs = 20_000,
-  /**
-   * Is the spawned child still running?
-   *
-   * A derived timeout is still a guess, and this one was wrong twice: the
-   * budget has to cover not just the child's port-reclaim wait but its
-   * incumbent negotiation first — a Swift daemon standing down costs up to
-   * `EXIT_WAIT_MS + BINDABLE_WAIT_MS` before `startDaemon` is even reached, so
-   * the whole worst case runs past a minute. Giving up early prints
-   * "restart FAILED" while the daemon is coming up, and the user's natural
-   * retry then kills it.
-   *
-   * "The child is still running" is a real condition rather than a derived one,
-   * so `timeoutMs` becomes a floor: while the child is alive we keep waiting,
-   * and only a child that EXITED without a matching pid is a failure. The
-   * ceiling still bounds a child that hangs forever.
-   */
-  isChildAlive?: () => boolean,
-  ceilingMs = 180_000,
-  onStillWaiting?: (pid: number) => void,
-): Promise<{ pid: number; port: number } | null> {
+export interface RestartedDaemon {
+  pid: number;
+  port: number;
+  build: string | null;
+  ours: boolean;
+}
+
+export type RestartVerdict =
+  | { ok: true; daemon: RestartedDaemon }
+  /** The daemon we asked to go away is still on the port — the stop failed. */
+  | { ok: false; reason: 'stop-failed'; pid: number; port: number }
+  /** A daemon came up, on code other than the build on this disk. */
+  | { ok: false; reason: 'stale-build'; pid: number; port: number; build: string; expected: string }
+  /** Nothing answered within the budget. */
+  | { ok: false; reason: 'no-daemon' };
+
+export interface RestartedDaemonQuery {
+  /** The process this command forked, when `spawn` gave it a pid. */
+  spawnedPid?: number;
+  /** The daemon that was stopped. The one `/health` answer that proves nothing. */
+  stoppedPid?: number;
+  preferredPort: number;
+  probeHealth: (port: number) => Promise<{ pid?: number; mode?: string; build?: string } | null>;
+  readDaemonInfo: () => { httpPort?: number; port?: number } | null;
+  findDaemonPort: () => number | null;
+  /** The build id on this disk, when it can be computed. */
+  expectedBuild?: string | null;
+  timeoutMs?: number;
+  isChildAlive?: () => boolean;
+  ceilingMs?: number;
+  onStillWaiting?: () => void;
+}
+
+/**
+ * Poll until a RESTARTED daemon answers `/health`, or give up.
+ *
+ * This used to wait for the pid of the child it forked, and that is the wrong
+ * question on any machine with an autostart unit — which is every machine that
+ * ran `agentdeck daemon install`. The daemon ends `/shutdown` by SIGKILLing
+ * itself (`exitProcessNow`), and a self-signalled death is not a successful
+ * exit: launchd's `KeepAlive{SuccessfulExit:false}`, systemd's
+ * `Restart=on-failure` and the Scheduled Task's RestartOnFailure all respawn it
+ * within a few seconds. That respawn wins the port, this command's own child
+ * then hits `daemon start`'s incumbent guard and exits 0 ("already running"),
+ * and a wait keyed on the child's pid can only ever time out. Measured twice on
+ * 2026-09-08: `restart FAILED — no daemon with PID <n> is answering` printed
+ * while PID 13155 served the new build on 9120 the whole time, 3.8s after the
+ * stop. The user's natural response to that message is to retry, which stops a
+ * healthy daemon again.
+ *
+ * So the question is identity, not parentage: a daemon on one of the candidate
+ * ports whose pid is NOT the pid we stopped. Three things follow.
+ *
+ * - Rejecting the stopped pid is what the old pid comparison was really for,
+ *   and it is kept exactly: a port probe alone is satisfied by the daemon we
+ *   were trying to replace, which would report a restart that never happened.
+ * - The build is checked because "a daemon restarted" and "your code is live"
+ *   are different claims, and only on a supervised machine can they come apart:
+ *   the unit launches whatever `agentdeck` resolves to at ITS path, which may
+ *   be another install entirely. A mismatch is reported as a failure, loudly,
+ *   because "Daemon restarted" over stale code is the silent substitution this
+ *   whole verification exists to prevent. An unknown build on either side is
+ *   NOT a mismatch — absence is not information, and refusing there would
+ *   reintroduce the false failure this function was written to remove.
+ * - The fallback-port sweep stays: landing elsewhere is a different outcome
+ *   from not starting, and the caller says which one happened.
+ *
+ * `timeoutMs` is a floor, not a budget. A derived timeout was wrong twice: the
+ * child can spend `EXIT_WAIT_MS + BINDABLE_WAIT_MS` negotiating a Swift
+ * incumbent's stand-down before it even reaches its own port-reclaim wait, so
+ * the worst case runs past a minute. While the child is alive we keep waiting;
+ * only a child that EXITED without a daemon appearing is a failure, and
+ * `ceilingMs` bounds a child that hangs forever. Note the child exiting is no
+ * longer evidence of anything on its own — in the supervised case it exits
+ * deliberately — so the floor must be long enough for a supervisor respawn.
+ */
+export async function waitForRestartedDaemon(q: RestartedDaemonQuery): Promise<RestartVerdict> {
+  const {
+    spawnedPid, stoppedPid, preferredPort, probeHealth, readDaemonInfo, findDaemonPort,
+    expectedBuild, timeoutMs = 20_000, isChildAlive, ceilingMs = 180_000, onStillWaiting,
+  } = q;
+
   let announcedWait = false;
+  /** Remembered so a timeout can say WHICH failure it was. */
+  let sawStopped: { pid: number; port: number } | null = null;
+  let sawStale: { pid: number; port: number; build: string } | null = null;
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
+
   for (;;) {
     const candidates = new Set<number>([preferredPort]);
     const info = readDaemonInfo();
@@ -1373,20 +1469,49 @@ export async function waitForDaemonPid(
     if (info?.port) candidates.add(info.port);
     const found = findDaemonPort();
     if (found) candidates.add(found);
+
     for (const port of candidates) {
       const health = await probeHealth(port);
-      if (health?.pid === pid) return { pid, port };
+      const pid = health?.pid;
+      if (typeof pid !== 'number') continue;
+      // An explicit non-daemon mode (a session bridge's hook server) is not a
+      // restarted daemon. An ABSENT mode says nothing and is not held against it.
+      if (health?.mode !== undefined && health.mode !== 'daemon') continue;
+      if (stoppedPid !== undefined && pid === stoppedPid) {
+        sawStopped = { pid, port };
+        continue;
+      }
+      const build = typeof health?.build === 'string' ? health.build : null;
+      if (expectedBuild && build && build !== expectedBuild) {
+        sawStale = { pid, port, build };
+        continue;
+      }
+      return { ok: true, daemon: { pid, port, build, ours: pid === spawnedPid } };
     }
+
     const now = Date.now();
-    if (now >= startedAt + ceilingMs) return null;
-    if (now >= deadline && !(isChildAlive?.() ?? false)) return null;
+    const expired = now >= startedAt + ceilingMs
+      || (now >= deadline && !(isChildAlive?.() ?? false));
+    if (expired) {
+      // Ranked by how much each one explains. A daemon serving the wrong build
+      // is a live, specific fault; the stopped daemon still answering is the
+      // next; "nothing answered" is what is left when we learned nothing.
+      if (sawStale) {
+        return {
+          ok: false, reason: 'stale-build', pid: sawStale.pid, port: sawStale.port,
+          build: sawStale.build, expected: expectedBuild as string,
+        };
+      }
+      if (sawStopped) return { ok: false, reason: 'stop-failed', ...sawStopped };
+      return { ok: false, reason: 'no-daemon' };
+    }
     // Past the floor with the child still alive, this can legitimately run for
     // another couple of minutes (a Swift incumbent standing down, then a port
     // reclaim). Say so once, or a correct wait is indistinguishable from a hung
     // terminal.
     if (now >= deadline && !announcedWait) {
       announcedWait = true;
-      onStillWaiting?.(pid);
+      onStillWaiting?.();
     }
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
