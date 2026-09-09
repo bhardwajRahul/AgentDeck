@@ -33,6 +33,14 @@ cd bridge; pnpm link --global; cd ..
 cd plugin; streamdeck link bound.serendipity.agentdeck.sdPlugin; cd ..   # then restart the Stream Deck app
 ```
 
+> `pnpm link --global` is undocumented on pnpm 11 — `pnpm link --help` lists only
+> `pnpm link <dir>` — and at least one user's pnpm rejects it outright with
+> `unexpected argument '--global'` ([#303](https://github.com/puritysb/AgentDeck/issues/303),
+> [#304](https://github.com/puritysb/AgentDeck/pull/304)). If it fails, nothing else here
+> depends on it: every `agentdeck <args>` below also works as
+> `node bridge/dist/cli.js <args>`, and a normal (non-checkout) install is
+> `npx @agentdeck/setup`.
+
 ## Run
 
 ```powershell

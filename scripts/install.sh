@@ -159,11 +159,22 @@ echo ""
 # --- Link CLI ---
 info "Linking agentdeck CLI globally..."
 cd "$PROJECT_DIR/bridge"
-pnpm link --global 2>/dev/null || {
-  warn "pnpm link failed — you may need to link manually"
-  warn "Run: cd bridge && pnpm link --global"
-}
-ok "agentdeck CLI linked"
+# The link is reported by its OUTCOME, never announced. This used to swallow
+# stderr, warn, and then print "agentdeck CLI linked" unconditionally — so on a
+# pnpm that rejects the command the installer reported a link it had not made,
+# and the next `agentdeck …` either failed or silently resolved to an unrelated
+# global install. `pnpm link --global` is undocumented on pnpm 11 (`pnpm link
+# --help` documents only `pnpm link <dir>`) and reported as an outright
+# "unexpected argument" by at least one user's pnpm, so the failure is real and
+# version-dependent.
+if link_out=$(pnpm link --global 2>&1); then
+  ok "agentdeck CLI linked"
+else
+  warn "pnpm link failed — the agentdeck CLI is NOT on your PATH:"
+  printf '%s\n' "$link_out" | sed 's/^/    /'
+  warn "Every command in this README still works as: node $PROJECT_DIR/bridge/dist/cli.js <args>"
+  warn "For a normal install without linking a checkout, use: npx @agentdeck/setup"
+fi
 
 if node "$PROJECT_DIR/bridge/dist/cli.js" diag native >/dev/null; then
   ok "APME native database ready for $(node -v)"

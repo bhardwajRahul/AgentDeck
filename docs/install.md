@@ -83,6 +83,14 @@ Marketplace archive.
 cd bridge && pnpm link --global
 ```
 
+> `pnpm link --global` is undocumented on pnpm 11 — `pnpm link --help` lists only
+> `pnpm link <dir>` — and at least one user's pnpm rejects it outright with
+> `unexpected argument '--global'` ([#303](https://github.com/puritysb/AgentDeck/issues/303),
+> [#304](https://github.com/puritysb/AgentDeck/pull/304)). If it fails, nothing else here
+> depends on it: every `agentdeck <args>` below also works as
+> `node bridge/dist/cli.js <args>`, and a normal (non-checkout) install is
+> `npx @agentdeck/setup`.
+
 ## 5. Voice Setup (Zero install)
 
 Voice input uses Apple's on-device `SFSpeechRecognizer` (Speech framework). **No sox, no whisper.cpp, no model downloads** — the OS manages the dictation model via Settings → General → Keyboard → Dictation, which AgentDeck piggybacks on. The only user action is granting Microphone + Speech Recognition permission the first time the voice button is pressed (macOS shows the standard TCC prompts backed by `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`).
