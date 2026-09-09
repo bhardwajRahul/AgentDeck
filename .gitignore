@@ -24,6 +24,9 @@ Thumbs.db
 # Local diagnostic captures from development workflows
 diagnostics/
 
+# Local generation output (image/UI exploration runs); artifacts stay on disk
+output/
+
 # Temp
 *.tmp
 test-*.js
