@@ -69,6 +69,33 @@ A *global* actor rather than making `DaemonServer` an `actor`: the daemon is not
 
 Regression tests: `HTTPServerMainThreadStallTests` (transport must accept while main is blocked) and `DaemonActorIndependenceTests` (daemon work must progress while main is blocked).
 
+## Cross-platform SSOT catalogue
+
+Every row is defined in its canonical source first and generated or mirrored outward behind a drift gate — never introduced as a per-platform literal. The rules that govern
+this table live in CLAUDE.md § Key Conventions ("Cross-platform rules are SSOT-first"); this is the index.
+
+| Canonical source | Generator | Gate / note |
+|---|---|---|
+| `shared/src/protocol.ts` | `pnpm generate-protocol` | vitest drift gate; Swift + Kotlin types |
+| `shared/src/terrarium-rules.ts` | `pnpm generate-terrarium-rules` | vitest drift gate; see below |
+| `shared/src/states.ts` (state-machine transition table) | `pnpm generate-state-transitions` | vitest drift gate. A row present in one daemon and absent in the other is a session that wedges in `AWAITING_*` on one platform and recovers on the other, with nothing in either log saying why. A transition's rationale rides the SSOT as its `note` field so the mirror cannot restate and then contradict it; the generated file carries `#if os(macOS)` because it lives under `Daemon/` |
+| `shared/src/esp32-boards.ts` (machine half of the board table: chip family, flash size/mode/freq, bootloader offset, upload baud, esptool flags, OTA capability, CLI aliases, `webFlash` evidence) | `pnpm generate-esp32-board-matrix` | GENERATES the `esp32-v*` release matrix; `--check` cross-checks `esp32/platformio.ini`, the spec sheet, `bridge/src/cli.ts` and the alias table in `docs/esp32.md`; gated in `design-system.yml`. The board set used to be hand-written in four places with a gate on one edge, and a board missing from the release matrix ships no firmware while nothing fails — how `t_embed`, `t_display_pro` and `esp32_c6_147` had no binaries at 1.0.1 |
+| `docs/hardware-compatibility.md` board table (human columns) | `scripts/sync-hardware-spec-cards.mjs` | gated in `design-system.yml`. Two SSOTs over disjoint column sets bound by one gate, never a second copy |
+| `shared/src/idotmatrix-identity.ts` (BLE discovery predicate) | `pnpm generate-idotmatrix-identity` | vitest drift gate; emits the Swift CoreBluetooth mirror and the Python/bleak one, and the generated `bridge/src/idotmatrix/identity_generated.py` ships in the npm package |
+| `shared/src/mdns-identity.ts` (`_agentdeck._tcp` instance name + TXT keys) | `pnpm generate-mdns-identity` | vitest drift gate. A name whose only job is to be unique per segment is worthless unless both daemons compute it identically |
+| `shared/src/model-provider.ts` (which company's endpoint answered) | `pnpm generate-model-provider` | vitest drift gate; Swift + Kotlin mirrors. A Claude Code session pointed at z.ai must read the same on every surface or the badge means nothing |
+| `shared/src/task-title.ts` + `shared/src/action-fold.ts` (Work-board display projections) | `pnpm generate-apme-display-rules` (emits the Swift `TaskTitleRules` / `ActionFoldRules`) | `apme-display-rules-sync.test.ts`; behavior additionally pinned by `shared/task-title-vectors.json` / `shared/action-fold-vectors.json`, replayed by both suites, since both daemons NAME tasks and serve the same Work board |
+| `shared/src/claude-permission-rules.ts` (PreToolUse hold predictor) | `pnpm generate-claude-permission-rules` (emits `ClaudePermissionRules.generated.swift`) | vitest byte gate + `shared/claude-permission-vectors.json` |
+| `shared/src/pairing-code.ts` | `pnpm generate-pairing-code-rules` | vitest drift gate; Swift carries the whole evaluator, Kotlin a client mirror |
+| `shared/src/format-utils.ts` Codex snapshot freshness (`CODEX_SNAPSHOT_STALE_MS` + age-label bands) | `pnpm generate-codex-freshness-rules` | vitest drift gate; also emits Swift-only `CodexPlanRules` from `codexSnapshotMatchesAccountPlan`, since both daemons PRODUCE the wire snapshot but Android only consumes it |
+| `apmeDashboardHtml()` → `apple/AgentDeck/Resources/apme-dashboard.html` | `pnpm generate-apme-dashboard` | byte-gated in `apme-dashboard-html.test.ts`. As a hand copy it silently shipped App Store builds a whole feature behind |
+| creature / brand SVGs | `pnpm generate-creature-glyphs`, `pnpm generate-micro-glyphs` | ESP32 alpha-mask headers, Pixoo/Timebox/TC001 masks |
+| `design/tokens.css` | 7 mirrors | `design/verify-tokens-sync.py` |
+| `esp32/src/ui/eink/eink_dashboard_layout.h` | — (three consumers) | TRMNL 7.5" firmware compiles it directly, `scripts/sync-xteink-eink-dashboard.sh` copies it byte-identically into the XTeink fork, and `apple/AgentDeck/UI/Preview/Devices/Trmnl75Preview.swift` pins it via SYNC-HASH |
+
+Known hand-mirror debt: `shared/src/creature-layout.ts` band layout (3-way comment-discipline mirror, test parity only) — fold it into a generator when next touched. The idle-gap
+constant in `ApmeCollector` stays grep-pinned by `apme-display-rules-sync.test.ts`.
+
 ## Terrarium rules SSOT (cross-platform behavior invariants)
 
 `shared/src/terrarium-rules.ts` is the single source of truth for terrarium **rules** — numeric invariants every rendering surface must agree on regardless of its own world model: the OpenClaw crayfish's unified dashboard home (0.78, 0.64), the idle floor-rester clear anchor (`clearMaxX` 0.62), the dashboard floor-rest strip, and the Antigravity idle-hover strip. Surface-specific *tuning* (per-board Y offsets, swim lanes, sprite sizes, TUI/Pixoo local homes) stays local to each platform.
