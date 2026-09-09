@@ -263,6 +263,7 @@ final class DaemonService: ObservableObject {
                     Task { @MainActor in self?.standDownForTakeover() }
                 }
                 self.server = daemon
+                self.inProcessDaemonEpoch += 1
                 self.port = daemon.port
                 self.isRunning = true
                 self.changeOwnership(.tookOwnership)
@@ -388,7 +389,64 @@ final class DaemonService: ObservableObject {
         return canonicalPort > 0 ? canonicalPort : nil
     }
 
+    /// Incremented every time `start()` hands ownership to a NEW in-process
+    /// daemon. Read by `connectToExternalDaemon`, which must not write state
+    /// about a daemon that replaced the one it was called for.
+    private var inProcessDaemonEpoch: UInt64 = 0
+
+    /// Has a newer in-process daemon taken ownership since this transition
+    /// began? Pure, so the decision can be driven without binding a port.
+    ///
+    /// `connectToExternalDaemon` probes over the network with timeouts —
+    /// `probeDaemonHealth(patient:)` waits out the ~14 s NECP hold — and it is
+    /// reached from inside `start()`'s own Task. So `start()` can complete a
+    /// bind, assign `self.server`, and wire every module while this function is
+    /// still suspended, and then this function writes the state of a daemon
+    /// that no longer exists. Measured 2026-09-09 22:52 (#306), from the app's
+    /// own log:
+    ///
+    /// ```
+    /// 22:52:22  Server listening on port 9121                            ← A ready
+    /// 22:52:22  External daemon on port 9120 is stale — starting local…   ← clobbers A
+    /// 22:52:22  Daemon running on port 9121 — all modules wired          ← A finishes wiring
+    /// 22:52:25  Server listener failed: Address already in use           ← B lands on A's port
+    /// ```
+    ///
+    /// A was dropped, not stopped. A started `NWListener` is retained by the
+    /// framework until it is cancelled, and its `newConnectionHandler` holds
+    /// the server weakly — so the orphan kept `*:9121 (LISTEN)` for the life of
+    /// the process, accepting connections it answered for nobody (six
+    /// `CLOSE_WAIT` sockets by the next morning) on a port inside the
+    /// session-bridge range 9121-9139.
+    nonisolated static func externalTransitionIsStale(entryEpoch: UInt64, currentEpoch: UInt64) -> Bool {
+        currentEpoch != entryEpoch
+    }
+
+    /// Stop the in-process daemon before clearing the state that refers to it.
+    ///
+    /// Every caller of `connectToExternalDaemon` currently stands its server
+    /// down first, so `server` is nil here — but a branch that leaves the app
+    /// with no daemon has to be correct on its own terms, and the cost of being
+    /// wrong is a port held until the app quits. `server = nil` alone is not a
+    /// teardown; only `shutdown()` cancels the listener.
+    private func releaseInProcessDaemon() async {
+        guard let current = server else { return }
+        DaemonLogger.shared.info("Releasing in-process daemon on port \(port) before becoming a client")
+        server = nil
+        await withBudget(seconds: 8, "daemon release") { await current.shutdown() }
+    }
+
     private func connectToExternalDaemon(port knownPort: Int? = nil) async {
+        let entryEpoch = inProcessDaemonEpoch
+        /// Abandon this transition when `start()` has since taken ownership.
+        /// Returns true when the caller must return without writing anything.
+        func abandonIfStale(_ stage: String) -> Bool {
+            guard Self.externalTransitionIsStale(entryEpoch: entryEpoch,
+                                                 currentEpoch: inProcessDaemonEpoch) else { return false }
+            DaemonLogger.shared.info(
+                "Abandoning client transition at \(stage) — a newer in-process daemon owns port \(port)")
+            return true
+        }
         let registry = SessionRegistry.shared
         let resolvedPort = Self.resolveExternalDaemonPort(
             knownPort: knownPort,
@@ -399,7 +457,8 @@ final class DaemonService: ObservableObject {
         )
 
         guard let resolvedPort else {
-            self.server = nil
+            if abandonIfStale("port lookup") { return }
+            await self.releaseInProcessDaemon()
             self.isRunning = false
             self.changeOwnership(.toreDown)
             self.port = 0
@@ -451,8 +510,9 @@ final class DaemonService: ObservableObject {
 
         guard let health, health["mode"] as? String == "daemon" else {
             // External daemon never responded — stale registry. Clean up and start our own.
+            if abandonIfStale("stale-registry check") { return }
             DaemonLogger.shared.info("External daemon on port \(resolvedPort) is stale — starting local daemon instead")
-            self.server = nil
+            await self.releaseInProcessDaemon()
             self.isRunning = false
             self.changeOwnership(.toreDown)
             self.port = 0
@@ -486,8 +546,9 @@ final class DaemonService: ObservableObject {
             // here at all. If a race gets one through, the retry below is what
             // resolves it — and it must be slow enough not to spin, since the
             // path that sent us here would send us here again.
+            if abandonIfStale("ownership check") { return }
             DaemonLogger.shared.info("Daemon on port \(resolvedPort) belongs to another user — not attaching to it; starting our own daemon instead")
-            self.server = nil
+            await self.releaseInProcessDaemon()
             self.isRunning = false
             self.changeOwnership(.toreDown)
             self.port = 0
@@ -512,8 +573,9 @@ final class DaemonService: ObservableObject {
         // the fleet must not have to be re-provisioned to keep talking to us.
         AuthManager.shared.adoptPeerToken(health["pairingToken"] as? String)
 
+        if abandonIfStale("client handover") { return }
         let wsUrl = "ws://127.0.0.1:\(resolvedPort)"
-        self.server = nil
+        await self.releaseInProcessDaemon()
         self.port = UInt16(resolvedPort)
         self.isRunning = false
         self.changeOwnership(.becameClient)
