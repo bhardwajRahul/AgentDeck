@@ -30,6 +30,20 @@ import {
 // device stack (serial, Pixoo, BLE) into `agentdeck --help`.
 import { allModulesOff } from './modules/types.js';
 import {
+  PLIST_LABEL,
+  launchAgentPlistPath,
+  detectSupervisor,
+  describeSupervisor,
+  supervisorStopPlan,
+  supervisorStartPlan,
+  supervisorPosture,
+  runSupervisorPlan,
+  supervisorLivenessProbe,
+  oneOffFlagsBlockingSupervisor,
+  routeDaemonLifecycle,
+  type SupervisorFacts,
+} from './daemon-supervisor.js';
+import {
   SERVICE_NAME,
   hasSystemctl,
   unitExists,
@@ -184,8 +198,10 @@ function postJsonWithTimeout<T>(urlString: string, body: unknown, timeoutMs: num
 
 // ===== LaunchAgent plist =====
 
-const PLIST_LABEL = 'dev.agentdeck.daemon';
-const PLIST_PATH = join(homedir(), 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
+// The label and its plist path are the supervisor module's — `daemon
+// stop`/`start`/`restart` drive that same unit, and a second spelling of its
+// name here is a second thing to keep in step.
+const PLIST_PATH = launchAgentPlistPath();
 
 function getAgentdeckBin(): string {
   try {
@@ -277,9 +293,43 @@ export function buildPlist(extraArgs: string[] = []): string {
 
 // ===== Helpers =====
 
-async function stopDaemon(port: number): Promise<void> {
+/**
+ * Stop this user's daemon — and, when a supervisor owns it, stop it in a way
+ * that keeps it stopped.
+ *
+ * `/shutdown` alone cannot do that. The daemon ends it by SIGKILLing itself,
+ * launchd's `KeepAlive{SuccessfulExit:false}`, systemd's `Restart=on-failure`
+ * and the Scheduled Task's RestartOnFailure all read a signalled death as a
+ * crash, and the unit brings the daemon back within seconds — so `agentdeck
+ * daemon stop` on any machine that ran `daemon install` did not stay stopped.
+ * The exit status has no room for "the user asked for this" (see
+ * daemon-supervisor.ts), so the request goes to the supervisor instead.
+ *
+ * This is a stop, not an uninstall: the unit stays installed and starts again
+ * at the next login, or at the next `agentdeck daemon start`.
+ */
+async function stopDaemon(port: number, opts: { supervisor?: SupervisorFacts | null } = {}): Promise<void> {
   const { readDaemonInfo, findDaemonPort, probeDaemonHealth } = await import('./session-registry.js');
   const { isForeignDaemon } = await import('./daemon-takeover.js');
+
+  // First, because the alternative is a race with the daemon's own parent: a
+  // `/shutdown` that lands while the unit is still armed is answered by a
+  // respawn a few seconds later.
+  const supervisor = opts.supervisor !== undefined ? opts.supervisor : detectSupervisor();
+  if (supervisor) {
+    const result = runSupervisorPlan(supervisorStopPlan(supervisor));
+    const stopped = result.ran.some((r) => r.ok);
+    if (stopped) {
+      log(`Stopped the ${describeSupervisor(supervisor)} (it will start again at the next login, `
+        + `or on 'agentdeck daemon start').`);
+    } else if (!result.ok) {
+      const detail = result.ran.find((r) => !r.ok)?.detail;
+      log(`Warning: could not stop the ${describeSupervisor(supervisor)}`
+        + `${detail ? ` — ${detail.split('\n')[0]}` : ''}.`);
+      log(`It may restart the daemon a few seconds after this stop.`);
+    }
+  }
+
   const info = readDaemonInfo();
   const targetPort = info?.httpPort ?? info?.port ?? findDaemonPort() ?? port;
   // The registry resolves to this user's own daemon, but the `-p` fallback
@@ -1025,7 +1075,7 @@ daemon
     // Re-executes and never returns when it rebuilds.
     await ensureLatestBuild(buildModeFrom(cmd, opts));
 
-    const { findExistingDaemon, probeDaemonHealth, readDaemonInfo, removeDaemonInfo, removeDaemonSession, requestDaemonStandDown, requestDaemonShutdown, waitForDaemonExit, waitForPortBindable } = await import('./session-registry.js');
+    const { findExistingDaemon, probeDaemonHealth, readDaemonInfo, findDaemonPort, removeDaemonInfo, removeDaemonSession, requestDaemonStandDown, requestDaemonShutdown, waitForDaemonExit, waitForPortBindable } = await import('./session-registry.js');
     const { adoptPeerToken } = await import('./auth.js');
     const { distBuildId } = await import('./daemon-build-identity.js');
     const localBuild = distBuildId();
@@ -1146,8 +1196,60 @@ daemon
       );
     }
 
-    // Background fork unless --foreground
+    // Background start unless --foreground.
     if (!opts.foreground) {
+      // On a machine that ran `agentdeck daemon install`, the daemon has a
+      // parent — and a child forked here is a daemon that parent does not
+      // supervise. It also wins the port, so the unit's own job exits 0
+      // ("already running") and stays down until the next login: the machine
+      // silently loses its autostart for the rest of the session. This is the
+      // same hole `daemon stop` had, from the other side, so it has the same
+      // answer — ask the supervisor to start it.
+      //
+      // `--foreground` is deliberately NOT routed: that spelling IS the unit's
+      // own ExecStart, and routing it would make the unit ask itself to start.
+      const supervisor = detectSupervisor();
+      // No posture pair here on purpose: `daemon start` has no running daemon
+      // to inherit from, so the unit's own posture is the right answer.
+      const route = routeDaemonLifecycle({
+        supervisor, oneOffFlags: oneOffFlagsBlockingSupervisor(opts),
+      });
+      if (supervisor && route.via === 'supervisor') {
+        const result = runSupervisorPlan(supervisorStartPlan(supervisor));
+        if (result.ok) {
+          const verdict = await waitForRestartedDaemon({
+            preferredPort: preferredPort.port,
+            probeHealth: probeDaemonHealth,
+            readDaemonInfo, findDaemonPort,
+            expectedBuild: localBuild,
+            // The supervised analog of "is my child still alive?" — without it
+            // the floor below becomes a hard deadline, and a start that is
+            // still negotiating a stand-down reports as a failure.
+            isChildAlive: supervisorLivenessProbe(supervisor),
+            onStillWaiting: () => log(`Still starting — waiting for a daemon to bind.`),
+          });
+          if (verdict.ok) {
+            log(`Daemon started (PID ${verdict.daemon.pid}, build ${verdict.daemon.build ?? 'unknown'}) `
+              + `under the ${describeSupervisor(supervisor)}`
+              + `${verdict.daemon.port === preferredPort.port ? '' : ` on port ${verdict.daemon.port}`}.`);
+            process.exit(0);
+          }
+          reportDaemonWaitFailure(verdict, 'start');
+          process.exit(1);
+        }
+        const detail = result.ran.find((r) => !r.ok)?.detail;
+        log(`Could not start the ${describeSupervisor(supervisor)}`
+          + `${detail ? ` — ${detail.split('\n')[0]}` : ''}.`);
+        log(`Starting an unsupervised daemon instead; 'agentdeck daemon install' re-registers the unit.`);
+      } else if (supervisor && route.via === 'self' && route.reason === 'one-off-flags') {
+        // A one-off posture/port/debug daemon is not the one the unit can
+        // produce, so it is started here — and it is NOT the supervised one.
+        // Saying so is the point: this is exactly how a machine ends up
+        // running a daemon nothing will bring back.
+        log(`${route.flags.join(' ')} cannot be carried by the ${describeSupervisor(supervisor)} — `
+          + `starting a daemon outside it. It will not be restarted automatically.`);
+      }
+
       const logDir = join(homedir(), '.agentdeck');
       const scriptPath = fileURLToPath(import.meta.url);
       const args = [scriptPath, 'daemon', 'start', '--foreground'];
@@ -1249,7 +1351,43 @@ daemon
       log(`Daemon is on port ${runningPort} but prefers ${preferredPort.port} — restarting there.`);
     }
 
-    await stopDaemon(runningPort);
+    // Who restarts it: the supervisor that owns it, or this command.
+    //
+    // Forking here on a supervised machine is a race with the daemon's own
+    // parent, and both outcomes are wrong. If the unit's respawn wins, this
+    // command's child exits 0 against the incumbent guard and the verdict below
+    // has to untangle whose daemon is serving; if the child wins, the unit's job
+    // has already exited cleanly and nothing will restart the daemon until the
+    // next login — measured on this machine 2026-09-09, `runs = 7,
+    // last exit code = 0, state = not running` while an unsupervised daemon
+    // served 9120. So when a unit can carry this restart, it performs it.
+    //
+    // Two things take it back: flags the unit's fixed argv cannot express, and
+    // a posture the unit does not carry. The second is the enterprise downgrade
+    // the inheritance above exists to prevent — handing the restart to a
+    // default-posture unit would rewrite a loopback-only daemon into an
+    // advertising one, silently.
+    const supervisor = detectSupervisor();
+    const route = routeDaemonLifecycle({
+      supervisor,
+      oneOffFlags: oneOffFlagsBlockingSupervisor(opts),
+      unitPosture: supervisor ? supervisorPosture(supervisor) : undefined,
+      wantedPosture: daemonPostureArgs({ local: useLocal, loopback: useLoopback }),
+    });
+    const useSupervisor = route.via === 'supervisor';
+    if (supervisor && route.via === 'self' && route.reason === 'posture-mismatch') {
+      log(`The daemon's posture (${route.wantedPosture.join(' ') || 'default'}) is not the one baked into the `
+        + `${describeSupervisor(supervisor)} (${route.unitPosture.join(' ') || 'default'}) — restarting outside `
+        + `the unit so the posture is not silently rewritten.`);
+    } else if (supervisor && route.via === 'self' && route.reason === 'one-off-flags') {
+      log(`${route.flags.join(' ')} cannot be carried by the ${describeSupervisor(supervisor)} — `
+        + `restarting outside it.`);
+    }
+
+    // Stops the unit too (see stopDaemon): whether or not the supervisor
+    // performs the restart, it must not respawn the old daemon into the middle
+    // of this one.
+    await stopDaemon(runningPort, { supervisor });
     // Wait for the old daemon to stop ANSWERING — a real condition, not the
     // 1500ms guess that used to sit here and merely outlasted the common case.
     //
@@ -1266,17 +1404,6 @@ daemon
       log(`Warning: the daemon on port ${runningPort} was still answering when the stop budget ran out.`);
     }
 
-    const scriptPath = fileURLToPath(import.meta.url);
-    const args = [scriptPath, 'daemon', 'start', '--foreground'];
-    // Same rule as `daemon start`: forward `-p` only when it was typed, so the
-    // child keeps the real provenance of its port.
-    if (preferredPort.source === 'flag') args.push('-p', String(preferredPort.port));
-    if (opts.debug) args.push('-d');
-    if (useLocal) args.push('--local');
-    if (useLoopback) args.push('--loopback');
-    // Same as the `start` fork: freshness is this process's job, and the child
-    // has log files rather than a terminal.
-    args.push('--no-build');
     if ((inheritedLocal && !opts.local) || (inheritedLoopback && !opts.loopback)) {
       log(`Carrying over the running daemon's posture (${[
         inheritedLoopback ? 'loopback-only' : null,
@@ -1284,17 +1411,49 @@ daemon
       ].filter(Boolean).join(', ')}).`);
     }
 
-    const [rOut, rErr] = await openDaemonLogs(join(homedir(), '.agentdeck'));
-    const child = spawn(process.execPath, args, {
-      detached: true,
-      stdio: ['ignore', rOut, rErr],
-      windowsHide: true,
-    });
-    // Liveness is what the wait below actually keys on. `detached` + `unref`
-    // still delivers 'exit' to this process for as long as it is running.
-    let childAlive = true;
-    child.once('exit', () => { childAlive = false; });
-    child.unref();
+    let child: ReturnType<typeof spawn> | null = null;
+    let childAlive = false;
+    /** Which of the two started it — the message at the end differs. */
+    let startedBySupervisor = false;
+
+    if (useSupervisor && supervisor) {
+      const result = runSupervisorPlan(supervisorStartPlan(supervisor));
+      if (result.ok) {
+        startedBySupervisor = true;
+        log(`Restarting through the ${describeSupervisor(supervisor)}.`);
+      } else {
+        const detail = result.ran.find((r) => !r.ok)?.detail;
+        log(`Could not start the ${describeSupervisor(supervisor)}`
+          + `${detail ? ` — ${detail.split('\n')[0]}` : ''}.`);
+        log(`Restarting an unsupervised daemon instead.`);
+      }
+    }
+
+    if (!startedBySupervisor) {
+      const scriptPath = fileURLToPath(import.meta.url);
+      const args = [scriptPath, 'daemon', 'start', '--foreground'];
+      // Same rule as `daemon start`: forward `-p` only when it was typed, so the
+      // child keeps the real provenance of its port.
+      if (preferredPort.source === 'flag') args.push('-p', String(preferredPort.port));
+      if (opts.debug) args.push('-d');
+      if (useLocal) args.push('--local');
+      if (useLoopback) args.push('--loopback');
+      // Same as the `start` fork: freshness is this process's job, and the child
+      // has log files rather than a terminal.
+      args.push('--no-build');
+
+      const [rOut, rErr] = await openDaemonLogs(join(homedir(), '.agentdeck'));
+      child = spawn(process.execPath, args, {
+        detached: true,
+        stdio: ['ignore', rOut, rErr],
+        windowsHide: true,
+      });
+      // Liveness is what the wait below actually keys on. `detached` + `unref`
+      // still delivers 'exit' to this process for as long as it is running.
+      childAlive = true;
+      child.once('exit', () => { childAlive = false; });
+      child.unref();
+    }
 
     // `spawn` resolving a pid means the OS forked a process — it is not
     // evidence that a daemon is running. A child that dies on EADDRINUSE (the
@@ -1305,7 +1464,7 @@ daemon
     // it for its IDENTITY, not for this command's own child pid: on a
     // supervised machine the winner is routinely a process this command never
     // forked (see `waitForRestartedDaemon`).
-    const spawnedPid = child.pid;
+    const spawnedPid = child?.pid;
     const { distBuildId } = await import('./daemon-build-identity.js');
     const onDiskBuild = distBuildId();
     const verdict = await waitForRestartedDaemon({
@@ -1319,32 +1478,14 @@ daemon
       findDaemonPort,
       expectedBuild: onDiskBuild,
       timeoutMs: PREFERRED_PORT_RECLAIM_MS,
-      isChildAlive: () => childAlive,
+      // Whichever of the two started it: our own child, or the supervisor's job.
+      isChildAlive: child ? () => childAlive
+        : (startedBySupervisor && supervisor ? supervisorLivenessProbe(supervisor) : undefined),
       onStillWaiting: () => log(`Still starting — waiting for a daemon to bind.`),
     });
 
     if (!verdict.ok) {
-      if (verdict.reason === 'stop-failed') {
-        log(`Daemon restart FAILED — the daemon you asked to restart (PID ${verdict.pid}) `
-          + `is still answering on port ${verdict.port}. The stop did not take.`);
-      } else if (verdict.reason === 'stale-build') {
-        // A daemon IS serving, so say that first — the remedy for this is not
-        // "try again", it is "the process that won the port is a different
-        // install of AgentDeck". Reporting it as "no daemon" would send the
-        // user looking for a crash that never happened.
-        log(`Daemon restart FAILED to put this build live — PID ${verdict.pid} is serving port `
-          + `${verdict.port} on build ${verdict.build}, but the build on disk is ${verdict.expected}.`);
-        log(`Something other than this command owns that port — most likely an autostart unit `
-          + `pointed at a different install (macOS: ~/Library/LaunchAgents/${PLIST_LABEL}.plist). `
-          + `Check the 'agentdeck' it launches, then 'agentdeck daemon restart' again.`);
-      } else {
-        log(`Daemon restart FAILED — no daemon is answering.`);
-      }
-      // Both streams, not just stderr: the likeliest failure is the child
-      // hitting `daemon start`'s incumbent guard, which reports through `log()`
-      // — i.e. stdout. Naming only stderr pointed at the empty file.
-      log(`The reason is in ${join(homedir(), '.agentdeck', 'daemon-stdout.log')}`
-        + ` or ${join(homedir(), '.agentdeck', 'daemon-stderr.log')}.`);
+      reportDaemonWaitFailure(verdict, 'restart');
       process.exit(1);
     }
 
@@ -1354,18 +1495,58 @@ daemon
     } else {
       log(`Daemon restarted (PID ${started.pid}) on port ${started.port}`);
     }
-    if (!started.ours) {
+    if (startedBySupervisor) {
+      log(`(PID ${started.pid} is the ${describeSupervisor(supervisor as SupervisorFacts)}'s own process — `
+        + `it stays supervised.)`);
+    } else if (!started.ours) {
       // Not a warning — a fact the user would otherwise have to reconstruct
       // from `ps`. The daemon SIGKILLs itself on /shutdown, every supervisor
-      // reads that as a failure, and the respawn beats this command's own
-      // child to the port. Naming it here is what stops the next reader from
-      // diagnosing a restart that worked.
+      // reads that as a failure, and a respawn that beat the stop can still win
+      // the port. Naming it here is what stops the next reader from diagnosing
+      // a restart that worked.
       log(`(PID ${started.pid} is not the process this command forked (PID ${spawnedPid ?? '?'}) — `
         + `an autostart supervisor respawned the daemon first and won the port. It is serving `
         + `build ${started.build ?? 'unknown'}.)`);
+    } else if (supervisor) {
+      // The daemon that came up is this command's child, so the unit is not
+      // supervising it — that is a fact about the machine's next hour, not a
+      // detail of this command.
+      log(`(PID ${started.pid} is this command's own process, outside the ${describeSupervisor(supervisor)} — `
+        + `run 'agentdeck daemon restart' with no flags to hand it back.)`);
     }
     process.exit(0);
   });
+
+/**
+ * Why no daemon (or the wrong one) came up. Shared by `daemon start` and
+ * `daemon restart`, which ask the same question of the same function and must
+ * not answer it in two different vocabularies.
+ */
+function reportDaemonWaitFailure(verdict: RestartVerdict, action: 'start' | 'restart'): void {
+  const what = action === 'start' ? 'Daemon start' : 'Daemon restart';
+  if (verdict.ok) return;
+  if (verdict.reason === 'stop-failed') {
+    log(`${what} FAILED — the daemon you asked to restart (PID ${verdict.pid}) `
+      + `is still answering on port ${verdict.port}. The stop did not take.`);
+  } else if (verdict.reason === 'stale-build') {
+    // A daemon IS serving, so say that first — the remedy for this is not
+    // "try again", it is "the process that won the port is a different
+    // install of AgentDeck". Reporting it as "no daemon" would send the
+    // user looking for a crash that never happened.
+    log(`${what} FAILED to put this build live — PID ${verdict.pid} is serving port `
+      + `${verdict.port} on build ${verdict.build}, but the build on disk is ${verdict.expected}.`);
+    log(`Something other than this command owns that port — most likely an autostart unit `
+      + `pointed at a different install (macOS: ~/Library/LaunchAgents/${PLIST_LABEL}.plist). `
+      + `Check the 'agentdeck' it launches, then 'agentdeck daemon restart' again.`);
+  } else {
+    log(`${what} FAILED — no daemon is answering.`);
+  }
+  // Both streams, not just stderr: the likeliest failure is the child
+  // hitting `daemon start`'s incumbent guard, which reports through `log()`
+  // — i.e. stdout. Naming only stderr pointed at the empty file.
+  log(`The reason is in ${join(homedir(), '.agentdeck', 'daemon-stdout.log')}`
+    + ` or ${join(homedir(), '.agentdeck', 'daemon-stderr.log')}.`);
+}
 
 /**
  * The identity of the daemon this restart produced — or why there isn't one.

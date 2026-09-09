@@ -139,6 +139,33 @@ agentdeck daemon port --clear  # 저장값 삭제 → 기본 9120 으로 복귀
   - A user unit only auto-starts on login; for boot-without-login on a headless host the user runs `loginctl enable-linger $USER` once (surfaced as an install-time hint, not run automatically).
   - `daemon.json` discovery, port fallback, singleton guard, and graceful `/shutdown` are reused unchanged across all three platforms.
 
+## Lifecycle는 supervisor를 통과한다 (`stop` / `start` / `restart`)
+
+데몬은 `/shutdown` 을 **자기 자신에 대한 SIGKILL** 로 끝낸다(`exitProcessNow`). 이건 실수가 아니라 유지해야 할 성질이다 — `process.exit()` 가 macOS serial fs worker join 에 걸려 pid 가 남은 실측이 있고(2026-06-06), 9120 을 쥔 채 죽지 않는 데몬은 다시 뜨는 데몬보다 명백히 나쁘다. 문제는 **시그널로 죽은 프로세스는 성공 종료가 아니라는 것**이다: launchd `KeepAlive{SuccessfulExit:false}`, systemd `Restart=on-failure`, Scheduled Task `RestartOnFailure` 셋 다 그걸 크래시로 읽고 몇 초 뒤 되살린다.
+
+2026-09-09 실측(같은 `KeepAlive` 를 단 일회용 LaunchAgent):
+
+| 종료 방식 | launchd | 결과 |
+| --- | --- | --- |
+| `kill -9 $$` (self-SIGKILL) | 매번 재기동 (~7s 간격, minimum runtime 10s) | `runs` 계속 증가 |
+| `exit 0` | 건드리지 않음 | `state = not running`, `last exit code = 0` |
+
+그렇다고 `exit 0` 으로 바꾸는 건 두 번 틀린다. (1) 아무도 복구할 수 없는 실패 모드(안 죽는 데몬)와 맞바꾼다. (2) **두 번째 증상을 고치지도 못한다** — clean exit 이면 launchd 는 의도적으로 재기동하지 않으므로 `daemon restart` 가 fork 한 자식이 매번 포트를 이기고, 데몬은 경합이 아니라 **결정적으로** supervisor 밖에 남는다.
+
+그래서 의도는 종료 코드에 싣지 않는다. 종료 코드는 크래시 여부를 나르는 1비트 채널이고 "사용자가 시켰다" 를 넣을 자리가 없다. 유닛이 설치돼 있으면 `stop`/`start`/`restart` 는 **supervisor 를 통해** 수행한다 (`bridge/src/daemon-supervisor.ts`).
+
+- **macOS 는 비대칭이다.** `launchctl stop` 은 SIGTERM 만 보내고, 데몬의 핸들러는 결국 같은 self-SIGKILL 로 끝나므로 KeepAlive 가 곧바로 되살린다. "멈춘 채로 있어야 하는" stop 은 **`bootout`** 뿐이다(잡 자체를 제거). `bootout` 은 `disable` 이 아니다 — plist 는 그대로 설치돼 있고 다음 로그인에 다시 로드된다. 이건 `systemctl --user stop` / `schtasks /End` 이 이미 뜻하던 것과 같다. 대가는 하나: bootout 이후 `kickstart` 는 `Could not find service` (rc 113) 로 실패하므로 start 는 **`bootstrap` 을 먼저** 해야 한다.
+- **`--foreground` 는 라우팅하지 않는다.** 그 철자가 곧 유닛의 `ExecStart` 라서, 라우팅하면 유닛이 자기 자신에게 시작을 요청하게 된다.
+- **유닛이 표현할 수 없는 요청은 되가져온다.** 유닛의 argv 는 고정이라 `-p` / `-d` / `--local` / `--loopback` / `--port-window` / `--wake-word` 는 유닛이 만들 수 없는 데몬을 요구한다. 이때는 예전처럼 직접 fork 하고, **그 데몬은 supervisor 밖이라고 말한다** — 아무도 되살리지 않는 데몬이 조용히 생기는 게 바로 이 라우팅이 없애려는 상태다.
+- **posture 불일치도 되가져온다.** `restart` 는 돌던 데몬의 posture 를 상속하는데, 그 posture 를 담지 않은 유닛에 재시작을 맡기면 loopback-only 데몬이 광고하는 데몬으로 조용히 바뀐다 — 상속이 막으려던 그 enterprise downgrade다. 그래서 유닛 파일에서 실제 posture 를 읽어(`parseSupervisorPosture`) 비교한다.
+- **stop 은 라우팅 여부와 무관하게 유닛도 멈춘다.** 직접 fork 로 재시작하는 경우에도, 유닛이 살아 있으면 옛 데몬을 새 데몬 한가운데로 되살린다.
+- 판정은 `routeDaemonLifecycle` 하나에 모여 있다(`supervisor` / `one-off-flags` / `posture-mismatch` / `no-supervisor`). 두 호출부가 같은 질문에 다르게 답하면 안 되고, 호출부에 흩어 쓴 규칙은 한쪽이 잊어도 초록으로 남는다.
+- 기다림의 생존 신호도 바뀐다. fork 한 자식이 없으므로 `waitForRestartedDaemon` 의 `isChildAlive` 자리에는 **유닛의 잡이 아직 도는가**(`supervisorLivenessProbe`) 가 들어간다. 없으면 floor(20s)가 그대로 하드 데드라인이 되어, stand-down 협상 중인 정상 기동을 실패로 보고한다 — 이 검증 경로를 다시 쓴 이유였던 그 거짓 실패다.
+
+실측(2026-09-09, 이 머신): 바꾸기 전 상태가 정확히 증상 2였다 — `runs = 7, last exit code = 0, state = not running` 인 유닛 옆에서 ppid 1 짜리 CLI 자식이 9120 을 서빙. `daemon restart` 한 번으로 `state = running, pid = <daemon>` 으로 수렴했고, `daemon stop` 뒤 30초 동안 재기동이 없었으며(이전에는 ~7초), `daemon start` 는 bootout 된 잡을 bootstrap 해서 다시 유닛 아래로 띄웠다.
+
+**아직 열려 있음**: `daemon install` 은 유닛을 로드하기만 하므로, 이미 돌고 있는 (supervisor 밖) 데몬이 있으면 유닛의 잡이 incumbent 가드에 걸려 `exit 0` 하고 그대로 `state = not running` 이 된다. 즉 install 직후에도 데몬은 감시 밖일 수 있다 — 수렴시키는 건 지금은 `daemon restart` 다.
+
 ## Session timeline relay
 
 `SessionTimelineRelay` (`session-timeline-relay.ts`) — daemon subscribes to sibling session bridges' WS to relay `timeline_event`/`timeline_history` events + `state_update.modelCatalog` (Claude Code OAuth catalog → daemon `cachedModelCatalog`, merged with Gateway catalog by name dedup). 10s sync interval detects new/removed sessions. Eliminates client-side `StateTimelineGenerator` duplication (Android/Apple) — daemon provides unified timeline stream for all agent types.

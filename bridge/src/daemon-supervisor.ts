@@ -1,0 +1,342 @@
+/**
+ * The autostart supervisor as a lifecycle PEER of the CLI, not just something
+ * `daemon install` writes once.
+ *
+ * The daemon ends `/shutdown` by SIGKILLing itself (`exitProcessNow`), and that
+ * is load-bearing: `process.exit()` has been observed joining a macOS serial fs
+ * worker and leaving the pid behind (2026-06-06), and a daemon that will not
+ * die while holding 9120 is strictly worse than one that comes back. But a
+ * signalled death is not a successful exit, so every supervisor reads a
+ * deliberate stop as a crash. Measured on this fleet 2026-09-09 with a
+ * throwaway LaunchAgent carrying the same `KeepAlive{SuccessfulExit:false}`:
+ * a self-SIGKILL was respawned every time (three consecutive runs, ~7s apart —
+ * the 10s minimum-runtime throttle), while a plain `exit 0` left the job at
+ * `state = not running`, `last exit code = 0`, and launchd did not touch it.
+ *
+ * The tempting fix — exit 0 instead — is wrong twice: it trades away the
+ * guaranteed exit for the one failure mode nobody can recover from, and it does
+ * not even fix the second symptom. With a clean exit launchd deliberately does
+ * NOT respawn, so `daemon restart`'s own forked child wins the port every time
+ * and the daemon ends up outside supervision DETERMINISTICALLY instead of by
+ * race.
+ *
+ * So intent is not encoded in the exit status at all — the exit status is a
+ * one-bit crash channel and it has no room for "the user asked for this".
+ * Intent is spoken to the supervisor directly: when a unit owns the daemon,
+ * `daemon stop` / `start` / `restart` go THROUGH it. Anything else is a race
+ * with the process's own parent.
+ *
+ * macOS is the asymmetric one. `launchctl stop` sends SIGTERM, the daemon's
+ * handler runs and ends in the same self-SIGKILL, and KeepAlive brings it
+ * straight back — so a stop that means "stay stopped" must be `bootout`, which
+ * removes the job. `bootout` is not `disable`: the plist is still installed and
+ * launchd loads it again at the next login, which is exactly what `systemctl
+ * --user stop` and `schtasks /End` already mean. The cost is that `kickstart`
+ * then fails with "Could not find service" (verified, rc 113), so the start
+ * plan has to `bootstrap` first.
+ *
+ * The plans are pure so the decision can be replayed in a test on any platform;
+ * only `runSupervisorPlan` and `detectSupervisor` touch the machine.
+ */
+import { execFileSync } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
+export type SupervisorKind = 'launchd' | 'systemd' | 'schtasks';
+
+export const PLIST_LABEL = 'dev.agentdeck.daemon';
+export function launchAgentPlistPath(): string {
+  return join(homedir(), 'Library', 'LaunchAgents', `${PLIST_LABEL}.plist`);
+}
+
+export interface SupervisorFacts {
+  kind: SupervisorKind;
+  /** launchd label / systemd unit file name / scheduled task name. */
+  label: string;
+  /** The file that defines it, when it is a file (launchd, systemd). */
+  unitPath?: string;
+  /** Effective uid, for launchd's `gui/<uid>` domain. */
+  uid?: number;
+}
+
+export interface SupervisorCommand {
+  argv: string[];
+  /**
+   * A command whose failure is a legitimate state, not an error: `bootout` on a
+   * job that was never loaded, `schtasks /End` on a task that is not running.
+   * Only the failure of a REQUIRED command makes the plan fail.
+   */
+  optional?: boolean;
+  /** Milliseconds. A stop can block on the supervised process's own teardown. */
+  timeoutMs?: number;
+}
+
+/** Human name for a message. */
+export function describeSupervisor(f: SupervisorFacts): string {
+  switch (f.kind) {
+    case 'launchd': return `launchd unit ${f.label}`;
+    case 'systemd': return `systemd --user unit ${f.label}`;
+    case 'schtasks': return `scheduled task ${f.label}`;
+  }
+}
+
+/**
+ * Stop the daemon and keep it stopped for this login session.
+ *
+ * launchd: `bootout` rather than `stop`, because `stop` only sends SIGTERM and
+ * KeepAlive re-launches whatever the daemon's exit status ends up being.
+ */
+export function supervisorStopPlan(f: SupervisorFacts): SupervisorCommand[] {
+  switch (f.kind) {
+    case 'launchd':
+      return [{ argv: ['launchctl', 'bootout', `gui/${f.uid ?? 0}/${f.label}`], optional: true, timeoutMs: 20_000 }];
+    case 'systemd':
+      return [{ argv: ['systemctl', '--user', 'stop', f.label], timeoutMs: 30_000 }];
+    case 'schtasks':
+      return [{ argv: ['schtasks', '/End', '/TN', f.label], optional: true, timeoutMs: 20_000 }];
+  }
+}
+
+/**
+ * Start the daemon UNDER the supervisor.
+ *
+ * launchd needs both halves: `bootstrap` re-registers a job a previous `stop`
+ * booted out (and fails harmlessly when it is still loaded), `kickstart` then
+ * runs it now rather than at the next login.
+ */
+export function supervisorStartPlan(f: SupervisorFacts): SupervisorCommand[] {
+  switch (f.kind) {
+    case 'launchd':
+      return [
+        { argv: ['launchctl', 'bootstrap', `gui/${f.uid ?? 0}`, f.unitPath ?? ''], optional: true, timeoutMs: 20_000 },
+        { argv: ['launchctl', 'kickstart', `gui/${f.uid ?? 0}/${f.label}`], timeoutMs: 20_000 },
+      ];
+    case 'systemd':
+      return [{ argv: ['systemctl', '--user', 'start', f.label], timeoutMs: 30_000 }];
+    case 'schtasks':
+      return [{ argv: ['schtasks', '/Run', '/TN', f.label], timeoutMs: 20_000 }];
+  }
+}
+
+/**
+ * The posture flags baked into the installed unit's argv.
+ *
+ * `daemon restart` inherits the RUNNING daemon's posture, and handing the
+ * restart to a unit whose argv carries a different posture would silently
+ * rewrite it — the enterprise downgrade that inheritance exists to prevent. So
+ * the two are compared, and they can only be compared by reading the unit.
+ *
+ * Parses the file the installer wrote, per format: one `<string>` element per
+ * flag in a plist, one quoted ExecStart word in a systemd unit, and a plain
+ * argv tail inside `<Arguments>` in the Task Scheduler XML.
+ */
+export function parseSupervisorPosture(kind: SupervisorKind, content: string): string[] {
+  const has = (flag: string): boolean => {
+    if (kind === 'launchd') return content.includes(`<string>${flag}</string>`);
+    // systemd quotes every ExecStart word; the Task Scheduler XML writes them
+    // bare inside <Arguments>, where the LAST flag is followed by `<` and not by
+    // whitespace — a same-format fixture would never have shown that, the real
+    // generated file did. So the trailing boundary is "not more flag", not "a
+    // separator".
+    return new RegExp(`(^|[\\s"><])${flag}(?![\\w-])`, 'm').test(content);
+  };
+  // Canonical order — the same one `daemonPostureArgs` emits, so two lists can
+  // be compared as strings.
+  return ['--local', '--loopback'].filter(has);
+}
+
+/**
+ * The installed autostart unit for this platform, or null when there is none.
+ *
+ * Registration is read from disk (or from `schtasks /Query`) — never from
+ * whether the daemon happens to be running, which is a different question and
+ * the one the caller asks separately.
+ */
+export function detectSupervisor(): SupervisorFacts | null {
+  try {
+    if (process.platform === 'darwin') {
+      const unitPath = launchAgentPlistPath();
+      if (!existsSync(unitPath)) return null;
+      return { kind: 'launchd', label: PLIST_LABEL, unitPath, uid: process.getuid?.() ?? 0 };
+    }
+    if (process.platform === 'linux') {
+      const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
+      const unitPath = join(configHome, 'systemd', 'user', 'agentdeck-daemon.service');
+      if (!existsSync(unitPath)) return null;
+      return { kind: 'systemd', label: 'agentdeck-daemon.service', unitPath };
+    }
+    if (process.platform === 'win32') {
+      try {
+        execFileSync('schtasks', ['/Query', '/TN', 'AgentDeckDaemon'], { stdio: 'pipe', windowsHide: true });
+      } catch {
+        return null;
+      }
+      return { kind: 'schtasks', label: 'AgentDeckDaemon' };
+    }
+  } catch {
+    // A supervisor we cannot even look up is one we must not claim to drive.
+  }
+  return null;
+}
+
+/** The unit's baked posture flags, or [] when the file cannot be read. */
+export function supervisorPosture(f: SupervisorFacts): string[] {
+  if (!f.unitPath) return [];
+  try {
+    return parseSupervisorPosture(f.kind, readFileSync(f.unitPath, 'utf-8'));
+  } catch {
+    return [];
+  }
+}
+
+export interface SupervisorRunResult {
+  /** Every REQUIRED command succeeded. */
+  ok: boolean;
+  ran: { argv: string[]; ok: boolean; detail?: string }[];
+}
+
+/** Run a plan. Never throws — a supervisor that misbehaves must not leave the machine daemonless. */
+export function runSupervisorPlan(plan: SupervisorCommand[]): SupervisorRunResult {
+  const ran: SupervisorRunResult['ran'] = [];
+  let ok = true;
+  for (const cmd of plan) {
+    const [bin, ...args] = cmd.argv;
+    try {
+      execFileSync(bin, args, { stdio: 'pipe', windowsHide: true, timeout: cmd.timeoutMs ?? 20_000 });
+      ran.push({ argv: cmd.argv, ok: true });
+    } catch (e) {
+      const detail = ((e as { stderr?: Buffer }).stderr?.toString() || (e as Error).message || '').trim();
+      ran.push({ argv: cmd.argv, ok: false, detail });
+      if (!cmd.optional) ok = false;
+    }
+  }
+  return { ok, ran };
+}
+
+/**
+ * Flags that cannot be handed to the supervisor.
+ *
+ * The unit carries one fixed argv, so a one-off `-p 9130` / `--loopback` /
+ * `--debug` invocation is asking for a daemon the unit cannot produce. Those
+ * fork as before — and the caller says the resulting daemon is not the
+ * supervised one, because that is the whole failure this routing exists to
+ * stop being silent.
+ */
+export function oneOffFlagsBlockingSupervisor(opts: {
+  port?: unknown; debug?: unknown; local?: unknown; loopback?: unknown;
+  portWindow?: unknown; wakeWord?: unknown;
+}): string[] {
+  const blocking: string[] = [];
+  if (opts.port) blocking.push('--port');
+  if (opts.debug) blocking.push('--debug');
+  if (opts.local) blocking.push('--local');
+  if (opts.loopback) blocking.push('--loopback');
+  if (opts.portWindow) blocking.push('--port-window');
+  if (opts.wakeWord) blocking.push('--wake-word');
+  return blocking;
+}
+
+/**
+ * Who performs this lifecycle command: the supervisor, or the CLI itself.
+ *
+ * A truth table rather than three `if`s at two call sites — `daemon start` and
+ * `daemon restart` must not answer this differently, and a rule spelled out
+ * inline stays green while the other call site forgets it.
+ */
+export type LifecycleRoute =
+  | { via: 'supervisor' }
+  | { via: 'self'; reason: 'no-supervisor' }
+  | { via: 'self'; reason: 'one-off-flags'; flags: string[] }
+  | { via: 'self'; reason: 'posture-mismatch'; unitPosture: string[]; wantedPosture: string[] };
+
+export function routeDaemonLifecycle(args: {
+  supervisor: SupervisorFacts | null;
+  /** Flags this invocation typed that the unit's fixed argv cannot express. */
+  oneOffFlags: string[];
+  /**
+   * The posture baked into the unit, and the posture the daemon must come up
+   * with. Both omitted when there is nothing to preserve (`daemon start` has no
+   * running daemon to inherit from — the unit's own posture IS the answer).
+   */
+  unitPosture?: string[];
+  wantedPosture?: string[];
+}): LifecycleRoute {
+  if (!args.supervisor) return { via: 'self', reason: 'no-supervisor' };
+  if (args.oneOffFlags.length > 0) return { via: 'self', reason: 'one-off-flags', flags: args.oneOffFlags };
+  if (args.unitPosture && args.wantedPosture
+      && args.unitPosture.join(' ') !== args.wantedPosture.join(' ')) {
+    return {
+      via: 'self', reason: 'posture-mismatch',
+      unitPosture: args.unitPosture, wantedPosture: args.wantedPosture,
+    };
+  }
+  return { via: 'supervisor' };
+}
+
+/**
+ * Is the supervisor's own job still running?
+ *
+ * The supervised analog of "is the child this command forked still alive?".
+ * `waitForRestartedDaemon` treats its floor as a floor, not a budget — a start
+ * can legitimately spend a minute negotiating a stand-down and then reclaiming
+ * a port macOS is still holding — and it only gives up when the thing it
+ * started has EXITED without a daemon appearing. Handing it nothing here would
+ * turn that floor back into a hard 20s deadline, which is the false-failure
+ * report this whole verification path was rewritten to remove.
+ *
+ * `undefined` means the supervisor did not answer, which is not "it died": the
+ * caller keeps waiting, bounded by the ceiling.
+ */
+export function supervisorJobRunning(f: SupervisorFacts): boolean | undefined {
+  try {
+    switch (f.kind) {
+      case 'launchd': {
+        const out = execFileSync('launchctl', ['print', `gui/${f.uid ?? 0}/${f.label}`],
+          { stdio: 'pipe', encoding: 'utf-8', timeout: 5_000 });
+        // The first `state = ` line is the job's; nested ones belong to its
+        // sub-dictionaries.
+        const m = /^\s*state = (\S+)/m.exec(out);
+        return m ? m[1] === 'running' : undefined;
+      }
+      case 'systemd': {
+        const out = execFileSync('systemctl', ['--user', 'is-active', f.label],
+          { stdio: 'pipe', encoding: 'utf-8', timeout: 5_000 });
+        return out.trim() === 'active';
+      }
+      case 'schtasks': {
+        const out = execFileSync('schtasks', ['/Query', '/TN', f.label, '/FO', 'LIST'],
+          { stdio: 'pipe', encoding: 'utf-8', timeout: 5_000, windowsHide: true });
+        return /^Status:\s+Running/mi.test(out);
+      }
+    }
+  } catch (e) {
+    // A non-zero exit is an answer for two of the three: `systemctl is-active`
+    // prints the state and exits 3 when it is not active, and `launchctl print`
+    // fails outright once the job has been booted out.
+    const out = ((e as { stdout?: Buffer }).stdout?.toString() ?? '').trim();
+    if (f.kind === 'systemd' && out) return out === 'active';
+    if (f.kind === 'launchd') return false;
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * A throttled liveness probe for `waitForRestartedDaemon`.
+ *
+ * It is asked once per 300ms poll once past the floor, and each answer costs a
+ * subprocess — so the answer is cached briefly. Unknown reads as alive: the
+ * ceiling, not a failed lookup, is what ends the wait.
+ */
+export function supervisorLivenessProbe(f: SupervisorFacts, minIntervalMs = 2_000): () => boolean {
+  let checkedAt = 0;
+  let last = true;
+  return () => {
+    const now = Date.now();
+    if (now - checkedAt < minIntervalMs) return last;
+    checkedAt = now;
+    last = supervisorJobRunning(f) !== false;
+    return last;
+  };
+}
