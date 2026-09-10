@@ -421,9 +421,9 @@ final class ApmeParseJudgeTests: XCTestCase {
     /// literal no test read: flipping it back to `true` left the suite green.
     func testTheClassifierPathSendsNoPenalty() async {
         ApmeJudgeMlx.clearPenaltySuppressionForTests()
-        // Drive the REAL classifier dispatch, not `judge()` with the flag
-        // typed by hand: the thing that can regress is the argument at that
-        // call site, and a test passing its own `false` cannot see it change.
+        // Drive the REAL classifier dispatch, not `judge()` with a flag typed
+        // by hand: the thing that can regress is the call site itself, and a
+        // test composing its own request body cannot see that change.
         var config = ApmeConfig()
         config.judge.backend = .mlx
         config.judge.endpoint = "http://127.0.0.1:65998/v1/chat/completions"
@@ -432,7 +432,7 @@ final class ApmeParseJudgeTests: XCTestCase {
 
         let t = ScriptedTransport([.ok(Self.verdict)])
         _ = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
-            await ApmeClassifier.callConfiguredJudge(prompt: "p", config: config)
+            await ApmeClassifier.classifyWithBackend("mlx", prompt: "p", config: config)
         }
         XCTAssertEqual(t.sent.count, 1, "the classifier must reach the MLX leg")
         XCTAssertFalse(t.sent[0].keys.contains("repetition_penalty"),

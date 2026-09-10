@@ -353,9 +353,9 @@ JSON 모드를 잃는 비용이 더 크다) 엔드포인트별로 기억한다.
   답하는 프록시가 한쪽에서는 판정, 한쪽에서는 실패였다. 상태 게이트를 넓히는 것은 **본문 게이트와
   무관하다** — 201 이어도 잘린 본문은 여전히 판정이 아니다.
 
-아직 갈라진 채로 남은 것: Swift 에는 JSON 모드 사다리가 없고(위), 분류기(`task_category`)의
-백엔드·`max_tokens`·타임아웃·폴백이 서로 다르다. 분류 결과가 루브릭을 고르므로 이건 점수 차이로
-이어진다.
+아직 갈라진 채로 남은 것: Swift 에는 JSON 모드 사다리가 없다(위). 분류기(`task_category`)의
+백엔드·프롬프트·`max_tokens`·타임아웃·폴백은 #299 후속으로 `shared/src/apme-classifier-rules.ts` 로
+합쳤다 — 아래 "LLM fallback" 절.
 
 ### judge-health — 닫힌 작업이 실제로 판정을 받았는가
 
@@ -538,9 +538,34 @@ ocToolNames
 | 10 | `ops` | >50% Bash |
 | — | `unknown` | 위 어디에도 해당 없음 |
 
-### LLM fallback
+### LLM fallback (#299 — 양 데몬 공유 SSOT)
 
-`unknown`이면 `classifyWithLlm(prompt, signals)` — 로컬 MLX에 task prompt + tool 요약을 보내 분류 요청. 비용 0.
+`unknown`이면 `classifyWithLlm(prompt, signals)` — 프롬프트/레이블 목록/`max_tokens`/타임아웃/백엔드
+순서는 `shared/src/apme-classifier-rules.ts` 가 SSOT 이고, `pnpm generate-apme-classifier-rules` 가
+Swift 미러(`ApmeClassifierRules.generated.swift`)를 찍는다 (드리프트 게이트:
+`apme-classifier-rules-sync.test.ts`). `task_category` 가 루브릭을 고르므로, 분류 결과가 두 데몬에서
+다르면 그 자체로 점수 차이다.
+
+이전에는 Node 는 로컬 MLX(`http://127.0.0.1:8800`, ~20 토큰, 15초)만 시도했고, Swift 는
+`callConfiguredJudge` 를 통해 **사용자가 설정한 judge 백엔드를 그대로** 탔다 — `api`/`openai` 포함,
+judge 자신의 800 토큰/60초 예산으로. `judge.backend: "api"` 를 설정한 사용자는 Swift 에서만 분류
+1건당 과금됐다.
+
+**백엔드 순서: `foundationModels → mlx → rules`, `api`/`openai` 는 절대 없음.** 2026-09-10 유지보수자의
+실제 `apme.sqlite` 40개 실제 task 프롬프트(룰이 배정한 카테고리 전역에 분산, 스크립트
+`scripts/measure-apme-classifier-backends.mjs`)로 측정:
+
+| 백엔드 | 완료율(15초 예산 내) | 룰과 일치율 | 잘못된 레이블 |
+|---|---|---|---|
+| Foundation Models | 16/40 (40%) | 5/15 = 33% | 1/16 |
+| MLX (측정 당시 로드된 모델: `Qwen3.8-27B-4bit`) | 7/40 (18%) | 1/7 = 14% | 0/7 |
+
+레이턴시는 둘 다 평균 6-7초로 비슷했다. FM 이 이 호출 형태(한 단어 답)에서는 완료율·룰-일치율·잘못된
+레이블 세 축 모두 MLX 보다 낫거나 같았으므로 순서를 이끈다 — judge 채점(800토큰 판정)에서 MLX 가
+더 나은 것(0.86–1.00 대 0.580, 위)과는 다른 결론이며, 호출 모양이 다르면 같은 두 백엔드도 순위가
+뒤집힐 수 있다는 것 자체가 기록할 값이다. MLX 는 완료했을 때 잘못된 레이블이 0%였으므로 순서에서
+빠지지는 않고 2순위로 남는다. `api`/`openai` 는 측정 대상이 아니다 — 분류는 매 task 마다 조용히
+도는 호출이라 유료 백엔드로 보내는 것 자체가 금지.
 
 ### `classifyRunSmart(store, runId)`
 
