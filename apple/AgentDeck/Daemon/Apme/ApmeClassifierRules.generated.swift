@@ -36,8 +36,8 @@ enum ApmeClassifierRules {
     /// silently, on every session, whatever judge backend they picked for
     /// actual eval scoring.
     static let backendOrder: [String] = [
-        "foundationModels",
         "mlx",
+        "foundationModels",
         "rules",
     ]
 

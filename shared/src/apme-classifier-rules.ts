@@ -19,24 +19,25 @@
  *
  * Measured 2026-09-10 on the maintainer's real apme.sqlite (40 real task
  * prompts, spread across every rule-assigned category, `scripts/
- * measure-apme-classifier-backends.mjs`, exact numbers in docs/apme.md):
- * under the classifier's own 15s budget, on-device Foundation Models
- * completed 16/40 calls (agreed with the rule-assigned label on 5/15 = 33%,
- * 1 out-of-vocabulary answer) while the local MLX server — which happened
- * to have a 27B model loaded at measurement time — completed only 7/40
- * (agreed 1/7 = 14%, 0 invalid). FM beat MLX on every axis measured for
- * THIS call shape (a one-word answer, not the eval judge's 800-token
- * verdict, where MLX is the measured-superior leg): completion rate,
- * rule-agreement, and invalid-label rate, at comparable latency (~6-7s
- * avg). The threshold: FM leads the order because it completed more often
- * AND agreed with rules at least as often as MLX did under the shared
- * budget — not because either backend's agreement rate is high in
- * absolute terms (rules and an LLM reading the actual prompt routinely
- * diverge; this measures relative viability, not ground-truth accuracy).
- * MLX stays second rather than being dropped — its 0% invalid-label rate
- * on the calls it DID complete means it is not worthless, only slower
- * under this budget on the model that happened to be loaded. Re-measure
- * before changing this order.
+ * measure-apme-classifier-backends.mjs`, numbers in docs/apme.md), and the
+ * measurement is recorded as INCONCLUSIVE about ranking. Under the
+ * classifier's own 15s budget, on-device Foundation Models completed 16/40
+ * calls (agreed with the rule-assigned label on 5/15, 1 out-of-vocabulary
+ * answer) and the local MLX server completed 7/40 (agreed 1/7, 0 invalid) —
+ * but the MLX server happened to have a 27B model loaded, so the 15s budget
+ * measured that server's load that afternoon, not the backend's aptitude;
+ * the samples that survived (n=15 vs n=7) are too small to rank on; and
+ * agreement with the RULES is not accuracy, since the rules are the thing an
+ * LLM reading the prompt is meant to improve on. So the order below is NOT a
+ * claim that one backend classifies better. It is the order that changes the
+ * fewest existing results while still admitting Apple Intelligence: `mlx`
+ * first because it was already Node's only LLM leg (Node runs most
+ * classifications) and is the leg the repo's prompts are calibrated against;
+ * `foundationModels` second so a Mac with no MLX server — the common case,
+ * most Macs have Apple Intelligence — still gets an LLM answer instead of
+ * falling to rules; `rules` last. Re-measure before reordering: a normally
+ * loaded MLX model, a budget both legs can meet, and owner-labelled ground
+ * truth rather than rule agreement.
  */
 
 // ─── Taxonomy ────────────────────────────────────────────────────────────────
@@ -55,15 +56,15 @@ export type ApmeClassifierLabel = typeof APME_CLASSIFIER_LABELS[number];
 
 // ─── LLM-assist backend order ───────────────────────────────────────────────
 
-/** Backends the LLM-assist classifier may call, in try-order. `foundationModels`
- *  leads (see the measurement above); `rules` is not a network call — it
+/** Backends the LLM-assist classifier may call, in try-order. `mlx` leads
+ *  and `foundationModels` follows (see the measurement note above); `rules` is not a network call — it
  *  means "give up and return the rule-based `unknown`", and is always the
  *  last resort so a fully offline daemon still classifies. `api`/`openai`
  *  are never members: classification runs on every closed task with
  *  `unknown` rules, so routing it through a paid backend would bill the
  *  user for a call the eval pipeline makes silently, on every session,
  *  whatever judge backend they picked for actual eval scoring. */
-export const APME_CLASSIFIER_BACKEND_ORDER = ['foundationModels', 'mlx', 'rules'] as const;
+export const APME_CLASSIFIER_BACKEND_ORDER = ['mlx', 'foundationModels', 'rules'] as const;
 
 export type ApmeClassifierBackend = typeof APME_CLASSIFIER_BACKEND_ORDER[number];
 

@@ -159,9 +159,9 @@ describe('classifyWithLlm()', () => {
       llm: { mlx: { endpoint: 'http://127.0.0.1:8800', model: 'mlx-community/gemma-pinned' } },
     }));
     clearMlxSettingsCache();
-    // Foundation Models is first in APME_CLASSIFIER_BACKEND_ORDER — default
-    // every test to "unavailable" so the tests below that only set up an MLX
-    // transport still exercise the MLX leg, not a real subprocess call.
+    // MLX is first in APME_CLASSIFIER_BACKEND_ORDER and Foundation Models
+    // second — default FM to "unavailable" so no test ever reaches the real
+    // helper subprocess, and so an MLX-only setup still answers from MLX.
     mockedCallFoundationModelsHelper.mockReset();
     mockedCallFoundationModelsHelper.mockRejectedValue(new Error('Foundation Models helper unavailable in tests'));
   });
@@ -195,22 +195,10 @@ describe('classifyWithLlm()', () => {
     expect(urls).toEqual(['http://127.0.0.1:8800/chat/completions']);
   });
 
-  it('prefers Foundation Models when it answers with a valid label, never reaching MLX', async () => {
-    mockedCallFoundationModelsHelper.mockResolvedValueOnce('coding');
-    let mlxCalled = false;
-    globalThis.fetch = (async () => {
-      mlxCalled = true;
-      throw new Error('MLX must not be reached when FM already answered');
-    }) as typeof fetch;
-
-    const category = await classifyWithLlm('Fix the failing test', makeBaseSignals());
-    expect(category).toBe('coding');
-    expect(mlxCalled).toBe(false);
-  });
-
-  it('falls through to MLX when Foundation Models is unavailable', async () => {
-    // beforeEach already defaults the FM mock to reject; assert the MLX leg
-    // is what actually answers.
+  it('prefers MLX when it answers with a valid label, never reaching Foundation Models', async () => {
+    mockedCallFoundationModelsHelper.mockImplementation(async () => {
+      throw new Error('Foundation Models must not be reached when MLX already answered');
+    });
     globalThis.fetch = (async () => new Response(
       JSON.stringify({ choices: [{ message: { content: 'debugging' } }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -218,6 +206,16 @@ describe('classifyWithLlm()', () => {
 
     const category = await classifyWithLlm('Fix the failing test', makeBaseSignals());
     expect(category).toBe('debugging');
+    expect(mockedCallFoundationModelsHelper).not.toHaveBeenCalled();
+  });
+
+  it('falls through to Foundation Models when MLX is unreachable — the no-MLX-server Mac', async () => {
+    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+    mockedCallFoundationModelsHelper.mockResolvedValueOnce('coding');
+
+    const category = await classifyWithLlm('Fix the failing test', makeBaseSignals());
+    expect(category).toBe('coding');
+    expect(mockedCallFoundationModelsHelper).toHaveBeenCalledTimes(1);
   });
 
   // ─── #299: backend order is the shared SSOT, never `api`/`openai` ────────
