@@ -719,7 +719,7 @@ final class ApmeCollector {
     ) -> Bool {
         guard let task = sessionToTask[sessionId] else { return false }
         var payload: [String: Any] = [
-            "relation": relation, "direction": direction, "phase": phase, "evidence": evidence,
+            "relationId": key, "relation": relation, "direction": direction, "phase": phase, "evidence": evidence,
         ]
         if let peerSessionId, !peerSessionId.isEmpty { payload["peerSessionId"] = peerSessionId }
         if let peerName, !peerName.isEmpty { payload["peerName"] = peerName }

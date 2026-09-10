@@ -2375,6 +2375,7 @@ function sampleEventRowToTrajectory(r: ApmeSampleEventRow): TrajectoryEvent | nu
       return {
         ...base,
         kind: 'relation',
+        relationId: (p.relationId as string | null) ?? null,
         relation: p.relation === 'spawned' || p.relation === 'messaged' ? p.relation : 'waiting_on',
         direction: p.direction === 'in' ? 'in' : 'out',
         phase: p.phase === 'closed' ? 'closed' : 'open',

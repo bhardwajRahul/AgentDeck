@@ -76,6 +76,7 @@ this table live in CLAUDE.md § Key Conventions ("Cross-platform rules are SSOT-
 
 | Canonical source | Generator | Gate / note |
 |---|---|---|
+| `shared/src/sample.ts` (`RelationEvent.relationId`) | Existing Node/Swift sample serializers | `shared/collaboration-identity-vectors.json` replayed through both collectors and stores (`apme-collector.test.ts`, `CollaborationIdentityPersistenceTests`); Swift projection checks that closing one of two identically named jobs leaves the other open. |
 | `shared/src/protocol.ts` | `pnpm generate-protocol` | vitest drift gate; Swift + Kotlin types |
 | `shared/src/terrarium-rules.ts` | `pnpm generate-terrarium-rules` | vitest drift gate; see below |
 | `shared/src/states.ts` (state-machine transition table) | `pnpm generate-state-transitions` | vitest drift gate. A row present in one daemon and absent in the other is a session that wedges in `AWAITING_*` on one platform and recovers on the other, with nothing in either log saying why. A transition's rationale rides the SSOT as its `note` field so the mirror cannot restate and then contradict it; the generated file carries `#if os(macOS)` because it lives under `Daemon/` |

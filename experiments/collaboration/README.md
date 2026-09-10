@@ -39,6 +39,38 @@ missing samples leave the original roster/census usable; failed refreshes mark
 retained history explicitly. No prompts, histories or tokens are written to disk
 by the new UI, and it adds no agent-control commands.
 
+## Refinement — 2026-09-11
+
+The rail distinguishes loading, unavailable history, no recorded task, failed
+refresh and disconnection above the scrollable history. A manual refresh retries
+the same selection while keeping its previous snapshot labelled; switching
+sessions clears the snapshot, and a late response cannot overwrite the new one.
+
+Confirmed peer rows focus that session using the existing command, with a back
+button. Missing peers say “not in roster”, not “ended”. Ended observations are
+collapsed separately from pending observations, and all capped lists expand.
+Live census remains distinct from task history. Relation rows describe the last
+observed state and time rather than promising that historical work still runs.
+
+Both collectors persist the optional task-scoped `RelationEvent.relationId` and
+both sample serializers retain it. Equal job names therefore do not merge.
+Legacy records without identity stay separate observations. Unlinked launch
+requests remain in their own disclosure instead of disappearing when any child
+is resolved; they are explicitly not additional running-worker counts.
+Shared fixture: `shared/collaboration-identity-vectors.json`, replayed through
+Node persistence and Swift persistence/projection. `CollaborationFeedTests`
+exercise failed refresh/retry, missing or wrong-scope samples and late responses.
+The latest-task query, 15-second polling and 2 MiB response bound are unchanged;
+a dedicated relation endpoint and task-history selection remain follow-up work.
+
+Verification: `pnpm build`, `pnpm typecheck`, and Vitest (277 files,
+4,369 passed / 1 skipped) passed. The macOS build and all 15 targeted
+collaboration tests passed, including an offscreen native SwiftUI render at
+390 pt. Protocol generation left no drift; token sync, Markdown and design
+catalog checks passed. `design/lint.sh` reports 91 pre-existing violations in
+unchanged design HTML and the built Ulanzi bundle. No installed app or daemon
+was replaced for this refinement.
+
 ## IPS10 scope
 
 Only `BOARD_IPS10` changes. Work cards are identity-ordered and equal-sized, with

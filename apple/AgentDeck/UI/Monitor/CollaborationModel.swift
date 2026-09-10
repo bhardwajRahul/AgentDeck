@@ -37,6 +37,7 @@ struct CollaborationEvent: Decodable, Sendable {
     let summary: String?
     // `relation` events (shared RelationEvent): how this session coordinates
     // with OTHER sessions or processes without a SubagentStart.
+    let relationId: String?
     let relation: String?
     let direction: String?
     let peerSessionId: String?
@@ -69,6 +70,7 @@ struct CollaborationRelation: Identifiable, Equatable, Sendable {
     var observedAt: Double
 
     var isOpen: Bool { phase == "open" }
+    var isLaunchObservation: Bool { evidence == "bash_claude_p" }
 }
 
 enum CollaborationProjection {
@@ -92,55 +94,38 @@ enum CollaborationProjection {
         return byID.values.sorted { $0.id < $1.id }
     }
 
-    /// Typed `relation` evidence attributed to THIS task/session, folded to the
-    /// latest phase per identity:
-    ///
-    ///   - a spawned peer folds on its session id (open → closed as it exits);
-    ///     a spawn INTENT (`bash_claude_p`, no peer yet) is shown only while no
-    ///     ancestry-resolved spawn exists, since the tracker folds it into the
-    ///     child once observed;
-    ///   - a background job folds on its label (the process pid never rides
-    ///     the sample);
-    ///   - every message is its own row — a message has no phase to fold.
-    ///
-    /// Same-project membership never appears here: there is no such row.
+    /// Fold only producer identities (or a known peer session). Legacy job
+    /// records without identity stay separate observations: a shared label
+    /// cannot establish that a close belongs to a particular open.
+    /// Launch observations remain separate until there is an explicit link to
+    /// a child; one resolved child says nothing about other launch requests.
     static func relations(sample: CollaborationSample?, sessionId: String, taskId: String) -> [CollaborationRelation] {
         guard let sample, sample.sessionId == sessionId, sample.id == taskId else { return [] }
         var byID: [String: CollaborationRelation] = [:]
         var order: [String] = []
-        var sawResolvedSpawn = false
-        for event in sample.events {
+        for (index, event) in sample.events.enumerated() {
             guard event.kind == "relation",
                   let relation = event.relation, ["spawned", "messaged", "waiting_on"].contains(relation),
                   let direction = event.direction, direction == "in" || direction == "out",
                   let phase = event.phase, phase == "open" || phase == "closed" else { continue }
             let evidence = event.evidence ?? "unknown"
             let key: String
-            switch relation {
-            case "spawned":
-                if let peer = event.peerSessionId, !peer.isEmpty {
-                    key = "spawned:\(direction):\(peer)"
-                    sawResolvedSpawn = sawResolvedSpawn || direction == "out"
-                } else {
-                    key = "spawned:intent:\(event.ts)"
-                }
-            case "waiting_on":
-                key = "waiting_on:\(event.peerName ?? event.detail ?? "job")"
-            default:
-                key = "messaged:\(direction):\(event.ts):\(event.peerName ?? event.peerSessionId ?? "")"
+            if let identity = event.relationId, !identity.isEmpty {
+                key = "\(relation):\(direction):\(identity)"
+            } else if relation == "spawned", let peer = event.peerSessionId, !peer.isEmpty {
+                key = "spawned:\(direction):\(peer)"
+            } else {
+                key = "\(relation):\(direction):observation:\(event.ts):\(index)"
             }
-            if let old = byID[key], old.observedAt > event.ts { continue }
+            if let old = byID[key], old.observedAt > event.ts ||
+                (old.observedAt == event.ts && old.phase == "closed") { continue }
             let row = CollaborationRelation(
                 id: key, relation: relation, direction: direction, phase: phase,
                 peerSessionId: event.peerSessionId, peerName: event.peerName,
-                evidence: evidence, detail: event.detail ?? old(byID[key])?.detail, observedAt: event.ts)
+                evidence: evidence, detail: event.detail ?? byID[key]?.detail, observedAt: event.ts)
             if byID[key] == nil { order.append(key) }
             byID[key] = row
         }
-        return order.compactMap { byID[$0] }.filter { row in
-            !(row.relation == "spawned" && row.evidence == "bash_claude_p" && sawResolvedSpawn)
-        }
+        return order.compactMap { byID[$0] }
     }
-
-    private static func old(_ row: CollaborationRelation?) -> CollaborationRelation? { row }
 }

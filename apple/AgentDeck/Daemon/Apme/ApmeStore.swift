@@ -1216,6 +1216,7 @@ final class ApmeStore: @unchecked Sendable {
             out["to"] = p["to"] as? String ?? "unknown"
         case "relation":
             // Mirrors bridge/src/apme/store.ts sampleEventRowToTrajectory.
+            out["relationId"] = p["relationId"]
             let relation = p["relation"] as? String
             out["relation"] = (relation == "spawned" || relation == "messaged") ? relation! : "waiting_on"
             out["direction"] = (p["direction"] as? String) == "in" ? "in" : "out"

@@ -140,6 +140,9 @@ export interface SubagentEvent extends TrajectoryEventBase {
  *  with only the name/pid the evidence itself carried. */
 export interface RelationEvent extends TrajectoryEventBase {
   kind: 'relation';
+  /** Producer identity, scoped to this task, relation and direction. Stable across
+   * open/closed observations; labels are never identities. Absent on older records. */
+  relationId?: string | null;
   relation: 'spawned' | 'messaged' | 'waiting_on';
   /** `out`: this session did it (spawned / sent / started); `in`: it was done to this session. */
   direction: 'in' | 'out';

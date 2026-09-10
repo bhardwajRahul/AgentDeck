@@ -1306,6 +1306,7 @@ export class ApmeCollector {
       ts,
       dedupCore: `${event.relation}:${event.direction}:${event.phase}:${event.key}`,
       payloadObj: {
+        relationId: event.key,
         relation: event.relation,
         direction: event.direction,
         phase: event.phase,

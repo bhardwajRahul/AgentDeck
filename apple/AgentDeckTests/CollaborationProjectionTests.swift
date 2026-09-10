@@ -1,4 +1,7 @@
 import XCTest
+#if os(macOS)
+import SwiftUI
+#endif
 @testable import AgentDeck
 
 final class CollaborationProjectionTests: XCTestCase {
@@ -54,30 +57,28 @@ final class CollaborationProjectionTests: XCTestCase {
     // `claude -p` workers, exchanged twelve SendMessage calls with a sibling
     // and waited on a 22-minute background job — and the lens drew one
     // Explore branch. Relations are typed evidence, folded to their latest
-    // phase; a spawn intent disappears once ancestry resolves the child.
-    func testRelationsFoldToLatestPhaseAndDropResolvedIntents() throws {
+    // phase; launch observations are not silently linked to arbitrary children.
+    func testRelationsFoldToLatestPhaseAndPreserveUnlinkedIntents() throws {
         let value = try sample("""
         [{"kind":"relation","ts":1,"relation":"spawned","direction":"out","phase":"open","evidence":"bash_claude_p","peerName":"claude -p","detail":"claude -p ..."},
          {"kind":"relation","ts":2,"relation":"spawned","direction":"out","phase":"open","evidence":"process_ancestry","peerSessionId":"child-1"},
-         {"kind":"relation","ts":3,"relation":"waiting_on","direction":"out","phase":"open","evidence":"background_process","peerName":"run_bot_matrix.sh","detail":"bash tools/run_bot_matrix.sh"},
+         {"kind":"relation","ts":3,"relation":"waiting_on","relationId":"job-1","direction":"out","phase":"open","evidence":"background_process","peerName":"run_bot_matrix.sh","detail":"bash tools/run_bot_matrix.sh"},
          {"kind":"relation","ts":4,"relation":"messaged","direction":"in","phase":"closed","evidence":"cross_session_message","peerSessionId":"peer-9","peerName":"agentdeck-06","detail":"Not mine either"},
          {"kind":"relation","ts":5,"relation":"spawned","direction":"out","phase":"closed","evidence":"process_ancestry","peerSessionId":"child-1"},
-         {"kind":"relation","ts":6,"relation":"waiting_on","direction":"out","phase":"closed","evidence":"background_process","peerName":"run_bot_matrix.sh"},
+         {"kind":"relation","ts":6,"relation":"waiting_on","relationId":"job-1","direction":"out","phase":"closed","evidence":"background_process","peerName":"run_bot_matrix.sh"},
          {"kind":"relation","ts":7,"relation":"messaged","direction":"out","phase":"closed","evidence":"send_message_tool","peerName":"agentdeck-06","detail":"done"},
          {"kind":"relation","ts":8,"relation":"friends","direction":"out","phase":"open","evidence":"guess"},
          {"kind":"subagent","ts":9,"id":"a","name":"Explore","phase":"completed"}]
         """)
         let rows = CollaborationProjection.relations(sample: value, sessionId: "s1", taskId: "t1")
-        XCTAssertEqual(rows.map(\.id), [
-            "spawned:out:child-1",
-            "waiting_on:run_bot_matrix.sh",
-            "messaged:in:4.0:agentdeck-06",
-            "messaged:out:7.0:agentdeck-06",
-        ])
-        XCTAssertEqual(rows[0].phase, "closed")
+        XCTAssertEqual(rows.count, 5)
+        XCTAssertTrue(rows[0].isLaunchObservation)
+        XCTAssertEqual(rows[1].id, "spawned:out:child-1")
         XCTAssertEqual(rows[1].phase, "closed")
-        XCTAssertEqual(rows[1].detail, "bash tools/run_bot_matrix.sh", "a closing row without detail keeps the opening detail")
-        XCTAssertEqual(rows[2].peerSessionId, "peer-9")
+        XCTAssertEqual(rows[2].id, "waiting_on:out:job-1")
+        XCTAssertEqual(rows[2].phase, "closed")
+        XCTAssertEqual(rows[2].detail, "bash tools/run_bot_matrix.sh")
+        XCTAssertEqual(rows[3].peerSessionId, "peer-9")
         XCTAssertEqual(CollaborationProjection.children(sample: value, sessionId: "s1", taskId: "t1").count, 1)
     }
 
@@ -89,6 +90,28 @@ final class CollaborationProjectionTests: XCTestCase {
         XCTAssertEqual(rows.count, 1)
         XCTAssertNil(rows.first?.peerSessionId)
         XCTAssertTrue(CollaborationProjection.relations(sample: value, sessionId: "s2", taskId: "t1").isEmpty)
+    }
+
+    func testLegacyJobsDoNotCloseOtherJobsWithTheSameName() throws {
+        let value = try sample("""
+        [{"kind":"relation","ts":1,"relation":"waiting_on","direction":"out","phase":"open","peerName":"build.sh"},
+         {"kind":"relation","ts":2,"relation":"waiting_on","direction":"out","phase":"closed","peerName":"build.sh"}]
+        """)
+        let rows = CollaborationProjection.relations(sample: value, sessionId: "s1", taskId: "t1")
+        XCTAssertEqual(rows.map(\.phase), ["open", "closed"])
+    }
+
+    func testOneResolvedSpawnDoesNotHideOtherLaunchesAndCloseWinsTies() throws {
+        let value = try sample("""
+        [{"kind":"relation","ts":1,"relation":"spawned","direction":"out","phase":"open","evidence":"bash_claude_p"},
+         {"kind":"relation","ts":2,"relation":"spawned","direction":"out","phase":"open","evidence":"bash_claude_p"},
+         {"kind":"relation","ts":3,"relation":"spawned","direction":"out","phase":"closed","peerSessionId":"child"},
+         {"kind":"relation","ts":3,"relation":"spawned","direction":"out","phase":"open","peerSessionId":"child"}]
+        """)
+        let rows = CollaborationProjection.relations(sample: value, sessionId: "s1", taskId: "t1")
+        XCTAssertEqual(rows.count, 3)
+        XCTAssertEqual(rows.filter(\.isLaunchObservation).count, 2)
+        XCTAssertEqual(rows.last?.phase, "closed")
     }
 
     func testLargeToolPayloadDoesNotBecomeRetainedGraphData() throws {
@@ -263,6 +286,183 @@ final class CoordinationEvidenceVectorTests: XCTestCase {
                     s("a", "processing", "2026-09-06T05:00:00Z"), s("z", "idle", "2026-09-06T04:00:00Z")]
         XCTAssertEqual(ESP32Serial.stableCardRoster(rows, cap: 3).map { $0["id"] as? String }, ["a", "b", "z"])
         XCTAssertEqual(ESP32Serial.stableCardRoster(Array(rows.prefix(2)), cap: 3).map { $0["id"] as? String }, ["k", "b"])
+    }
+}
+#endif
+
+#if os(macOS)
+@DaemonActor
+final class CollaborationIdentityPersistenceTests: XCTestCase {
+    func testIdentitySurvivesCollectorStorageAndProjection() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        setenv("AGENTDECK_DATA_DIR", directory.path, 1)
+        let store = ApmeStore()
+        defer { store.close(); unsetenv("AGENTDECK_DATA_DIR"); try? FileManager.default.removeItem(at: directory) }
+        XCTAssertTrue(store.open())
+        let collector = ApmeCollector(store: store)
+        collector.handleHook(event: "session_start", data: ["session_id": "relations", "agent_type": "claude-code"])
+        collector.handleHook(event: "UserPromptSubmit", data: ["session_id": "relations", "prompt": "run two builds"])
+        let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("shared/collaboration-identity-vectors.json")
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any])
+        let observations = try XCTUnwrap(fixture["observations"] as? [[String: Any]])
+        for e in observations {
+            XCTAssertTrue(collector.noteRelation(sessionId: "relations", relation: e["relation"] as! String,
+                direction: e["direction"] as! String, phase: e["phase"] as! String,
+                peerSessionId: nil, peerName: e["peerName"] as? String, evidence: e["evidence"] as! String,
+                detail: nil, ts: e["ts"] as! Int, key: e["key"] as! String))
+        }
+        let run = try XCTUnwrap(store.listRuns().first)
+        let task = try XCTUnwrap(store.listTasksForRun(run.id).first)
+        let dict = try XCTUnwrap(store.getSampleDict(task.id))
+        let value = try JSONDecoder().decode(CollaborationSample.self, from: JSONSerialization.data(withJSONObject: dict))
+        let rows = CollaborationProjection.relations(sample: value, sessionId: "relations", taskId: task.id)
+        let expected = try XCTUnwrap(fixture["expected"] as? [[String: String]])
+        XCTAssertEqual(rows.map { ["id": $0.id, "phase": $0.phase] }, expected)
+    }
+}
+#endif
+
+#if os(macOS)
+private actor CollaborationResponses {
+    var responses: [Result<Data, Error>]
+    init(_ responses: [Result<Data, Error>]) { self.responses = responses }
+    func read(_ url: URL) throws -> Data {
+        guard !responses.isEmpty else { throw URLError(.badServerResponse) }
+        return try responses.removeFirst().get()
+    }
+}
+
+@MainActor
+final class CollaborationFeedTests: XCTestCase {
+    private func json(_ text: String) -> Result<Data, Error> { .success(Data(text.utf8)) }
+    private let page = #"{"tasks":[{"id":"t1","sessionId":"s1","title":"Build"}]}"#
+    private let detail = #"{"sample":{"id":"t1","sessionId":"s1","events":[{"kind":"relation","ts":1,"relationId":"job","relation":"waiting_on","direction":"out","phase":"open","peerName":"build.sh"}]}}"#
+
+    func testEmptyUnsupportedFailureAndDisconnectedStayDistinct() async {
+        let responses = CollaborationResponses([json(#"{"tasks":[]}"#), json(page), json("{}"),
+            .failure(URLError(.timedOut)), .failure(CollaborationReadError.tooLarge)])
+        let feed = CollaborationFeed(load: { try await responses.read($0) }, pause: { throw CancellationError() })
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .empty)
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .unsupported)
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .failed)
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .tooLarge)
+        await feed.observe(sessionId: "s1", port: 1, connected: false)
+        XCTAssertEqual(feed.state, .disconnected)
+        await feed.observe(sessionId: "", port: 1)
+        XCTAssertEqual(feed.state, .noSelection)
+        XCTAssertNil(feed.task)
+    }
+
+    func testRefreshFailureRetainsSnapshotAndRetryRecovers() async {
+        let responses = CollaborationResponses([json(page), json(detail), .failure(URLError(.timedOut)), json(page), json(detail)])
+        let feed = CollaborationFeed(load: { try await responses.read($0) }, pause: { throw CancellationError() })
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .ready)
+        XCTAssertEqual(feed.relations.count, 1)
+        let fetchedAt = feed.fetchedAt
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .failed)
+        XCTAssertEqual(feed.relations.count, 1)
+        XCTAssertEqual(feed.fetchedAt, fetchedAt)
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .ready)
+        XCTAssertEqual(feed.task?.id, "t1")
+    }
+
+    func testWrongSessionOrTaskCannotBePublishedAsCurrentHistory() async {
+        let responses = CollaborationResponses([json(page), json(#"{"sample":{"id":"other","sessionId":"s1","events":[]}}"#),
+            json(#"{"tasks":[{"id":"t1","sessionId":"other"}]}"#)])
+        let feed = CollaborationFeed(load: { try await responses.read($0) }, pause: { throw CancellationError() })
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .unsupported)
+        XCTAssertNil(feed.task)
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .unsupported)
+        XCTAssertNil(feed.task)
+    }
+
+    func testRenderCollaborationHistoryAtRailWidth() async throws {
+        let holder = AgentStateHolder()
+        holder.stopConnectionAttempts()
+        defer { holder.stopConnectionAttempts() }
+        let sessions = try JSONDecoder().decode(SessionsListEvent.self, from: Data(#"{"type":"sessions_list","sessions":[{"id":"s1","alive":true,"port":9120,"projectName":"AgentDeck","agentType":"claude-code","state":"idle","activity":"Waiting for two build jobs","coordination":{"spawnedActive":1,"spawnedCompleted":2,"backgroundJobs":2,"messagesIn":3,"messagesOut":4},"subagents":{"active":1,"peak":4,"completed":3}},{"id":"peer","alive":true,"port":9120,"projectName":"AgentDeck · Review","agentType":"codex","state":"processing"}]}"#.utf8))
+        holder.handleEvent(.connection(ConnectionEvent(type: "connection", status: "connected")))
+        holder.handleEvent(.sessionsList(sessions))
+        holder.handleEvent(.stateUpdate(try JSONDecoder().decode(StateUpdateEvent.self,
+            from: Data(#"{"type":"state_update","state":"idle","focusedSessionId":"s1"}"#.utf8))))
+        let fixture = #"{"sample":{"id":"t1","sessionId":"s1","events":[{"kind":"relation","ts":1000,"relationId":"a","relation":"waiting_on","direction":"out","phase":"open","peerName":"build.sh","detail":"Build the Android package"},{"kind":"relation","ts":1001,"relationId":"b","relation":"waiting_on","direction":"out","phase":"open","peerName":"build.sh","detail":"Build the macOS package"},{"kind":"relation","ts":1002,"relation":"spawned","direction":"out","phase":"open","peerSessionId":"peer","peerName":"Reviewer","detail":"Check the relation identity changes"},{"kind":"subagent","ts":1003,"id":"done","name":"Explore","phase":"completed"}]}}"#
+        var recentFixture = fixture
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        for i in 1000...1003 {
+            recentFixture = recentFixture.replacingOccurrences(of: "\"ts\":\(i)", with: "\"ts\":\(now - (1004 - i) * 10_000)")
+        }
+        let pageData = Data(page.utf8)
+        let detailData = Data(recentFixture.utf8)
+        let feed = CollaborationFeed(load: { url in url.lastPathComponent == "tasks" ? pageData : detailData },
+                                     pause: { throw CancellationError() })
+        await feed.observe(sessionId: "s1", port: 1)
+        let view = CollaborationPanel(maxHeight: 1000, port: 1, feed: feed, inspectedID: "s1")
+            .environmentObject(holder).frame(width: 390, height: 1000).environment(\.colorScheme, .dark)
+        let hosting = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 1000),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.close() }
+        hosting.frame = NSRect(x: 0, y: 0, width: 390, height: 1000)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(holder.state.focusedSessionId, "s1")
+        XCTAssertEqual(feed.state, .ready)
+        XCTAssertEqual(feed.relations.count, 3)
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: "/tmp/agentdeck-collaboration-panel.png"))
+        let attachment = XCTAttachment(image: try XCTUnwrap(NSImage(data: png)))
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testLatePreviousSelectionCannotOverwriteNewSelection() async {
+        let gate = CollaborationReadGate()
+        let feed = CollaborationFeed(load: { try await gate.read($0) }, pause: { throw CancellationError() })
+        let previous = Task { await feed.observe(sessionId: "old", port: 1) }
+        await gate.waitForOldRequest()
+        await feed.observe(sessionId: "new", port: 1)
+        XCTAssertEqual(feed.state, .empty)
+        await gate.releaseOldRequest()
+        await previous.value
+        XCTAssertEqual(feed.state, .empty)
+        XCTAssertNil(feed.task)
+    }
+}
+
+private actor CollaborationReadGate {
+    private var oldRequest: CheckedContinuation<Data, Never>?
+    private var started: CheckedContinuation<Void, Never>?
+    func read(_ url: URL) async throws -> Data {
+        if URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.value == "old" }) == true {
+            return await withCheckedContinuation { continuation in
+                oldRequest = continuation
+                started?.resume(); started = nil
+            }
+        }
+        return Data(#"{"tasks":[]}"#.utf8)
+    }
+    func waitForOldRequest() async {
+        if oldRequest != nil { return }
+        await withCheckedContinuation { started = $0 }
+    }
+    func releaseOldRequest() {
+        oldRequest?.resume(returning: Data(#"{"tasks":[{"id":"old-task","sessionId":"old"}]}"#.utf8))
+        oldRequest = nil
     }
 }
 #endif

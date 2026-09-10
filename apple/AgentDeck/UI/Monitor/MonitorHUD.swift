@@ -265,7 +265,7 @@ struct MonitorHUD: View {
     private func dashboardRightRail(maxHeight: CGFloat) -> some View {
         #if os(macOS)
         if collaborationEnabled {
-            CollaborationPanel(maxHeight: maxHeight)
+            CollaborationPanel(maxHeight: maxHeight, port: Int(daemonService.port))
         } else {
             TopologyRail(maxHeight: maxHeight)
         }

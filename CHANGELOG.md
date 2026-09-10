@@ -47,6 +47,19 @@ bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
 ## Unreleased
 
+### Collaboration: readable history and reliable relation identity
+
+The Dashboard's Collaboration panel keeps refresh status and retry above the
+history, distinguishes missing records from failed or unsupported reads, and
+lets you open a confirmed peer session and return. Ended observations fold away;
+every capped list can expand. Relation rows show what was last observed rather
+than presenting historical starts as current activity.
+
+Both daemons now preserve relation identity, so two background jobs with the
+same name remain separate when one ends. Unlinked launch requests are kept in a
+separate section instead of vanishing when an unrelated child is resolved.
+Older records without identity stay separate observations.
+
 ### The daemon's own health signals stop lying quietly
 
 An OpenClaw Gateway health frame that carried no readable verdict was counted as

@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { ApmeStore } from '../apme/store.js';
 import { ApmeCollector } from '../apme/collector.js';
+import relationIdentity from '../../../shared/collaboration-identity-vectors.json';
 
 // These tests require the optional native dep `better-sqlite3`. If the store
 // cannot initialize we fail loudly — silent skips would hide regressions.
@@ -31,6 +32,21 @@ describe('ApmeCollector', () => {
 
   beforeEach(async () => { store = await makeStore(); });
   afterEach(() => { cleanup(store); });
+
+  it('preserves task-scoped relation identity through the collector and sample API', () => {
+    const collector = new ApmeCollector(store);
+    const runId = collector.openRun({ sessionId: 'relations', agentType: 'claude-code', projectName: 'demo' });
+    collector.ingestHook('relations', 'UserPromptSubmit', { prompt: 'run two builds' });
+    for (const event of relationIdentity.observations) {
+      expect(collector.noteRelation('relations', event as Parameters<ApmeCollector['noteRelation']>[1])).toBe(true);
+    }
+    const task = store.listTasksForRun(runId)[0];
+    const events = store.getSample(task.id)!.events.filter(e => e.kind === 'relation');
+    expect(events.map(e => ({ identity: e.relationId, phase: e.phase }))).toEqual(
+      relationIdentity.observations.map(e => ({ identity: e.key, phase: e.phase })),
+    );
+    collector.closeRun('relations');
+  });
 
   it('openRun → ingestHook → closeRun persists a run with steps', async () => {
     const collector = new ApmeCollector(store);
