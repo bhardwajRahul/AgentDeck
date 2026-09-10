@@ -707,6 +707,16 @@ actor ApmeRunner {
             switch event["kind"] as? String {
             case "tool":
                 let name = event["name"] as? String ?? "tool"
+                let status = (event["status"] as? String).map { " → \($0)" } ?? ""
+                let error = (event["error"] as? String).map { " [err: \(String($0.prefix(80)))]" } ?? ""
+                // A pruned tool call (#302, retention >30 days) has no
+                // `input` to show — say so explicitly rather than rendering
+                // `tool X()`, which reads to a judge as "called with no
+                // arguments" and is not what happened.
+                if event["pruned"] as? Bool == true {
+                    lines.append("  tool \(name)(…) [payload pruned]\(status)\(error)")
+                    continue
+                }
                 var input = ""
                 if let value = event["input"],
                    let data = try? JSONSerialization.data(
@@ -714,8 +724,6 @@ actor ApmeRunner {
                    let string = String(data: data, encoding: .utf8) {
                     input = String(string.prefix(120))
                 }
-                let status = (event["status"] as? String).map { " → \($0)" } ?? ""
-                let error = (event["error"] as? String).map { " [err: \(String($0.prefix(80)))]" } ?? ""
                 lines.append("  tool \(name)(\(input))\(status)\(error)")
             case "model":
                 let model = event["model"] as? String ?? "unknown"

@@ -420,6 +420,44 @@ id, run_id, ts, kind (UserPromptSubmit|PreToolUse|PostToolUse|Stop|...),
 tool_name, payload (JSON)
 ```
 
+### 보존(retention) — `agentdeck apme prune` (#302)
+
+실측(2026-09-09, 실사용 데스크 1대): `apme.sqlite` 2.33 GB 중 **71%가
+`steps.payload`**(225,256행, 1,661 MB, 행당 ~7.7 KB). `sample_events` 는
+102,295행/213 MB — 거의 전부 `kind='tool'`. 삭제 경로는 `ApmeStore.deleteRun`
+(run 통째 삭제) 하나뿐이었고 보존 정책도 VACUUM 도 없었다.
+
+`steps`/`sample_events`(tool)는 죽은 데이터가 아니다 — `getSteps`/`listSteps`
+와 scorers/outcome/classifier 가 여전히 그 행에서 신호를 뽑는다. 그래서
+`agentdeck apme prune`은 **행을 지우지 않는다**: `--older-than <days>`(기본
+30일 — judge backlog drain 이 이미 쓰는 30일 창을 그대로 앵커로 씀)보다 오래된
+행의 `payload` 만 작은 마커(`{"pruned":true,"prunedAt":…,"bytes":…}`)로
+교체한다. `runs`/`tasks`/`turns`/`evals` 는 절대 건드리지 않고(영구 보존),
+`ts=0`(나이를 알 수 없는 행)은 절대 대상이 아니다 — 추측으로 지우지 않는다는
+원칙. `sample_events` 는 `kind='tool'` 인 행만 대상(실측상 그 테이블 payload
+바이트의 ~98%) — `user_message`/`assistant_message`/`model`/`subagent`/
+`state`/`info`/`relation` 은 작고 의미가 있는 텍스트(작업 제목, judge 컨텍스트
+등)라 건드릴 이유가 없다.
+
+마커도 유효한 JSON 이라 `JSON.parse` 후 익숙한 키(`command`, `file_path`,
+`input`…)를 찾는 리더는 자연히 "내용 없음"으로 처리되지만, 그 구분을 명시로
+만든 곳이 `bridge/src/apme/payload-prune.ts` 의 `isPrunedPayload` — 이걸 쓰는
+곳: `classifier.ts`(Bash 커맨드/plan 모드/OpenClaw 시그널 추출 건너뜀,
+`kind` 기반 카운터는 영향 없음), `graph.ts`(`filePathFromToolPayload` 가 pruned
+행에서 file 노드를 만들지 않음), `sample-to-timeline.ts`, 그리고
+`store.ts`의 `sampleEventRowToTrajectory` 가 `ToolEvent.pruned` 플래그를 세팅해
+`scorers/index.ts`(pruned 쌍은 "연속 중복 호출"로 세지 않음)와
+`runner.ts`의 `buildTrajectoryLines`(judge 프롬프트에 `[payload pruned]` 라고
+명시, 빈 입력을 지어내지 않음)가 잘못 채점하지 않도록 한다.
+
+기본은 **dry-run** — 테이블별 행 수/MB 만 보고하고 아무것도 바꾸지 않는다.
+`--apply` 는 하나의 트랜잭션 안에서 실행한다. `--vacuum` 은 `--apply` 뒤에만
+동작하며, DB 볼륨의 여유 공간이 현재 파일 크기의 1.1배 이상일 때만 실제로
+`VACUUM` 을 돌린다(부족하면 왜 건너뛰었는지 출력) — `UPDATE` 만으로는 SQLite
+파일이 디스크에서 줄어들지 않기 때문. **자동/백그라운드 실행은 없다** — 이
+커맨드는 사람이 직접(또는 본인의 cron/launchd 에서) 돌려야 한다. 전체 CLI
+계약은 [cli.md § Evaluation (APME)](cli.md#evaluation-apme) 참고.
+
 ### evals — 평가 결과 (결정론 + judge + turn-level + vibe)
 
 ```

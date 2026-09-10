@@ -259,12 +259,34 @@ no subprocesses.
 | `agentdeck apme scorecard` | Model scorecard by category and overall |
 | `agentdeck apme stop-health` | Stop-hook delivery rate — how turns actually closed (`--since 7d`, `--agent`) |
 | `agentdeck apme judge-health` | Judge coverage — whether closed work actually got a verdict (`--since 14d`, `--json`) |
+| `agentdeck apme prune` | Reclaim `apme.sqlite` disk space by clearing old tool payloads (`--older-than 30`, `--apply`, `--vacuum`) |
 | `agentdeck apme tune` | Trigger rubric auto-tuner (OPRO loop) |
 | `agentdeck apme vibe <runId> <verdict>` | Label a run (`approve`/`reject`/`neutral`) |
 | `agentdeck apme tag <runId> <category>` | Manually set task category |
 | `agentdeck apme reclassify` | Re-run classifier on unclassified runs |
 | `agentdeck apme rubric` | Inspect current rubrics |
 | `agentdeck apme export` | Export dataset to JSON |
+
+`apme prune` addresses #302: `steps.payload` and tool-kind `sample_events.payload`
+were measured at 71% of a 2.33 GB `apme.sqlite` on one desk (~7.7 KB/row), with
+no retention. Default is a **dry run** — it reports how many rows and MB per
+table would be reclaimed and changes nothing; pass `--older-than <days>`
+(default 30, the same window the judge backlog drain uses) to change the age
+cutoff. `--apply` performs the prune inside one transaction: the row is
+**kept** (never deleted — every reader that counts or keys off row existence
+keeps working) and only its `payload` is replaced with a small JSON marker
+(`{"pruned":true,"prunedAt":…,"bytes":…}`) so the row still shows up and says
+why it has no content. `runs`/`tasks`/`turns`/`evals` are never touched, a
+row whose age is unknown (`ts=0`) is never a candidate, and `sample_events` is
+pruned only where `kind='tool'` — every other kind (user/assistant messages,
+model usage, subagent lifecycle, state/info/relation) is left alone since
+those are the small, semantically load-bearing rows. `--vacuum` reclaims the
+freed bytes on disk (SQLite does not shrink the file on `UPDATE` alone) but
+only runs after `--apply`, and only when free disk space on the DB's volume
+is at least 1.1x the file's current size — otherwise it explains why it
+skipped and leaves the file as `--apply` left it. There is no automatic or
+background pruning; run this by hand (or from your own cron/launchd) when you
+want the space back.
 
 ### Device Setup
 

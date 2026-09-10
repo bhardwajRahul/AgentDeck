@@ -924,6 +924,14 @@ export function buildTrajectoryLines(sample: SessionSample, cap = 30): string[] 
   for (const e of events) {
     switch (e.kind) {
       case 'tool': {
+        // A pruned tool call (#302, retention >30 days) has no `input` to
+        // show — say so explicitly rather than rendering `tool X()`, which
+        // reads to a judge as "called with no arguments" and is not what
+        // happened.
+        if (e.pruned) {
+          lines.push(`  tool ${e.name}(…) [payload pruned]${e.status ? ` → ${e.status}` : ''}${e.error ? ` [err: ${String(e.error).slice(0, 80)}]` : ''}`);
+          break;
+        }
         let input = '';
         try { input = e.input == null ? '' : JSON.stringify(e.input).slice(0, 120); } catch { input = ''; }
         lines.push(`  tool ${e.name}(${input})${e.status ? ` → ${e.status}` : ''}${e.error ? ` [err: ${String(e.error).slice(0, 80)}]` : ''}`);

@@ -1193,6 +1193,14 @@ final class ApmeStore: @unchecked Sendable {
             out["latencyMs"] = r["latency_ms"] as? Int ?? 0
         case "tool":
             out["name"] = r["tool_name"] as? String ?? "tool"
+            // A row pruned by `agentdeck apme prune` (#302, retention >30
+            // days — Node-only writer, this daemon only reads the shared
+            // file) already parses to `{pruned, prunedAt, bytes}`, so
+            // `input`/`output` are naturally absent — mirrors
+            // `sampleEventRowToTrajectory` in bridge/src/apme/store.ts.
+            // The explicit flag lets ApmeScorers/ApmeRunner tell "no input
+            // recorded" apart from "arguments not retained".
+            if p["pruned"] as? Bool == true { out["pruned"] = true }
             if let input = p["input"] { out["input"] = input }
             if let output = p["output"] { out["output"] = output }
             if let status = r["tool_status"] as? String { out["status"] = status }
