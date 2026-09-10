@@ -4,7 +4,8 @@ dist/
 *.tsbuildinfo
 **/*.sdPlugin/bin/
 **/*.sdPlugin/logs/
-.claude/
+.claude/*
+!.claude/rules/
 
 # OS
 .DS_Store

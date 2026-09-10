@@ -1,0 +1,60 @@
+---
+paths:
+  - "design/**"
+  - "DESIGN.md"
+  - "docs/**"
+  - "agentdeck-design-system/**"
+  - "assets/**"
+  - "apple/AgentDeck/UI/**"
+  - "apple/AgentDeck/Rendering/**"
+  - "android/**/ui/**"
+  - "plugin/**"
+  - "plugin-ulanzi/**"
+  - "shared/src/svg-renderers/**"
+  - "shared/src/design-tokens.ts"
+  - "tools/**"
+  - "bridge/src/pixoo/**"
+  - "bridge/src/tui/**"
+  - "bridge/src/apme/dashboard-html.ts"
+  - "scripts/generate-html-report.py"
+  - "scripts/build-design-system-viewer.mjs"
+  - "scripts/check-docs.mjs"
+  - "**/*.css"
+  - "**/*.html"
+---
+# Design system and documentation gates
+<!-- Moved verbatim from CLAUDE.md (2026-09-10). Rule bodies are the SSOT for their domain; CLAUDE.md keeps only the map. -->
+Aquarium-tide design system: spec [DESIGN.md](../../DESIGN.md), token SSOT [design/tokens.css](../../design/tokens.css),
+resource map [design/RESOURCES.md](../../design/RESOURCES.md). Lint: `bash design/lint.sh`;
+token mirrors: `python3 design/verify-tokens-sync.py`; docs: `pnpm docs:check`, `pnpm design-system:check`.
+
+## Design system layer and gates
+
+Aquarium-tide design system. Spec: [DESIGN.md](../../DESIGN.md). Source of truth for color/type/spacing tokens: [design/tokens.css](../../design/tokens.css). **Resource map (which directory is SSOT for what, and which gate stops drift): [design/RESOURCES.md](../../design/RESOURCES.md)** — bound into the Pages viewer via `catalog.json`; update it in the same commit when a design-resource location or gate changes. Visual reference: [docs/design/Design System.html](../../docs/design/Design%20System.html). Coverage matrix + lint rules: [docs/design/Design Audit.html](../../docs/design/Design%20Audit.html).
+`agentdeck-design-system/` is the integration and handover layer, and its scope is the **whole designed surface** — visual language, system architecture, hardware and surface specs, product policy, and validation evidence — not just tokens. `catalog.json` binds those canonical Markdown sources to the GitHub Pages viewer (`pnpm design-system:check` prints the current document, token and asset counts — read them there rather than from a number in this file), [`agentdeck-design-system/docs/handover.md`](../../agentdeck-design-system/docs/handover.md) defines ownership and evidence levels, and `locales/{ko,ja}/` contains reader translations. English is always canonical. Every catalog document has YAML frontmatter; translations must match the canonical `source_revision`. Validate with `pnpm design-system:check`, build with `pnpm design-system:build`, and never edit generated `dist/design-system/` content.
+**Coverage gate — this is what stops doc fragmentation.** `catalog.json` carries a `coverage` block (`scan` directories + `exclusions` map). Every `docs/*.md` must be either cataloged or excluded *with a stated reason*, and `pnpm design-system:check` fails otherwise. **Adding a doc to `docs/` therefore requires a decision in the same commit**: bind it (frontmatter + catalog entry) or write down why it does not belong. Excluding is legitimate — runbooks, credential setup, exploratory studies, and untranslated rationale essays are excluded today. The Asset library is likewise indexed from the real files (brand marks, generated masks, creatures, icons, brand type, product marks, hardware photography, reference surfaces); images ≤1 MiB ship inline, larger ones become pointer cards.
+**Markdown gate:** `pnpm docs:check` validates tracked and newly added Markdown local links and anchors, rejects machine-local Markdown links, and requires exactly one H1 in `README.md` and each `docs/**/*.md` file. `.github/workflows/design-system.yml` runs the same checker directly with Node.
+
+## Token bindings
+
+**Token bindings** (all mirror `design/tokens.css`; CSS stays canonical — update every mirror in the same commit when CSS tokens change). Seven mirrors are gated: the four language bindings below plus three non-binding copies (`apme-dashboard` HTML, Stream Deck PI `design-tokens.css`, and the Build Health generator `scripts/generate-html-report.py`) that `verify-tokens-sync.py` also checks — the verifier's own footer prints the count, so read it there rather than trusting this sentence:
+- Browser JS — `design/tokens.js` (IIFE that exposes `window.DT.{Tide,Ink,Kelp,Coral,Amber,Status,UI,Brand}`). Used by `docs/design/data.js` and Design System.html mockups
+- TS — `shared/src/design-tokens.ts` (re-exported via `@agentdeck/shared`). Use for plugin renderers, bridge, hooks
+- Swift — `apple/AgentDeck/UI/Common/DesignTokens.swift` (`DesignTokens.Tide.s50` etc.). Existing `StateColors` stays as legacy
+- Kotlin — `android/app/src/main/kotlin/dev/agentdeck/ui/theme/DesignTokens.kt` (`DesignTokens.Tide.s50` etc.). Existing `AgentDeckColors` stays as legacy
+- Sync verification: `python3 design/verify-tokens-sync.py` — diffs all seven mirrors against tokens.css and exits non-zero on drift
+
+## Rules (DESIGN.md §10)
+
+**Rules** (DESIGN.md §10 — enforced by `bash design/lint.sh`):
+1. **No raw hex.** Use tokens (`var(--ink-900)`, `DesignTokens.Ink.s900`, etc.). Tokens are the only place hex literals live
+2. **No `#fff` / `#000`.** Whites lean toward `--tide-50` sand, blacks toward `--ink-900` aquarium green
+3. **Two faces only.** IBM Plex Sans (+ KR/JP) and JetBrains Mono. Never Inter / Roboto / Arial / Fraunces
+4. **Status colors are semantic.** `--status-idle` / `--status-processing` / `--status-awaiting` / `--status-error`. Only **amber awaiting** animates; never animate kelp or coral
+5. **Marketing vs product UI palette split.** Marketing surfaces (landing, docs, print) use the warm tokens. Product UI (menubar / e-ink / hardware / TTY) may also use the brighter `--ui-*` set. Marketing must NEVER touch `--ui-*`
+6. **Brand marks are upstream — do not redraw.** `design/brand/{claudecode,codex,openclaw,opencode,antigravity,kiro}.svg` are the canonical agent marks. Brand colors (#C07058 / #6166E0 / #FF4D4D / #3a3a3a / #5F6368 / #7C3AED) are the only saturated reds/blues allowed, and each one is a `--brand-*` token in `design/tokens.css` — a mark whose colour is quoted in this rule but absent from that file is the gap that shipped Kiro and Antigravity to every renderer while the design-system page could not draw either
+7. **Real assets > drawn ones.** Hardware shots and brand marks come from `assets/` and `design/brand/`. Never illustrate hardware with hand-drawn SVG; ship the diagonal-hatch placeholder pattern (`.ad-hatch` / `.ad-placeholder`) when real assets aren't ready
+
+## Migration
+
+**Migration**: existing UI uses pre-design-system palettes (`StateColors.Hex.*`, `AgentDeckColors.*`). New code reaches for `DesignTokens.*`; migration is incremental, not a sweep. Run `bash design/lint.sh` for the violation count baseline
