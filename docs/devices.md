@@ -62,6 +62,8 @@ AgentDeck's wired e-ink status panel. The hardware is a **Seeed TRMNL 7.5" OG DI
 
 **Display-sleep policy:** TRMNL 7.5" keeps its dashboard visible when the host Mac's displays sleep or are turned off with a keyboard shortcut. Unlike LCD/OLED/LED devices, its e-ink image needs no panel refresh power to remain visible, and the panel is already continuously USB-powered. The firmware therefore ignores `display_state.displayOn` for rendering while continuing to receive and draw meaningful dashboard changes whenever the Mac itself remains awake.
 
+**Voice-capable-panel research:** the face set this panel renders is specified in [E-ink Surface Contract](eink-surface-contract.md); [E-ink Face Research](eink-face-research.md) is issue [#272](https://github.com/puritysb/AgentDeck/issues/272)'s live-measurement + vendor hardware-table snapshot (repaint-rate counters, mic/speaker/deep-sleep-wake facts) toward the still-open voice interface.
+
 **Connection surface:** a missing daemon link is a retained `OFFLINE` sheet with a quiet search/transport hint. `no active sessions` is reserved for the distinct case where the daemon link is live and its roster is empty; a later timed repaint must not collapse those states.
 
 **Responsive dashboard:** the direct GxEPD2 renderer consumes the allocation-free layout model in `esp32/src/ui/eink/eink_dashboard_layout.h`. It derives header, card grid, usage, recent-activity, and control bands from the panel dimensions instead of 800×480 constants; the hardware-specific font/glyph/panel refresh code stays in `eink_display.cpp`.

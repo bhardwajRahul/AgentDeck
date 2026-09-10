@@ -4,7 +4,39 @@ import type { BridgeEvent, PluginCommand } from './types.js';
 import { isLocalConnection, validateToken } from './auth.js';
 import { mayAdoptEsp32, noteEsp32Adopted } from './pairing-window.js';
 import { debug, log } from './logger.js';
-import { DEVICE_ID_HEADER, normalizeDeviceId, WS_PING_INTERVAL_MS } from '@agentdeck/shared';
+import { DEVICE_ID_HEADER, normalizeDeviceId, WS_PING_INTERVAL_MS, State } from '@agentdeck/shared';
+
+const AWAITING_STATES: readonly string[] = [
+  State.AWAITING_PERMISSION,
+  State.AWAITING_OPTION,
+  State.AWAITING_DIFF,
+];
+
+/**
+ * Issue #272 step 1 instrumentation: classifies whether a broadcast event
+ * carries a field a human could act on (a session in an AWAITING_* state) vs
+ * one that is cosmetic, at the ONE place the daemon decides to push a frame
+ * to every WS client — trmnl_75 (push panel) included. This is deliberately
+ * NOT per-board: broadcast() sends the same event to every WS client, and
+ * only the pushed board's own on-device contentHash decides whether it
+ * repaints (see esp32/src/ui/eink/eink_display.cpp). The daemon has no
+ * per-field diff of what changed, so "actionable" here means only "this
+ * event carries an awaiting session somewhere in it" — the same Tier-A
+ * signal used in #272's own reproduction script, not a claim about ghosting.
+ */
+export function broadcastActionability(event: BridgeEvent): 'actionable' | 'cosmetic' | 'n/a' {
+  if (event.type === 'state_update') {
+    const state = (event as { state?: unknown }).state;
+    return typeof state === 'string' && AWAITING_STATES.includes(state) ? 'actionable' : 'cosmetic';
+  }
+  if (event.type === 'sessions_list') {
+    const sessions = (event as { sessions?: Array<{ state?: unknown }> }).sessions ?? [];
+    return sessions.some((s) => typeof s.state === 'string' && AWAITING_STATES.includes(s.state))
+      ? 'actionable'
+      : 'cosmetic';
+  }
+  return 'n/a';
+}
 
 export class WsServer {
   private wss: WebSocketServer;
@@ -351,7 +383,7 @@ export class WsServer {
   broadcast(event: BridgeEvent): void {
     const payload = JSON.stringify(event);
     const clientCount = this.wss.clients.size;
-    debug('WS', `broadcast(${event.type}) to ${clientCount} clients`);
+    debug('WS', `broadcast(${event.type}) to ${clientCount} clients actionability=${broadcastActionability(event)}`);
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
         const clientPayload = this.payloadFor(event, client, payload);
