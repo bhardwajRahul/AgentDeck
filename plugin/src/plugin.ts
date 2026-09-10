@@ -15,6 +15,11 @@ import {
 } from '@agentdeck/shared';
 
 import { ConnectionManager } from './connection-manager.js';
+import {
+  buildConnectionStatusPayload,
+  isRetryNowMessage,
+  isRequestConnectionStatusMessage,
+} from './connection-status-pi.js';
 import { updateUsageModeData, setUsageRefreshCallback } from './utility-modes/usage.js';
 import { setEncoderDaemonConnected } from './encoder-registry.js';
 import { dlog, dinfo } from './log.js';
@@ -234,6 +239,34 @@ initSessionSlots((result) => {
     case 'refresh-usage':
       connMgr.send({ type: 'query_usage' });
       break;
+  }
+});
+
+// ---- Connection status → Property Inspector (#307) ----
+//
+// `sendToPropertyInspector` only delivers when a PI for one of this plugin's
+// actions is actually open, so pushing on every connect/disconnect/retry is
+// cheap even though most of the time nothing is listening. The mapping from
+// snapshot to wire payload lives in connection-status-pi.ts — this is just
+// the plumbing that calls it.
+function pushConnectionStatusToPi(): void {
+  void streamDeck.ui
+    .sendToPropertyInspector(buildConnectionStatusPayload(connMgr.getConnectionSnapshot()))
+    .catch(() => {});
+}
+
+streamDeck.ui.onDidAppear(() => pushConnectionStatusToPi());
+
+streamDeck.ui.onSendToPlugin((ev) => {
+  const payload = ev.payload;
+  if (isRetryNowMessage(payload)) {
+    dinfo('Plugin', 'PI: retryNow()');
+    connMgr.retryNow();
+    pushConnectionStatusToPi();
+    return;
+  }
+  if (isRequestConnectionStatusMessage(payload)) {
+    pushConnectionStatusToPi();
   }
 });
 
@@ -474,6 +507,7 @@ connMgr.on('connected', () => {
   // Request fresh usage data immediately on connect (covers sleep/wake recovery)
   connMgr.send({ type: 'query_usage' });
   broadcastStateUpdate();
+  pushConnectionStatusToPi();
 });
 
 connMgr.on('stale-changed', (stale: boolean) => {
@@ -489,6 +523,7 @@ connMgr.on('disconnected', () => {
   currentState = State.DISCONNECTED;
   currentOptions = [];
   broadcastStateUpdate();
+  pushConnectionStatusToPi();
 });
 
 function broadcastStateUpdate(): void {
