@@ -353,6 +353,14 @@ CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run_id);
 -- on every dry-run.
 CREATE INDEX IF NOT EXISTS idx_steps_ts ON steps(ts);
 CREATE INDEX IF NOT EXISTS idx_sevents_kind_ts ON sample_events(kind, ts);
+-- (task_id, kind): the Work board's per-task tool_count subquery. Without it
+-- the planner probed idx_sevents_kind_ts (added just above for prune), i.e.
+-- walked every tool row in the table (94,386 on the maintainer's store) once
+-- PER TASK (2,130): ~200M row visits, each a multi-KB payload row, 137.8 s on
+-- the daemon's main thread for one page, measured 2026-09-10 — on a page the
+-- macOS app polls every 15 s. With it the same query is a covering probe:
+-- 257 ms. (This comment sits inside a JS template literal: no backticks.)
+CREATE INDEX IF NOT EXISTS idx_sevents_task_kind ON sample_events(task_id, kind);
 
 ${SCORECARD_DDL}
 `;
