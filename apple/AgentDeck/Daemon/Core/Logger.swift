@@ -181,9 +181,24 @@ final class DaemonLogger: @unchecked Sendable {
         }
     }
 
-    private static func linesFromFile(_ url: URL) -> [String] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    /// Lines of `url`, reading at most `tailBytes` from its END. `recentLines`
+    /// only ever needs a couple of hundred lines, and the previous generation
+    /// is up to `maxBytes` — on this desk the first `.1` was the 518 MB
+    /// historical file — so loading it whole to answer a diagnostics view
+    /// would stall the app for seconds and allocate the whole file as one
+    /// String. The read is byte-offset, so the first line of the window is
+    /// almost always a partial one and is dropped (a tail read must align to a
+    /// line boundary or the first "line" is garbage).
+    private static func linesFromFile(_ url: URL, tailBytes: Int = 512 * 1024) -> [String] {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let start = size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0
+        try? fh.seek(toOffset: start)
+        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return [] }
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+        return lines
     }
 }
 #endif
