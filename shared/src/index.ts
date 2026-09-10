@@ -1,6 +1,7 @@
 export * from './states.js';
 export * from './protocol.js';
 export * from './openclaw-approval.js';
+export * from './openclaw-plugin-approval.js';
 export * from './gateway-protocol.js';
 export * from './command-builders.js';
 export * from './adapter.js';

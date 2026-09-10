@@ -30,6 +30,7 @@
     "generate-apme-classifier-rules": "node scripts/generate-apme-classifier-rules.mjs",
     "generate-model-provider": "node scripts/generate-model-provider.mjs",
     "generate-openclaw-approval-rules": "node scripts/generate-openclaw-approval-rules.mjs",
+    "generate-openclaw-plugin-approval-rules": "node scripts/generate-openclaw-plugin-approval-rules.mjs",
     "generate-streamdeck-profiles": "node scripts/generate-streamdeck-profiles.mjs",
     "verify-version": "node scripts/verify-version-sync.mjs",
     "verify-release-version": "node scripts/verify-release-version.mjs",
