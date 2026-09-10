@@ -7,8 +7,8 @@ locale: en
 canonical: true
 status: stable
 owner: Repository maintainers
-reviewed: 2026-07-21
-revision: 2026-07-21
+reviewed: 2026-09-10
+revision: 2026-09-10
 source_of_truth: docs/agent-harness.md
 validators: [pnpm design-system:check]
 ---
@@ -20,16 +20,17 @@ This repo is built by switching between **Claude Code, Codex, OpenCode, and occa
 
 ## Tier model (read in this order)
 
-1. **`AGENTS.md`** — the entry file every agent reads first (Codex/OpenCode/Antigravity discover it by convention; Claude Code reads `CLAUDE.md` directly). It requires `CLAUDE.md` and points back here.
-2. **`CLAUDE.md`** — **SSOT** for architecture, protocol, ports, conventions, design system, and App Store invariants.
-3. **`DEVELOPMENT_LOG.md`** — searchable recent history (current month plus the preceding month). Never read it in full; check the top, then `rg` for keywords/filenames. Older months live under `docs/devlog/`.
+1. **`AGENTS.md`** — the entry file every agent reads first (Codex/OpenCode/Antigravity discover it by convention; Claude Code reads `CLAUDE.md` directly). It requires `CLAUDE.md` and points back here. Kept short on purpose: Codex injects the root→cwd `AGENTS.md` chain up to a combined 32 KiB (`project_doc_max_bytes`) and silently drops whatever exceeds it.
+2. **`CLAUDE.md`** — the always-loaded **map**: monorepo layout, build/test, cross-cutting conventions, and the `paths → rule file` index. Held at roughly 30 KB (~8K tokens) so that it fits Claude Code's context budget guidance and Codex's ~10,000-token shell-output window in one read; it was 153 KB before 2026-09-10 and Codex saw only the head and tail of it.
+3. **`.claude/rules/<domain>.md`** — the **SSOT for domain invariants** (APME, OpenClaw, hooks/PERM, usage, ESP32 flash, daemon lifecycle, Swift daemon, wire/devices, managed sessions, design system, App Store/release). Each file carries a `paths:` frontmatter; Claude Code loads it when a matching file is touched, every other agent reads it on demand before editing in that area. Tracked in git (the ignore file lists `.claude/*` and re-includes `.claude/rules/`). Rule bodies are moved verbatim, never paraphrased.
+4. **`DEVELOPMENT_LOG.md`** — searchable recent history. Never read it in full; check the top, then `rg` for keywords/filenames. Older months are archived under `docs/devlog/` (check which months the active log still holds before assuming a window).
 
 ## Supported-agents matrix
 
 | Agent | Enters repo via | Instruction files it reads | Skill/workflow auto-discovery | Known limits in the harness |
 |---|---|---|---|---|
-| **Claude Code** | native `claude` (`agentdeck claude` is legacy compatibility) | `CLAUDE.md`; `.claude/skills/` | `.claude/skills/*.md` (pointers → `.agents/skills/`) | `.claude/skills/` files must stay **pointers**, not procedure copies |
-| **Codex** | native `codex` (`agentdeck codex` is legacy compatibility) | `AGENTS.md` → `CLAUDE.md` | `.agents/skills/` (repo-scoped) + `.agents/workflows/` | — |
+| **Claude Code** | native `claude` (`agentdeck claude` is legacy compatibility) | `CLAUDE.md` (every session); `.claude/rules/*.md` by `paths:`; nested `esp32/CLAUDE.md` on demand | `.claude/skills/*.md` (pointers → `.agents/skills/`) | `.claude/skills/` files must stay **pointers**, not procedure copies |
+| **Codex** (`gpt-6-astra`) | native `codex` (`agentdeck codex` is legacy compatibility) | `AGENTS.md` chain (root→cwd, 32 KiB combined) → `cat CLAUDE.md` → matching `.claude/rules/*.md` by hand; `esp32/AGENTS.md` only when cwd is under `esp32/` | `.agents/skills/` (repo-scoped) + `.agents/workflows/` | No path-scoped instruction files (`.codex/rules` is exec policy). Shell output reaches the model as head+tail of ~10,000 tokens, so a file over ~40 KB must be read in chunks. Astra pauses on conflicting guidance — keep `AGENTS.md` a pointer, never a second copy |
 | **OpenCode** | native `opencode` (`agentdeck opencode` is legacy compatibility) | `AGENTS.md` → `CLAUDE.md` | No repo hook/skill auto-discovery | Fully supported as a product session type through the observer plugin; when authoring this repo, point it explicitly at `.agents/workflows/<name>.md` |
 | **Antigravity** | manual editing, or native Antigravity CLI/app | `AGENTS.md` → `CLAUDE.md` | Instruction files only; no repo hook/skill auto-discovery | Current product session visibility is CLI-daemon passive discovery only; the App Store app shows usage/credit status, not coding-session observation |
 
@@ -42,14 +43,15 @@ Notes:
 
 | Knowledge | Canonical home | Do **not** |
 |---|---|---|
-| Architecture, protocol, ports, conventions, App Store invariants | `CLAUDE.md` | re-state rules in `AGENTS.md` beyond a pointer |
+| Repository map, build/test, cross-cutting conventions, rule index | `CLAUDE.md` | re-state rules in `AGENTS.md` beyond a pointer; add a domain rule body here |
+| Domain invariants (APME, OpenClaw, hooks/PERM, usage, ESP32 flash, daemon lifecycle, Swift daemon, wire/devices, managed sessions, design system, App Store/release) | `.claude/rules/<domain>.md` (tracked) | paraphrase a rule when moving it; keep a second copy in a topic doc — link the doc for measurements instead |
 | Executable **skills** (deploy, diagnose, session-end, workflows index) | `.agents/skills/<name>/SKILL.md` | put procedure content in `.claude/skills/` — those are pointers |
 | Human-readable **procedures** (build, start-dev, xcode-debug, …) | `.agents/workflows/*.md` | hand-roll command sequences when a workflow exists |
 | Decisions, bugfixes, hardware findings, pitfalls | `DEVELOPMENT_LOG.md` | dump everything into `CLAUDE.md` |
 
 ### Skills are single-source
 
-Canonical skills live under **`.agents/skills/<name>/SKILL.md`** (modern, agent-agnostic, Codex-discovered and Claude-discoverable) and are **committed to git**. The files under `.claude/skills/` are **thin pointers** that preserve Claude Code's `/deploy` and `/sdc-diagnose` slash invocation and forward to the canonical file — note `.claude/` is **gitignored** (per-developer), so those pointers are machine-local while the procedure they reference is the shared, version-controlled source. When a procedure changes, edit only the `.agents/skills/` copy. Current skills:
+Canonical skills live under **`.agents/skills/<name>/SKILL.md`** (modern, agent-agnostic, Codex-discovered and Claude-discoverable) and are **committed to git**. The files under `.claude/skills/` are **thin pointers** that preserve Claude Code's `/deploy` and `/sdc-diagnose` slash invocation and forward to the canonical file — note `.claude/*` is **gitignored** (per-developer) except `.claude/rules/`, so those pointers are machine-local while the procedure they reference is the shared, version-controlled source. When a procedure changes, edit only the `.agents/skills/` copy. Current skills:
 
 - `agentdeck-deploy` — build/install/launch across Android, Apple, ESP32, Stream Deck, daemon
 - `sdc-diagnose` — Stream Deck/PTY sync, cursor, hook-ingestion, and state-machine diagnostics
