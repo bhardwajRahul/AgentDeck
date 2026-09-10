@@ -166,32 +166,6 @@ final class ApmeParseJudgeTests: XCTestCase {
         }
     }
 
-    /// Scoping and reset semantics of the suppression Set.
-    ///
-    /// NOTE the name this test used to carry — "only a client error
-    /// suppresses" — which it never tested: `suppressPenalty(for:status:)`
-    /// does not branch on `status` at all (the value only reaches the log
-    /// line), so calling it with 503 inserts exactly as 400 does. The "only a
-    /// 4xx, and only when dropping the field actually helped" rule lives in
-    /// `judge()`'s switch, which this test never reaches. That switch is now
-    /// driven directly through an injected transport — see the `judge()`
-    /// section below.
-    func testPenaltySuppressionIsScopedToTheEndpointAndClearable() {
-        let url = URL(string: "http://127.0.0.1:65999/v1/chat/completions")!
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
-        XCTAssertFalse(ApmeJudgeMlx.penaltySuppressed(for: url))
-
-        ApmeJudgeMlx.suppressPenalty(for: url, status: 400)
-        XCTAssertTrue(ApmeJudgeMlx.penaltySuppressed(for: url))
-
-        // Scoped to the endpoint, not global.
-        let other = URL(string: "http://127.0.0.1:65998/v1/chat/completions")!
-        XCTAssertFalse(ApmeJudgeMlx.penaltySuppressed(for: other))
-
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
-        XCTAssertFalse(ApmeJudgeMlx.penaltySuppressed(for: url))
-    }
-
     /// A cut body is `noVerdict`, never `clientError` — this is the
     /// classification that was wrong, and it is what keeps the penalty alive
     /// through the exact failure it exists to reduce. A repetition cut is an
@@ -252,15 +226,12 @@ final class ApmeParseJudgeTests: XCTestCase {
     /// server, and still got their endpoint marked.
     func testResolvedPenaltyMatchesTheNodeSendGate() {
         // Default when the user set nothing.
-        XCTAssertEqual(ApmeJudgeMlx.resolvedPenalty(configured: nil, suppressed: false), 1.05)
+        XCTAssertEqual(ApmeJudgeMlx.resolvedPenalty(configured: nil), 1.05)
         // The user's value is used, not the constant.
-        XCTAssertEqual(ApmeJudgeMlx.resolvedPenalty(configured: 1.5, suppressed: false), 1.5)
+        XCTAssertEqual(ApmeJudgeMlx.resolvedPenalty(configured: 1.5), 1.5)
         // EXACTLY 1 omits the field — the Node twin is `omits the field
         // entirely when set to 1`.
-        XCTAssertNil(ApmeJudgeMlx.resolvedPenalty(configured: 1.0, suppressed: false))
-        // A suppressed endpoint omits it whatever the setting says.
-        XCTAssertNil(ApmeJudgeMlx.resolvedPenalty(configured: 1.5, suppressed: true))
-        XCTAssertNil(ApmeJudgeMlx.resolvedPenalty(configured: nil, suppressed: true))
+        XCTAssertNil(ApmeJudgeMlx.resolvedPenalty(configured: 1.0))
     }
 
     /// An unknown backend name must reject the fields COUPLED to it, not just
@@ -293,7 +264,9 @@ final class ApmeParseJudgeTests: XCTestCase {
     // mutations of `judge()` left the whole suite green.
 
     /// A transport that replays a scripted sequence and records what was sent.
-    private final class ScriptedTransport: @unchecked Sendable {
+    /// Internal (not `private`) so `ApmeJudgeCrossDaemonTests` can drive the
+    /// same `judge()` ladder without a second hand-rolled stub.
+    final class ScriptedTransport: @unchecked Sendable {
         private let replies: [ApmeJudgeMlx.JudgeAttempt]
         private(set) var sent: [[String: Any]] = []
         private let lock = NSLock()
@@ -305,6 +278,7 @@ final class ApmeParseJudgeTests: XCTestCase {
             return i < replies.count ? replies[i] : .transportFailure
         }
         var penaltiesSent: [Double?] { sent.map { $0["repetition_penalty"] as? Double } }
+        var jsonModeSent: [Bool] { sent.map { $0["response_format"] != nil } }
     }
 
     private func judgeConfig(endpoint: String, penalty: Double? = nil) -> ApmeJudgeConfig {
@@ -322,7 +296,6 @@ final class ApmeParseJudgeTests: XCTestCase {
     /// through two review rounds, because the only tests were of the pure
     /// function that computes it.
     func testJudgeSendsTheResolvedPenaltyOnTheWire() async {
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
         let t = ScriptedTransport([.ok(Self.verdict)])
         _ = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
             await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: "http://127.0.0.1:65990/v1/chat/completions"))
@@ -344,67 +317,55 @@ final class ApmeParseJudgeTests: XCTestCase {
         XCTAssertFalse(off.sent[0].keys.contains("repetition_penalty"), "1 must omit the key, not send 1.0")
     }
 
-    /// The round-4 rule, at the level it actually lives: a refusal is written
-    /// down only when dropping the field is what changed the outcome.
-    ///
-    /// Direction (ii) is the one nothing expressed before — moving
-    /// `suppressPenalty` back above the retry (the round-3 defect) passed the
-    /// entire suite.
-    func testOnlyAProvenRefusalIsRemembered() async {
-        // (i) 400 with the field, accepted without it ⇒ proven, remembered.
-        let proven = URL(string: "http://127.0.0.1:65993/v1/chat/completions")!
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
+    /// Owner decision (#299 item 1, 2026-09-10): the per-endpoint suppression
+    /// memory this test used to pin (`testOnlyAProvenRefusalIsRemembered`) is
+    /// DELETED. `judge()` now retries once per request and remembers nothing —
+    /// a call to the SAME endpoint that refused the field before pays the
+    /// identical retry cost again, every time.
+    func testNothingIsRememberedBetweenCalls() async {
+        let url = URL(string: "http://127.0.0.1:65993/v1/chat/completions")!
         let t1 = ScriptedTransport([.clientError(400), .ok(Self.verdict)])
         let text = await ApmeJudgeMlx.withTransportForTests({ b, u in t1.handle(b, u) }) {
-            await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: proven.absoluteString))
+            await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: url.absoluteString))
         }
         XCTAssertNotNil(text, "the retry's verdict must be returned")
         XCTAssertEqual(t1.penaltiesSent, [1.05, nil], "retry must drop the field")
-        XCTAssertTrue(ApmeJudgeMlx.penaltySuppressed(for: proven), "a proven refusal is remembered")
 
-        // (ii) 400 both with AND without the field ⇒ the field was never the
-        // reason, so nothing may be written down.
-        let unproven = URL(string: "http://127.0.0.1:65994/v1/chat/completions")!
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
-        let t2 = ScriptedTransport([.clientError(400), .clientError(400)])
-        let none = await ApmeJudgeMlx.withTransportForTests({ b, u in t2.handle(b, u) }) {
-            await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: unproven.absoluteString))
+        // A second call to the SAME endpoint must probe again — two more
+        // requests, not zero. A memory would have made this a single request.
+        let t2 = ScriptedTransport([.clientError(400), .ok(Self.verdict)])
+        let text2 = await ApmeJudgeMlx.withTransportForTests({ b, u in t2.handle(b, u) }) {
+            await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: url.absoluteString))
         }
-        XCTAssertNil(none)
-        XCTAssertFalse(ApmeJudgeMlx.penaltySuppressed(for: unproven),
-                       "an unrelated 400 must not write off the field")
+        XCTAssertNotNil(text2)
+        XCTAssertEqual(t2.penaltiesSent, [1.05, nil], "the second call must offer the field again")
     }
 
     /// A retry the server ACCEPTED is proof, even when the reply is not a
-    /// usable verdict. Requiring a verdict made the "one request per endpoint"
-    /// promise void for a strict server running the cut-prone model — i.e. in
-    /// exactly the combination this change exists for — and disagreed with
-    /// Node, whose ladder exits on `resp.ok` before the body is judged.
-    func testAnAcceptedRetryIsProofEvenWithoutAVerdict() async {
+    /// usable verdict — the ladder must return `nil` rather than trying a
+    /// THIRD field-drop that does not exist. Requiring a verdict to count as
+    /// "the field was refused" would disagree with Node, whose ladder exits on
+    /// `resp.ok` before the body is judged.
+    func testAnAcceptedRetryReturnsNilWithoutAVerdictRatherThanRetryingAgain() async {
         let url = URL(string: "http://127.0.0.1:65995/v1/chat/completions")!
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
         let t = ScriptedTransport([.clientError(400), .noVerdict])
-        _ = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
+        let text = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
             await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: url.absoluteString))
         }
-        XCTAssertTrue(ApmeJudgeMlx.penaltySuppressed(for: url),
-                      "the server accepted the request without the field — that is the evidence")
+        XCTAssertNil(text, "a cut reply is not a verdict, whatever was dropped to get it")
+        XCTAssertEqual(t.sent.count, 2, "the ladder must stop at a noVerdict, not keep retrying")
     }
 
-    /// The named regression, at the level it lives. A repetition cut is HTTP
-    /// 200 whose body is not a verdict; reading it as a refused field lets the
-    /// failure this penalty exists to REDUCE switch the penalty off. Making
-    /// `.noVerdict` suppress on the FIRST attempt left the suite green.
-    func testARepetitionCutNeverSuppressesThePenalty() async {
+    /// A repetition cut (HTTP 200 whose body is not a verdict) and a
+    /// transport failure say nothing about either field and must NOT trigger
+    /// the field-drop retry — only `.clientError` (400/422) may.
+    func testARepetitionCutOrTransportFailureNeverTriggersARetry() async {
         let url = URL(string: "http://127.0.0.1:65996/v1/chat/completions")!
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
         let t = ScriptedTransport([.noVerdict])
         _ = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
             await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: url.absoluteString))
         }
         XCTAssertEqual(t.sent.count, 1, "a cut must not trigger the refusal retry")
-        XCTAssertFalse(ApmeJudgeMlx.penaltySuppressed(for: url),
-                       "a repetition cut says nothing about the field")
 
         // Same for a server that is simply not up yet.
         let down = URL(string: "http://127.0.0.1:65997/v1/chat/completions")!
@@ -412,7 +373,7 @@ final class ApmeParseJudgeTests: XCTestCase {
         _ = await ApmeJudgeMlx.withTransportForTests({ b, u in t2.handle(b, u) }) {
             await ApmeJudgeMlx.judge(prompt: "p", config: judgeConfig(endpoint: down.absoluteString))
         }
-        XCTAssertFalse(ApmeJudgeMlx.penaltySuppressed(for: down))
+        XCTAssertEqual(t2.sent.count, 1, "a transport failure must not trigger the refusal retry")
     }
 
     /// The classifier shares this transport but not the measurement — the cut
@@ -420,7 +381,6 @@ final class ApmeParseJudgeTests: XCTestCase {
     /// `fetch` that never carried the field. That exclusion was a single
     /// literal no test read: flipping it back to `true` left the suite green.
     func testTheClassifierPathSendsNoPenalty() async {
-        ApmeJudgeMlx.clearPenaltySuppressionForTests()
         // Drive the REAL classifier dispatch, not `judge()` with the flag
         // typed by hand: the thing that can regress is the argument at that
         // call site, and a test passing its own `false` cannot see it change.

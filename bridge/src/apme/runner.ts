@@ -1523,25 +1523,22 @@ export async function probeJudgeBackend(cfg: ApmeJudgeConfig): Promise<JudgeBack
  *
  * It is not universal: `apme.judge.endpoint` may be any OpenAI-compatible
  * server, and some answer 400/422 to the field itself. Such a server must not
- * lose its judge entirely, so a rejection retries once WITHOUT the field and is
- * remembered per endpoint — the probe then costs one request per endpoint per
- * process, not one per verdict.
+ * lose its judge entirely, so a rejection retries once WITHOUT the field — PER
+ * REQUEST, remembering nothing (owner decision, #299 item 1, 2026-09-10). An
+ * earlier version remembered the refusal per endpoint for the life of the
+ * process; that memory produced a HIGH/MEDIUM defect in four consecutive
+ * adversarial review rounds (#286, #298) and defended against a server never
+ * once observed on this fleet — the MLX server every measurement here was
+ * taken against silently ACCEPTS unknown fields, so the one endpoint the
+ * memory was built to protect was never the one that tripped it. What it cost
+ * instead: a wrong guess about WHICH field caused an ambiguous 400 marked an
+ * endpoint permanently, and a field dropped only because the prompt was
+ * compacted in the same retry marked an endpoint for a request that was simply
+ * too long once (see #299's discussion of the `compactedAfterDrop` case, now
+ * moot — nothing is ever recorded). The remaining cost of removing the memory
+ * is one extra request, on every call, to a genuinely strict server — cheap
+ * next to a permanently mis-marked one.
  */
-const judgeJsonModeUnsupported = new Set<string>();
-
-/** Reset the per-endpoint JSON-mode memory (tests only). */
-export function clearJudgeEndpointCachesForTests(): void {
-  // BOTH per-endpoint memories, and the name says so. One test marking an
-  // endpoint otherwise leaks into every later test in the file — that is how
-  // the `!overflow` guard came to be "covered" by a suite that never exercised
-  // it, the penalty already being null by the time the overflow case ran.
-  judgeJsonModeUnsupported.clear();
-  judgePenaltyUnsupported.clear();
-}
-
-function judgeJsonModeEnabled(url: string): boolean {
-  return !judgeJsonModeUnsupported.has(url);
-}
 
 /** A 400/422 to a request carrying `response_format` is the server refusing the
  *  FIELD. Every other status is about the request or the account (401, 429,
@@ -1549,25 +1546,6 @@ function judgeJsonModeEnabled(url: string): boolean {
  *  hide an auth failure behind a second identical failure. */
 function isJsonModeRejection(status: number): boolean {
   return status === 400 || status === 422;
-}
-
-function noteJsonModeUnsupported(url: string, status: number): void {
-  if (judgeJsonModeUnsupported.has(url)) return;
-  judgeJsonModeUnsupported.add(url);
-  log(`APME judge: ${url} rejected response_format json_object (HTTP ${status}) — retrying without JSON mode and not sending it again this process`);
-}
-
-/** Endpoints that answered 4xx while carrying `repetition_penalty`. Same shape
- *  as `judgeJsonModeUnsupported`: per-process, so the cost of discovering a
- *  strict server is one request per endpoint rather than one per judge call. */
-const judgePenaltyUnsupported = new Set<string>();
-function judgePenaltyEnabled(url: string): boolean {
-  return !judgePenaltyUnsupported.has(url);
-}
-function notePenaltyUnsupported(url: string, status: number): void {
-  if (judgePenaltyUnsupported.has(url)) return;
-  judgePenaltyUnsupported.add(url);
-  log(`APME judge: ${url} rejected repetition_penalty (HTTP ${status}) — retrying without it and not sending it again this process`);
 }
 
 /** `{ repetition_penalty: … }` or nothing, so a call site can spread it. */
@@ -1681,16 +1659,17 @@ async function callMlx(prompt: string, cfg: ApmeJudgeConfig): Promise<string> {
 
   // `apme.judge.endpoint` may point at any OpenAI-shaped server, and
   // `repetition_penalty` is NOT an OpenAI-standard field. A strict server
-  // answers 400, which `isJsonModeRejection` reads as "this endpoint refuses
-  // response_format" — so it would drop JSON mode for the life of the process
-  // AND retry still carrying the penalty, failing identically. The field gets
-  // the same escape hatch json mode has: dropped and remembered per endpoint.
+  // answers 400/422, which is ambiguous with a `response_format` refusal or a
+  // context overflow — the loop below re-diagnoses on EVERY retry and gives
+  // the field up for THIS REQUEST ONLY. Nothing is written anywhere: the next
+  // call starts fresh with both fields, at the cost of one extra request if
+  // the endpoint is still strict (#299 item 1).
   // `1` means OFF, and off means the field is not sent at all. Sending
   // `repetition_penalty: 1` is a no-op for the model but still costs a user on
-  // a strict server the 400 + retry probe and marks their endpoint — i.e.
-  // "disabling" it would have had a price.
+  // a strict server the 400 + retry probe — i.e. "disabling" it would have had
+  // a price.
   const configured = cfg.repetitionPenalty ?? MLX_JUDGE_REPETITION_PENALTY;
-  let penalty: number | null = judgePenaltyEnabled(url) && configured > 1 ? configured : null;
+  let penalty: number | null = configured > 1 ? configured : null;
   const request = (userPrompt: string, jsonMode: boolean) => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1721,24 +1700,19 @@ async function callMlx(prompt: string, cfg: ApmeJudgeConfig): Promise<string> {
     signal: AbortSignal.timeout(90_000),
   });
 
-  let jsonMode = judgeJsonModeEnabled(url);
+  let jsonMode = true;
   let body = prompt;
-  // What the ladder gave up, and at which status — held until a request
-  // actually succeeds, because "the call failed while carrying X" is not
-  // "this endpoint refuses X".
-  let droppedPenaltyStatus: number | null = null;
-  let droppedJsonModeStatus: number | null = null;
-  // Whether the PROMPT also changed after something was dropped. A success
-  // reached after both is evidence for neither: the request that worked
-  // differed from the one that failed in two ways at once.
-  let compactedAfterDrop = false;
   let resp = await request(body, jsonMode);
   // A 400 here is ambiguous: it may be the context budget, or either of two
   // fields the server may not know. Re-diagnose after EVERY retry rather than
   // nesting, because a nested ladder made the overflow branch unreachable once
   // the penalty branch had been taken — a server that refuses the penalty AND
   // is then handed an oversized prompt lost its verdict entirely, with JSON
-  // mode switched off for the process on the way out.
+  // mode switched off for the process on the way out (the old, removed
+  // failure mode — see the memory-removal comment above `isJsonModeRejection`).
+  // Every drop below is scoped to THIS request only: nothing is written
+  // anywhere, so a call that never reaches `resp.ok` costs nothing beyond its
+  // own attempts, and the next call starts over with both fields.
   for (let attempt = 0; attempt < 3 && !resp.ok && isJsonModeRejection(resp.status); attempt++) {
     const detail = await resp.text();
     const overflow = detail.match(/Request needs \d+ context tokens \((\d+) prompt \+ (\d+) max generation\), but MAX_KV_SIZE is (\d+)/);
@@ -1757,21 +1731,16 @@ async function callMlx(prompt: string, cfg: ApmeJudgeConfig): Promise<string> {
       // cannot change. The ladder has nothing left for this diagnosis.
       if (compacted === body) break;
       debug('APME', `MLX context overflow (${promptTokens}+${maxGeneration}>${maxKv}); retrying with ${compacted.length}/${body.length} prompt chars`);
-      if (droppedPenaltyStatus !== null || droppedJsonModeStatus !== null) compactedAfterDrop = true;
       body = compacted;
     } else if (penalty !== null) {
       // Not the overflow shape, so a FIELD is being refused. Give up
       // `repetition_penalty` before `response_format`: it is the non-standard
       // one, so it is the likelier culprit, and losing it only raises the cut
       // rate while losing JSON mode costs the strict-JSON request entirely.
-      // Dropping it is a HYPOTHESIS; it is not written to the per-endpoint
-      // memory until a later request proves it (see `droppedPenaltyStatus`).
-      droppedPenaltyStatus = resp.status;
       penalty = null;
     } else if (jsonMode) {
       // Retry once without it; a genuinely bad request fails again below with
       // its own status.
-      droppedJsonModeStatus = resp.status;
       jsonMode = false;
     } else {
       break;                                    // nothing left to give up
@@ -1779,44 +1748,6 @@ async function callMlx(prompt: string, cfg: ApmeJudgeConfig): Promise<string> {
     resp = await request(body, jsonMode);
   }
   if (!resp.ok) throw new Error(`MLX judge HTTP ${resp.status}`);
-  // The request succeeded, so whatever was still dropped at that point is what
-  // the endpoint actually refuses — and ONLY that. Two ways to get this wrong,
-  // both of which shipped before this line existed:
-  //
-  //  - Writing the memory at the moment a field is dropped records a
-  //    conclusion the retry has not reached yet. One unrelated 400 (a wrong
-  //    model id, an auth proxy, a rejected request of any kind) walks the whole
-  //    ladder, marks BOTH fields, and then throws — proving neither was the
-  //    cause — leaving the endpoint permanently deprived of JSON mode, which is
-  //    what #288 shipped to stop tasks parking on unparseable verdicts.
-  //  - When BOTH came off before it succeeded, the evidence does not say
-  //    which one mattered, so the choice is about which mistake to make. Blame
-  //    the PENALTY. The two errors are not symmetric:
-  //      * Wrongly writing off the penalty costs the cut-rate improvement on
-  //        that endpoint, and the next call still probes JSON mode, drops it,
-  //        succeeds, and records THAT correctly — the system converges to the
-  //        right json-mode state.
-  //      * Wrongly writing off JSON mode is permanent and never re-probed, so
-  //        a server that merely 400'd twice for an unrelated reason (a model
-  //        hot-swap, a moment of overload) loses the JSON mode #288 shipped —
-  //        with nothing to bring it back short of a restart.
-  //    The comment above already states the cost asymmetry ("losing it only
-  //    raises the cut rate while losing JSON mode costs the strict-JSON
-  //    request entirely"); this is that same asymmetry applied to ambiguous
-  //    evidence rather than only to the order fields are dropped in.
-  //  - And when the PROMPT changed after a field came off, the success is
-  //    evidence for neither field: the request that worked differed from the
-  //    one that failed in two ways, and the other one — the prompt no longer
-  //    overflowing the context — is a complete explanation on its own. The
-  //    asymmetry above is about choosing between two fields; it does not reach
-  //    a case where a field may not have been the cause at all. Writing one off
-  //    here would mark an endpoint permanently for a prompt that was simply too
-  //    long once. Nothing is recorded, and the next call re-probes — which is
-  //    the cheap mistake, and self-correcting.
-  if (compactedAfterDrop) {
-    debug('APME', `MLX ladder: succeeded after a drop AND a prompt compaction — attributing to neither (${url})`);
-  } else if (droppedPenaltyStatus !== null) notePenaltyUnsupported(url, droppedPenaltyStatus);
-  else if (droppedJsonModeStatus !== null) noteJsonModeUnsupported(url, droppedJsonModeStatus);
   return judgeChatContent(await resp.json(), 'MLX');
 }
 
@@ -1915,10 +1846,9 @@ async function callOpenAICompatible(prompt: string, cfg: ApmeJudgeConfig): Promi
     }),
     signal: AbortSignal.timeout(90_000),
   });
-  const jsonMode = judgeJsonModeEnabled(url);
-  let resp = await send(jsonMode);
-  if (!resp.ok && jsonMode && isJsonModeRejection(resp.status)) {
-    noteJsonModeUnsupported(url, resp.status);
+  let resp = await send(true);
+  // Retry once without the field, per request — remember nothing (#299 item 1).
+  if (!resp.ok && isJsonModeRejection(resp.status)) {
     resp = await send(false);
   }
   if (!resp.ok) throw new Error(`openai judge HTTP ${resp.status} (${url})`);
