@@ -90,6 +90,10 @@ enum ApmeJudgeMlx {
     /// here was taken against silently ACCEPTS unknown fields. The remaining
     /// cost is one (or two) extra requests, on every call, to a genuinely
     /// strict server — cheap next to a permanently mis-marked endpoint.
+    /// The classifier (`classifyTaskCategory`) is a SEPARATE entry point —
+    /// it shares `send()`'s transport but not this function's 800-token
+    /// budget, timeout, or repetition-penalty measurement (measured on judge
+    /// prompts, not the classifier's one-word answer).
     static func judge(prompt: String, config: ApmeJudgeConfig, sendsRepetitionPenalty: Bool = true) async -> String? {
         let endpoint = chatCompletionsEndpoint(config: config)
         guard let url = URL(string: endpoint) else { return nil }
@@ -149,6 +153,39 @@ enum ApmeJudgeMlx {
         switch attempt {
         case .ok(let text): return text
         case .noVerdict, .transportFailure, .clientError: return nil
+        }
+    }
+
+    /// Run a TASK-CATEGORY CLASSIFICATION call, not an eval judge call — a
+    /// separate entry point sharing `send()`'s transport (and its test seam,
+    /// `withTransportForTests`) but none of `judge()`'s budget: prompt,
+    /// output cap and timeout come from `ApmeClassifierRules` (the generated
+    /// mirror of shared/src/apme-classifier-rules.ts), and no
+    /// `repetition_penalty` is ever sent — that measurement covers judge
+    /// prompts (800-token verdicts), and this call asks for one word.
+    /// Returns nil on any failure; the caller (`ApmeClassifier`) falls
+    /// through to the next backend in `backendOrder`, never retrying here.
+    static func classifyTaskCategory(prompt: String, config: ApmeJudgeConfig) async -> String? {
+        let endpoint = chatCompletionsEndpoint(config: config)
+        guard let url = URL(string: endpoint) else { return nil }
+
+        let model = await resolveModel(config: config, endpoint: endpoint)
+
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": ApmeClassifierRules.systemPrompt],
+                ["role": "user", "content": prompt],
+            ],
+            "temperature": 0.0,
+            "max_tokens": ApmeClassifierRules.maxTokens,
+        ]
+
+        switch await send(body, to: url, timeoutInterval: ApmeClassifierRules.timeoutSeconds) {
+        case .ok(let text):
+            return text
+        case .noVerdict, .clientError, .transportFailure:
+            return nil
         }
     }
 
@@ -219,18 +256,21 @@ enum ApmeJudgeMlx {
         return injectedTransport
     }
 
-    static func send(_ body: [String: Any], to url: URL) async -> JudgeAttempt {
+    static func send(_ body: [String: Any], to url: URL, timeoutInterval: TimeInterval = 90) async -> JudgeAttempt {
         if let injected = currentTransport() { return await injected(body, url) }
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else { return .transportFailure }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = bodyData
-        // 90 s, matching `runner.ts`'s judge fetch. 68.7 s was observed on a
-        // real `task_rollup` prompt with Gemma 4 under local load, so at 60 s
-        // a verdict that lands on the Node daemon times out on this one — the
-        // same prompt, the same server, two answers.
-        request.timeoutInterval = 90
+        // Default 90 s, matching `runner.ts`'s judge fetch. 68.7 s was observed
+        // on a real `task_rollup` prompt with Gemma 4 under local load, so at
+        // 60 s a verdict that lands on the Node daemon times out on this one —
+        // the same prompt, the same server, two answers. `classifyTaskCategory`
+        // passes its own short budget (`ApmeClassifierRules.timeoutSeconds`) —
+        // a different call with a different purpose sharing the judge's 90 s
+        // ceiling would stall task closure waiting on a busy local server.
+        request.timeoutInterval = timeoutInterval
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .transportFailure }

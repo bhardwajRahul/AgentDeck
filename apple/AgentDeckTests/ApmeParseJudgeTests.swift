@@ -392,7 +392,7 @@ final class ApmeParseJudgeTests: XCTestCase {
 
         let t = ScriptedTransport([.ok(Self.verdict)])
         _ = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
-            await ApmeClassifier.callConfiguredJudge(prompt: "p", config: config)
+            await ApmeClassifier.classifyWithBackend("mlx", prompt: "p", config: config)
         }
         XCTAssertEqual(t.sent.count, 1, "the classifier must reach the MLX leg")
         XCTAssertFalse(t.sent[0].keys.contains("repetition_penalty"),

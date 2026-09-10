@@ -354,9 +354,9 @@ d9f2d409 을 풀었다** — 1.05 잔여 잘림의 전부다. 즉 차이는 반�
   답하는 프록시가 한쪽에서는 판정, 한쪽에서는 실패였다. 상태 게이트를 넓히는 것은 **본문 게이트와
   무관하다** — 201 이어도 잘린 본문은 여전히 판정이 아니다.
 
-아직 갈라진 채로 남은 것: 분류기(`task_category`)의 백엔드·`max_tokens`·타임아웃·폴백이 서로
-다르다. 분류 결과가 루브릭을 고르므로 이건 점수 차이로 이어진다. (JSON 모드 사다리 격차는
-#299 item 1 로 해소 — 위 참고.)
+아직 갈라진 채로 남은 것은 없다: JSON 모드 사다리 격차는 #299 item 1 로(위), 분류기
+(`task_category`)의 백엔드·프롬프트·`max_tokens`·타임아웃·폴백은 `shared/src/apme-classifier-rules.ts`
+로 합쳤다 — 아래 "LLM fallback" 절.
 
 ### judge-health — 닫힌 작업이 실제로 판정을 받았는가
 
@@ -577,9 +577,40 @@ ocToolNames
 | 10 | `ops` | >50% Bash |
 | — | `unknown` | 위 어디에도 해당 없음 |
 
-### LLM fallback
+### LLM fallback (#299 — 양 데몬 공유 SSOT)
 
-`unknown`이면 `classifyWithLlm(prompt, signals)` — 로컬 MLX에 task prompt + tool 요약을 보내 분류 요청. 비용 0.
+`unknown`이면 `classifyWithLlm(prompt, signals)` — 프롬프트/레이블 목록/`max_tokens`/타임아웃/백엔드
+순서는 `shared/src/apme-classifier-rules.ts` 가 SSOT 이고, `pnpm generate-apme-classifier-rules` 가
+Swift 미러(`ApmeClassifierRules.generated.swift`)를 찍는다 (드리프트 게이트:
+`apme-classifier-rules-sync.test.ts`). `task_category` 가 루브릭을 고르므로, 분류 결과가 두 데몬에서
+다르면 그 자체로 점수 차이다.
+
+이전에는 Node 는 로컬 MLX(`http://127.0.0.1:8800`, ~20 토큰, 15초)만 시도했고, Swift 는
+`callConfiguredJudge` 를 통해 **사용자가 설정한 judge 백엔드를 그대로** 탔다 — `api`/`openai` 포함,
+judge 자신의 800 토큰/60초 예산으로. `judge.backend: "api"` 를 설정한 사용자는 Swift 에서만 분류
+1건당 과금됐다.
+
+**백엔드 순서: `mlx → foundationModels → rules`, `api`/`openai` 는 절대 없음.** 2026-09-10 유지보수자의
+실제 `apme.sqlite` 40개 실제 task 프롬프트(룰이 배정한 카테고리 전역에 분산, 스크립트
+`scripts/measure-apme-classifier-backends.mjs`)로 측정:
+
+| 백엔드 | 완료율(15초 예산 내) | 룰과 일치율 | 잘못된 레이블 |
+|---|---|---|---|
+| Foundation Models | 16/40 (40%) | 5/15 = 33% | 1/16 |
+| MLX (측정 당시 로드된 모델: `Qwen3.8-27B-4bit`) | 7/40 (18%) | 1/7 = 14% | 0/7 |
+
+**이 측정은 순위를 정하기엔 불충분하다고 기록한다.** 세 가지 이유: MLX 서버에 그날 27B 모델이
+올라가 있어 15초 예산은 백엔드의 적성이 아니라 그 서버의 부하를 쟀고, 살아남은 표본(15 대 7)은
+순위를 매길 크기가 아니며, "룰과 일치"는 정확도가 아니다 — 룰은 LLM 이 프롬프트를 읽어 **개선해야
+할 대상**이지 정답이 아니다. 그래서 위 순서는 "어느 쪽이 더 잘 분류한다"는 주장이 아니라 **기존
+결과를 가장 적게 바꾸면서 Apple Intelligence 를 받아들이는 순서**다: `mlx` 가 첫째인 건 분류의
+대부분을 돌리는 Node 의 유일한 LLM 레그가 원래 MLX 였고 프롬프트도 거기에 맞춰져 있어서,
+`foundationModels` 가 둘째인 건 MLX 서버가 없는 Mac — 대부분의 Mac 이 그렇고 Apple Intelligence 는
+기본으로 있다 — 에서도 룰로 떨어지지 않고 LLM 답을 받게 하려고. 순서를 바꾸려면 다시 재야 한다:
+평소 로드되는 MLX 모델, 두 레그가 모두 맞출 수 있는 예산, 룰 일치가 아닌 오너 라벨 정답. 두 데몬
+모두 이 순서를 `shared/src/apme-classifier-rules.ts` 에서 읽으며(Swift 는 생성 미러), `api`/`openai`
+는 배열의 원소가 아니라 **구조적으로 도달 불가**다 — 분류는 매 task 마다 조용히 도는 호출이라 유료
+백엔드로 보내는 것 자체가 금지.
 
 ### `classifyRunSmart(store, runId)`
 

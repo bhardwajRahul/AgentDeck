@@ -322,13 +322,21 @@ export async function probeFoundationModelsHelper(): Promise<FoundationModelsHel
   }
 }
 
-export async function callFoundationModelsHelper(prompt: string, instructions?: string): Promise<string> {
-  const response = await requestHelper({
-    type: 'generate',
-    prompt,
-    instructions,
-    temperature: 0,
-  });
+export async function callFoundationModelsHelper(
+  prompt: string,
+  instructions?: string,
+  opts: { maxTokens?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  const response = await requestHelper(
+    {
+      type: 'generate',
+      prompt,
+      instructions,
+      temperature: 0,
+      ...(opts.maxTokens ? { maximumResponseTokens: opts.maxTokens } : {}),
+    },
+    opts.timeoutMs,
+  );
   if (typeof response.text === 'string' && response.text.length > 0) return response.text;
   const reason = typeof response.reason === 'string' ? response.reason : 'no reason';
   const code = typeof response.error === 'string' ? response.error : 'unavailable';

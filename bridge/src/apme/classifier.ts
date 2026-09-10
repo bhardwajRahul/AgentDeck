@@ -13,7 +13,18 @@
  */
 
 import type { ApmeStore } from './store.js';
-import { loadMlxSettings, resolveMlxModel } from '@agentdeck/shared';
+import {
+  loadMlxSettings,
+  resolveMlxModel,
+  APME_CLASSIFIER_SYSTEM_PROMPT,
+  APME_CLASSIFIER_MAX_TOKENS,
+  APME_CLASSIFIER_TIMEOUT_MS,
+  APME_CLASSIFIER_BACKEND_ORDER,
+  buildClassifierUserMessage,
+  normalizeClassifierLabel,
+  type ApmeClassifierBackend,
+} from '@agentdeck/shared';
+import { callFoundationModelsHelper } from '../foundation-models-helper.js';
 import { isPrunedPayload } from './payload-prune.js';
 
 // ─── TaskSignals — agent-agnostic feature vector ─────────────────────────────
@@ -226,45 +237,57 @@ export function classifyRun(store: ApmeStore, runId: string): { signals: TaskSig
   return { signals, category };
 }
 
-// ──�� LLM-based classification (local MLX, cost-free) ──────────────────────
+// ─── LLM-assisted classification (local-only, never a paid backend) ────────
+//
+// Prompt text, label vocabulary, output cap, timeout and backend try-order
+// are the SSOT in shared/src/apme-classifier-rules.ts, generated into Swift
+// as ApmeClassifierRules.generated.swift. `task_category` selects the judge
+// rubric downstream, so the two daemons picking a different category for the
+// same task is a score difference — see #299. `APME_CLASSIFIER_BACKEND_ORDER`
+// never contains `api`/`openai`: classification runs on every closed task
+// with `unknown` rules, so routing it through a paid backend would bill the
+// user for a call the eval pipeline makes silently, whatever judge backend
+// they configured for actual eval scoring.
 
-const LLM_CLASSIFY_PROMPT = `You are a task classifier for coding agent sessions.
-Given the user's prompt and tool usage summary, classify this task into exactly ONE category.
-
-Categories:
-- planning: architecture design, plan mode, thinking about approach
-- research: searching code, reading docs, web search, investigating
-- coding: writing/editing code, creating files, implementing features
-- debugging: fixing bugs, running tests, investigating failures
-- refactoring: restructuring existing code without changing behavior
-- review: reading code for understanding, code review
-- ops: git operations, deployments, config changes, CI/CD
-- conversation: quick question, chat, no tools used
-- multi_agent: delegating to sub-agents
-
-Respond with ONLY the category name, nothing else.`;
-
-/**
- * Classify a run using the local MLX server. Falls back to rule-based
- * classification if MLX is unavailable. Cost: $0 (local inference).
- */
-export async function classifyWithLlm(
-  taskPrompt: string,
-  signals: TaskSignals,
-): Promise<TaskCategory> {
-  if (!taskPrompt || taskPrompt.trim().length < 5) return classify(signals);
-
-  const toolSummary = Object.entries(signals.toolCounts)
+function toolSummaryFor(signals: TaskSignals): string {
+  return Object.entries(signals.toolCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(([t, c]) => `${t}×${c}`)
     .join(', ');
+}
 
-  const userMsg = `Prompt: "${taskPrompt.slice(0, 500)}"
-Tools used: ${toolSummary || 'none'} (${signals.totalToolCalls} total)
-Files modified: ${signals.filesModified}, created: ${signals.filesCreated}
-Duration: ${signals.sessionDurationSec}s, turns: ${signals.turnCount}`;
+function classifierUserMessage(taskPrompt: string, signals: TaskSignals): string {
+  return buildClassifierUserMessage({
+    taskPrompt: taskPrompt.slice(0, 500),
+    toolSummary: toolSummaryFor(signals),
+    totalToolCalls: signals.totalToolCalls,
+    filesModified: signals.filesModified,
+    filesCreated: signals.filesCreated,
+    sessionDurationSec: signals.sessionDurationSec,
+    turnCount: signals.turnCount,
+  });
+}
 
+/** On-device Apple Intelligence, via the bundled Node helper
+ *  (`bridge/src/foundation-models-helper.ts`). Returns null on any failure —
+ *  unavailable framework, timeout, out-of-vocabulary answer — never throws;
+ *  the caller falls through to the next backend. */
+async function classifyWithFoundationModels(userMsg: string): Promise<TaskCategory | null> {
+  try {
+    const raw = await callFoundationModelsHelper(userMsg, APME_CLASSIFIER_SYSTEM_PROMPT, {
+      maxTokens: APME_CLASSIFIER_MAX_TOKENS,
+      timeoutMs: APME_CLASSIFIER_TIMEOUT_MS,
+    });
+    return normalizeClassifierLabel(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Local MLX server (default `http://127.0.0.1:8800`). Cost: $0 (the user
+ *  has already paid in GPU watts). Returns null on any failure. */
+async function classifyWithMlx(userMsg: string): Promise<TaskCategory | null> {
   try {
     // Use the explicit llm.mlx pin before catalog discovery. mlx-vlm's model
     // endpoint lists downloaded models, not just the loaded one; treating its
@@ -291,27 +314,64 @@ Duration: ${signals.sessionDurationSec}s, turns: ${signals.turnCount}`;
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: LLM_CLASSIFY_PROMPT },
+          { role: 'system', content: APME_CLASSIFIER_SYSTEM_PROMPT },
           { role: 'user', content: userMsg },
         ],
         temperature: 0,
-        max_tokens: 20,
+        max_tokens: APME_CLASSIFIER_MAX_TOKENS,
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(APME_CLASSIFIER_TIMEOUT_MS),
     });
 
-    if (!resp.ok) return classify(signals);
+    if (!resp.ok) return null;
     const json = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const raw = json.choices?.[0]?.message?.content?.trim().toLowerCase().replace(/[^a-z_]/g, '') ?? '';
-
-    if (TASK_CATEGORIES.includes(raw as TaskCategory)) return raw as TaskCategory;
-    // Partial match
-    const match = TASK_CATEGORIES.find(c => raw.includes(c));
-    return match ?? classify(signals);
+    const raw = json.choices?.[0]?.message?.content ?? '';
+    return normalizeClassifierLabel(raw);
   } catch {
-    // MLX not available — fall back to rules
-    return classify(signals);
+    return null;
   }
+}
+
+/** Dispatch one backend from `APME_CLASSIFIER_BACKEND_ORDER`. `'rules'` is
+ *  not a network call — the caller treats a null return from ANY backend
+ *  (including this one) as "try the next entry, or give up". Deliberately a
+ *  closed switch over the SSOT's own union: adding a backend here means
+ *  adding it to `ApmeClassifierBackend`, so `api`/`openai` cannot be reached
+ *  without an explicit, reviewable change to this function. */
+async function classifyWithBackend(
+  backend: ApmeClassifierBackend,
+  userMsg: string,
+): Promise<TaskCategory | null> {
+  switch (backend) {
+    case 'foundationModels':
+      return classifyWithFoundationModels(userMsg);
+    case 'mlx':
+      return classifyWithMlx(userMsg);
+    case 'rules':
+      return null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Classify a run using the LLM-assist backend order (SSOT: never `api`/
+ * `openai`). Falls back to rule-based classification when every backend is
+ * unavailable, unreachable, or answers outside the label vocabulary.
+ */
+export async function classifyWithLlm(
+  taskPrompt: string,
+  signals: TaskSignals,
+): Promise<TaskCategory> {
+  if (!taskPrompt || taskPrompt.trim().length < 5) return classify(signals);
+
+  const userMsg = classifierUserMessage(taskPrompt, signals);
+  for (const backend of APME_CLASSIFIER_BACKEND_ORDER) {
+    if (backend === 'rules') break;
+    const result = await classifyWithBackend(backend, userMsg);
+    if (result) return result;
+  }
+  return classify(signals);
 }
 
 /** Classify with LLM if rule-based gives unknown, otherwise use rules. */

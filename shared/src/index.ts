@@ -38,4 +38,5 @@ export * from './apme-graph.js';
 export * from './pricing.js';
 export * from './telemetry-envelope.js';
 export * from './claude-permission-rules.js';
+export * from './apme-classifier-rules.js';
 export * from './gateway-health.js';
