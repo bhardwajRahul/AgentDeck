@@ -39,6 +39,15 @@ import {
   type OpenClawApprovalPrompt,
   type ExecApprovalDecision,
 } from '@agentdeck/shared';
+import {
+  parsePluginApprovalRequest,
+  parsePluginApprovalRemoved,
+  pluginDecisionForOptionIndex,
+  pluginDecisionForRespondValue,
+  pluginApprovalAllows,
+  type OpenClawPluginApprovalPrompt,
+  type PluginApprovalDecision,
+} from '@agentdeck/shared';
 import { OPENCLAW_CAPABILITIES, OPENCLAW_GATEWAY_PORT } from '../types.js';
 import { fetchModelCatalog, getDefaultModelName, invalidateModelCache } from '../model-catalog.js';
 import { getApme } from '../apme/index.js';
@@ -186,6 +195,20 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
    *  at 15m 9s — and the Gateway drops the record then with no event at all. So
    *  the only honest close is to ask what is still pending. */
   private approvalReconcileTimer: ReturnType<typeof setInterval> | null = null;
+  /** The plugin approval (`plugin.approval.*`) the Gateway is blocked on, when
+   *  there is one — the parallel surface to `pendingApproval` above for a
+   *  request that is not a shell command (issue #309). Its own slot rather
+   *  than a shared one: an exec approval and a plugin approval can be pending
+   *  at the same time (different callers, different queues on the Gateway
+   *  side), and collapsing them into one variable would let a plugin approval
+   *  silently clobber — or be clobbered by — an unrelated exec one. Only ONE
+   *  is ever the deck's ACTIVE prompt at a time (`activePendingApproval`
+   *  picks the older of the two by `requestedAtMs`); the other stays queued in
+   *  its own slot, with its own expiry/reconcile timers still running, and
+   *  surfaces automatically once the shown one clears. */
+  private pendingPluginApproval: OpenClawPluginApprovalPrompt | null = null;
+  private pluginApprovalExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private pluginApprovalReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   // Chat tracking for timeline events
   private chatStarted = false;
@@ -549,43 +572,89 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
   // ===== Pending exec approval =====
 
   /**
+   * The prompt currently shown on every deck surface, whichever kind it is —
+   * an exec approval and a plugin approval can both be pending at once (the
+   * Gateway queues each kind separately), and the deck renders one question
+   * at a time. Presented is the OLDER of the two by `requestedAtMs`, mirroring
+   * `adoptPendingApprovals`' own "oldest wins" rule for approvals of the same
+   * kind: the older one has been blocking work longer. The other is never
+   * dropped — it stays in its own state slot with its own expiry/reconcile
+   * timers still running, and this getter (read fresh on every `sessions_list`
+   * build) surfaces it automatically the moment the shown one resolves,
+   * expires, or is abandoned.
+   */
+  private activePendingApproval():
+    | { kind: 'exec'; prompt: OpenClawApprovalPrompt }
+    | { kind: 'plugin'; prompt: OpenClawPluginApprovalPrompt }
+    | null {
+    if (this.pendingApproval && this.pendingPluginApproval) {
+      return this.pendingApproval.requestedAtMs <= this.pendingPluginApproval.requestedAtMs
+        ? { kind: 'exec', prompt: this.pendingApproval }
+        : { kind: 'plugin', prompt: this.pendingPluginApproval };
+    }
+    if (this.pendingApproval) return { kind: 'exec', prompt: this.pendingApproval };
+    if (this.pendingPluginApproval) return { kind: 'plugin', prompt: this.pendingPluginApproval };
+    return null;
+  }
+
+  /**
    * The approval the Gateway is blocked on, or `null`. Read by the daemon so
    * the virtual `openclaw-gateway` session row can carry the real question and
    * option list — without it every deck falls back to "PERMIT? / answer in
    * terminal", which is not answerable anywhere.
    */
-  getPendingApproval(): OpenClawApprovalPrompt | null {
-    return this.pendingApproval;
+  getPendingApproval(): OpenClawApprovalPrompt | OpenClawPluginApprovalPrompt | null {
+    return this.activePendingApproval()?.prompt ?? null;
   }
 
   /**
-   * Read the approvals the Gateway is already blocked on and surface the oldest
-   * one. Called once per handshake.
+   * Read the approvals the Gateway is already blocked on (both kinds) and
+   * surface the oldest of each. Called once per handshake.
    *
-   * Only one is adopted: the deck renders a single question at a time, and the
-   * Gateway blocks the agent on each in turn, so the oldest is the one actually
-   * holding work up. The rest arrive as `requested` events (or on the next
-   * catch-up) once it is answered.
+   * Only one of each kind is adopted: the Gateway blocks the agent (or the
+   * plugin caller) on each in turn, so the oldest is the one actually holding
+   * work up. The rest arrive as `requested` events (or on the next catch-up)
+   * once the held one is answered.
    */
   private async adoptPendingApprovals(): Promise<void> {
     const pending = approvalListRows(await this.rpcCall('exec.approval.list', {}));
-    if (!pending || pending.length === 0) return;
-    const oldest = [...pending].sort(
-      (a, b) => (a?.createdAtMs ?? 0) - (b?.createdAtMs ?? 0),
-    )[0];
-    const prompt = parseExecApprovalRequest(oldest, Date.now());
-    if (!prompt) return;
-    // Already tracking it (a reconnect that raced the event) — don't re-emit.
-    if (this.pendingApproval?.id === prompt.id) return;
-    debug('adapter:openclaw', `adopted pending approval ${prompt.id} on connect`);
-    this.setPendingApproval(prompt);
-    this.emitTimelineEntry({
-      ts: Date.now(), type: 'tool_request',
-      raw: prompt.question.length > 500 ? prompt.question.slice(0, 497) + '...' : prompt.question,
-      ...(prompt.detail ? { detail: prompt.detail } : {}),
-      approvalId: prompt.id, status: 'pending',
-    });
-    this.rebroadcastPendingApproval();
+    if (pending && pending.length > 0) {
+      const oldest = [...pending].sort(
+        (a, b) => (a?.createdAtMs ?? 0) - (b?.createdAtMs ?? 0),
+      )[0];
+      const prompt = parseExecApprovalRequest(oldest, Date.now());
+      // Already tracking it (a reconnect that raced the event) — don't re-emit.
+      if (prompt && this.pendingApproval?.id !== prompt.id) {
+        debug('adapter:openclaw', `adopted pending approval ${prompt.id} on connect`);
+        this.setPendingApproval(prompt);
+        this.emitTimelineEntry({
+          ts: Date.now(), type: 'tool_request',
+          raw: prompt.question.length > 500 ? prompt.question.slice(0, 497) + '...' : prompt.question,
+          ...(prompt.detail ? { detail: prompt.detail } : {}),
+          approvalId: prompt.id, status: 'pending',
+        });
+        this.rebroadcastActivePrompt();
+      }
+    }
+
+    const pendingPlugin = approvalListRows(await this.rpcCall('plugin.approval.list', {}));
+    if (pendingPlugin && pendingPlugin.length > 0) {
+      const oldest = [...pendingPlugin].sort(
+        (a, b) => (a?.createdAtMs ?? 0) - (b?.createdAtMs ?? 0),
+      )[0];
+      const prompt = parsePluginApprovalRequest(oldest, Date.now());
+      if (prompt && this.pendingPluginApproval?.id !== prompt.id) {
+        debug('adapter:openclaw', `adopted pending plugin approval ${prompt.id} on connect`);
+        this.setPendingPluginApproval(prompt);
+        this.emitTimelineEntry({
+          ts: Date.now(), type: 'tool_request',
+          raw: `[Plugin] ${prompt.question.length > 490 ? prompt.question.slice(0, 487) + '...' : prompt.question}`,
+          ...(prompt.detail ? { detail: prompt.detail } : {}),
+          approvalId: prompt.id, status: 'pending',
+        });
+        this.rebroadcastActivePrompt();
+      }
+    }
   }
 
   private setPendingApproval(prompt: OpenClawApprovalPrompt): void {
@@ -768,11 +837,167 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
     return a.startsWith(b) || b.startsWith(a);
   }
 
+  // ===== Pending plugin approval (plugin.approval.*, issue #309) =====
+  //
+  // Mirrors the exec block above field-for-field — same expiry/reconcile
+  // shape, same "gone vs no information" resolve-failure split (reusing
+  // `isApprovalGoneError`, which classifies the Gateway's OWN error codes and
+  // is shared code on the Gateway side between `exec.approval.resolve` and
+  // `plugin.approval.resolve`). One deliberate divergence: exec approvals are
+  // abandoned on every turn-end path (`abandonPendingApprovalForTurnEnd`)
+  // because an exec approval blocks the CURRENT chat turn's tool call by
+  // construction. A plugin approval carries `runId`/`sessionKey` too, but
+  // nothing in the Gateway's own types guarantees it is scoped to the turn
+  // that happens to be ending elsewhere in this adapter (a cron job's plugin
+  // approval has no relationship to the user's own chat turn finishing) — so
+  // plugin approvals are NOT abandoned on turn-end, only on Gateway disconnect
+  // (where every id becomes meaningless regardless of kind), its own record
+  // expiry, a `plugin.approval.resolved`/`removed` event, or a reconcile miss.
+
+  private setPendingPluginApproval(prompt: OpenClawPluginApprovalPrompt): void {
+    this.clearPendingPluginApproval();
+    this.pendingPluginApproval = prompt.sessionKey || !this.currentSessionKey
+      ? prompt
+      : { ...prompt, sessionKey: this.currentSessionKey };
+    if (typeof prompt.expiresAtMs === 'number') {
+      const delay = prompt.expiresAtMs - Date.now();
+      this.pluginApprovalExpiryTimer = setTimeout(
+        () => this.abandonPendingPluginApproval(prompt.id, 'Expired'),
+        Math.max(0, delay),
+      );
+      this.pluginApprovalExpiryTimer.unref?.();
+    }
+    this.startPluginApprovalReconcile();
+  }
+
+  private clearPendingPluginApproval(): void {
+    if (this.pluginApprovalExpiryTimer) {
+      clearTimeout(this.pluginApprovalExpiryTimer);
+      this.pluginApprovalExpiryTimer = null;
+    }
+    if (this.pluginApprovalReconcileTimer) {
+      clearInterval(this.pluginApprovalReconcileTimer);
+      this.pluginApprovalReconcileTimer = null;
+    }
+    this.pendingPluginApproval = null;
+  }
+
+  private startPluginApprovalReconcile(): void {
+    if (this.pluginApprovalReconcileTimer) return;
+    this.pluginApprovalReconcileTimer = setInterval(() => {
+      void this.reconcilePendingPluginApproval();
+    }, OpenClawAdapter.APPROVAL_RECONCILE_MS);
+    this.pluginApprovalReconcileTimer.unref?.();
+  }
+
+  private async reconcilePendingPluginApproval(): Promise<void> {
+    const prompt = this.pendingPluginApproval;
+    if (!prompt) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    let rows: ApprovalListRow[] | null;
+    try {
+      rows = approvalListRows(await this.rpcCall('plugin.approval.list', {}));
+    } catch {
+      return; // silence is not an answer
+    }
+    if (!rows) return; // an unreadable answer is not "gone" either
+    if (rows.some((row) => row?.id === prompt.id)) return;
+    if (this.pendingPluginApproval?.id !== prompt.id) return;
+    this.abandonPendingPluginApproval(prompt.id, 'No longer pending');
+  }
+
+  private abandonPendingPluginApproval(approvalId: string, reason: string): void {
+    if (!this.pendingPluginApproval || this.pendingPluginApproval.id !== approvalId) return;
+    this.clearPendingPluginApproval();
+    this.emitTimelineEntry({
+      ts: Date.now(), type: 'tool_resolved', raw: `Not approved (plugin) · ${reason}`,
+      approvalId, status: 'abandoned',
+    });
+    this.emitAdapterEvent({ source: 'parser', event: 'idle' });
+  }
+
+  private resolvePluginApproval(
+    prompt: OpenClawPluginApprovalPrompt,
+    decision: PluginApprovalDecision,
+  ): void {
+    debug('adapter:openclaw', `plugin.approval.resolve ${prompt.id} → ${decision}`);
+    this.rpcCall('plugin.approval.resolve', { id: prompt.id, decision })
+      .then(() => {
+        if (this.pendingPluginApproval?.id === prompt.id) this.clearPendingPluginApproval();
+      })
+      .catch((err) => {
+        logError(`[adapter:openclaw] plugin.approval.resolve failed (${decision}): ${String(err)}`);
+        this.emitTimelineEntry({
+          ts: Date.now(), type: 'error',
+          raw: `Plugin approval failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        if (isApprovalGoneError(err)) {
+          this.abandonPendingPluginApproval(prompt.id, 'No longer pending');
+          return;
+        }
+        this.rebroadcastPendingPluginApproval();
+      });
+  }
+
+  /** Re-emit the pending plugin prompt so devices re-sync after a dropped press. */
+  private rebroadcastPendingPluginApproval(): void {
+    const prompt = this.pendingPluginApproval;
+    if (!prompt) return;
+    this.emitAdapterEvent({
+      source: 'parser',
+      event: 'permission_prompt',
+      data: {
+        question: `[Plugin] ${prompt.question}`,
+        options: prompt.options.map((o) => ({
+          index: o.index, label: o.label, shortcut: o.shortcut,
+        })),
+        navigable: false,
+        cursorIndex: 0,
+      },
+    });
+  }
+
+  /** Re-emit whichever prompt is currently active (exec or plugin). Used after
+   *  adopting a catch-up prompt on connect and after a dropped resolve. */
+  private rebroadcastActivePrompt(): void {
+    const active = this.activePendingApproval();
+    if (!active) return;
+    if (active.kind === 'exec') this.rebroadcastPendingApproval();
+    else this.rebroadcastPendingPluginApproval();
+  }
+
+  private pluginApprovalEchoMatches(prompt: OpenClawPluginApprovalPrompt, echo: string): boolean {
+    // Compare against what was actually DISPLAYED, not the raw title: every
+    // broadcast prefixes `[Plugin] ` onto `prompt.question` so the user knows
+    // which kind of approval they are answering, so a device that echoes back
+    // what it rendered sends the prefixed form. Comparing against the
+    // unprefixed title here would refuse every press from a surface that
+    // actually renders the question.
+    const a = `[Plugin] ${prompt.question}`.trim();
+    const b = echo.trim();
+    if (!b) return true;
+    return a.startsWith(b) || b.startsWith(a);
+  }
+
   handleCommand(cmd: PluginCommand): boolean {
     switch (cmd.type) {
       case 'respond': {
         debug('adapter:openclaw', `respond: "${cmd.value}"`);
-        const prompt = this.pendingApproval;
+        const active = this.activePendingApproval();
+        if (active?.kind === 'plugin') {
+          const prompt = active.prompt;
+          const decision = pluginDecisionForRespondValue(prompt, cmd.value);
+          if (!decision) {
+            logError(
+              `[adapter:openclaw] respond "${cmd.value}" does not name a decision this plugin approval allows` +
+                ` (${prompt.options.map((o) => o.decision).join('/')}) — ignored`,
+            );
+            return true;
+          }
+          this.resolvePluginApproval(prompt, decision);
+          return true;
+        }
+        const prompt = active?.kind === 'exec' ? active.prompt : null;
         if (prompt) {
           const decision = decisionForRespondValue(prompt, cmd.value);
           if (!decision) {
@@ -789,7 +1014,25 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
 
       case 'select_option': {
         debug('adapter:openclaw', `select_option: idx=${cmd.index}`);
-        const prompt = this.pendingApproval;
+        const active = this.activePendingApproval();
+        if (active?.kind === 'plugin') {
+          const prompt = active.prompt;
+          if (cmd.question && !this.pluginApprovalEchoMatches(prompt, cmd.question)) {
+            logError(
+              '[adapter:openclaw] select_option dropped: question echo does not match the pending plugin approval',
+            );
+            this.rebroadcastPendingPluginApproval();
+            return true;
+          }
+          const decision = pluginDecisionForOptionIndex(prompt, cmd.index);
+          if (!decision) {
+            logError(`[adapter:openclaw] select_option index ${cmd.index} out of range — ignored`);
+            return true;
+          }
+          this.resolvePluginApproval(prompt, decision);
+          return true;
+        }
+        const prompt = active?.kind === 'exec' ? active.prompt : null;
         if (prompt) {
           // The index names an option in the list the device was DISPLAYING.
           // `question` echoes that list's headline; a press aimed at an
@@ -971,6 +1214,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
     // a socket callback firing — an interval that outlives the adapter polls a
     // Gateway this process no longer talks to.
     this.clearPendingApproval();
+    this.clearPendingPluginApproval();
 
     for (const [id, pending] of this.pendingRpc) {
       pending.reject(new Error('Adapter shutting down'));
@@ -1128,8 +1372,14 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       this.alive = false;
       // Pending approvals are Gateway-process state: a reconnect issues new
       // ids, so holding the old one would offer buttons that resolve to
-      // "unknown or expired approval id".
+      // "unknown or expired approval id". Unlike the turn-end paths below,
+      // this one DOES abandon a pending plugin approval too — a dropped link
+      // invalidates every id regardless of kind, no turn-scoping question
+      // involved.
       this.abandonPendingApprovalForTurnEnd('gateway disconnected');
+      if (this.pendingPluginApproval) {
+        this.abandonPendingPluginApproval(this.pendingPluginApproval.id, 'gateway disconnected');
+      }
 
       if (wasAlive) {
         this.emitAdapterEvent({ source: 'connection', status: 'disconnected' });
@@ -1650,6 +1900,80 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
         break;
       }
 
+      // ===== Plugin approval (plugin.approval.*, issue #309) =====
+      //
+      // Same three-event surface as exec, mirrored field-for-field — the
+      // Gateway nests everything under `request` here too
+      // (`buildRequestedApprovalEvent(record, 'plugin')`).
+      case 'plugin.approval.requested': {
+        const prompt = parsePluginApprovalRequest(payload, Date.now());
+        if (!prompt) {
+          logError('[adapter:openclaw] plugin.approval.requested without a usable id — ignored');
+          break;
+        }
+        this.setPendingPluginApproval(prompt);
+
+        const toolRequestRaw = `[Plugin] ${prompt.question.length > 490
+          ? prompt.question.slice(0, 487) + '...'
+          : prompt.question}`;
+        const toolRequestDetail = prompt.detail && prompt.detail.length > 1000
+          ? prompt.detail.slice(0, 997) + '...'
+          : prompt.detail;
+        this.emitTimelineEntry({
+          ts: Date.now(), type: 'tool_request', raw: toolRequestRaw,
+          ...(toolRequestDetail ? { detail: toolRequestDetail } : {}),
+          approvalId: prompt.id, status: 'pending',
+        });
+
+        // Only broadcast the live prompt event when this plugin approval is
+        // actually the ACTIVE one (oldest of whichever is pending) — an exec
+        // approval already on screen must not be silently replaced by a
+        // plugin one that arrived later.
+        const active = this.activePendingApproval();
+        if (active?.kind === 'plugin' && active.prompt.id === prompt.id) {
+          this.rebroadcastPendingPluginApproval();
+        }
+        break;
+      }
+
+      case 'plugin.approval.resolved': {
+        const resolvedId = typeof payload.id === 'string' && payload.id
+          ? payload.id
+          : this.pendingPluginApproval?.id;
+        const decision = typeof payload.decision === 'string' ? payload.decision : '';
+        const allowed = pluginApprovalAllows(decision);
+        if (this.pendingPluginApproval && resolvedId === this.pendingPluginApproval.id) {
+          this.clearPendingPluginApproval();
+        }
+
+        if (resolvedId) {
+          this.emitTimelineEntry({
+            ts: Date.now(), type: 'tool_resolved',
+            raw: decision === 'allow-always' ? 'Approved (always, plugin)'
+              : allowed ? 'Approved (plugin)' : 'Denied (plugin)',
+            approvalId: resolvedId,
+            status: allowed ? 'approved' : 'denied',
+          });
+        }
+        this.emitAdapterEvent({ source: 'parser', event: allowed ? 'spinner_start' : 'idle' });
+        break;
+      }
+
+      case 'plugin.approval.removed': {
+        // NOT declared in any `.d.ts` the installed package ships — real wire
+        // protocol confirmed only at the embedded/TUI-local approval broker's
+        // string literal, a different runtime from the persisted Gateway
+        // approval manager this adapter connects through. Handled
+        // defensively: the payload is just `{id}`, no decision, so this can
+        // only ABANDON, never resolve — the resolve path stays owned by
+        // `plugin.approval.resolved`.
+        const removedId = parsePluginApprovalRemoved(payload);
+        if (removedId && this.pendingPluginApproval?.id === removedId) {
+          this.abandonPendingPluginApproval(removedId, 'Removed by Gateway');
+        }
+        break;
+      }
+
       // ===== Gateway health =====
       case 'health': {
         // Forward the payload whole and let `resolveGatewayHealth` read it.
@@ -1815,11 +2139,12 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
         this.subscribeSessionEvents().catch(err =>
           debug('adapter:openclaw', `subscribeSessionEvents error: ${err}`));
 
-        // Catch up on approvals that were already waiting. `exec.approval.requested`
-        // is a broadcast and is never replayed, so without this read a daemon
-        // restart (or any Gateway reconnect) leaves the agent blocked on an
-        // approval that exists on exactly one side: the user sees an idle deck
-        // and the agent never moves.
+        // Catch up on approvals that were already waiting — both exec and
+        // plugin. `exec.approval.requested` / `plugin.approval.requested` are
+        // broadcasts and are never replayed, so without this read a daemon
+        // restart (or any Gateway reconnect) leaves the agent (or the plugin
+        // caller) blocked on an approval that exists on exactly one side: the
+        // user sees an idle deck and nothing ever moves.
         this.adoptPendingApprovals().catch(err =>
           debug('adapter:openclaw', `adoptPendingApprovals error: ${err}`));
       },

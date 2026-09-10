@@ -45,6 +45,7 @@
 		0F4918AD129011B8E6A54CA6 /* TimelineCrossDaemonFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A785B4452043AE85943C4563 /* TimelineCrossDaemonFormatTests.swift */; };
 		1055170019B2376B38A0B8FE /* SessionAggregator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61E3177DE60C73B3A102F9FB /* SessionAggregator.swift */; };
 		10B201D2AF96C0838CCEC4CF /* SerialModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03F618D3253FD55D4DD7D5AF /* SerialModule.swift */; };
+		10D745FF03A660573DFAD326 /* OpenClawPluginApprovalRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD9BAEA1AA19038A243F2806 /* OpenClawPluginApprovalRulesTests.swift */; };
 		10DE349A3E6CF8732C19FB99 /* AgentDeckApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D587189DB0E504028BE4BEF /* AgentDeckApp.swift */; };
 		110821DFA46347A1679A6A23 /* ApmeJudgeFoundationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9413D054382510FF4664C89 /* ApmeJudgeFoundationModels.swift */; };
 		11267120A1E59EB9DA314A75 /* ApmeClassifierBackendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94B060A15BF6B6EFD1848C81 /* ApmeClassifierBackendTests.swift */; };
@@ -295,6 +296,7 @@
 		842B9539E3F02D240438F1D8 /* StateColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4EB2E51F6EFD29341EB6127 /* StateColors.swift */; };
 		851025D4E314BF0970A0432D /* CollaborationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4AF6DB8355E0DFAD67F4DBD /* CollaborationPanel.swift */; };
 		85B903EFA7879FA42B54A258 /* RockFormation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF517661B1BEF3ACD330054D /* RockFormation.swift */; };
+		85C724787BC98E91B345697E /* OpenClawPluginApprovalRules.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0874BC71B3B1DEAE2C6177D7 /* OpenClawPluginApprovalRules.generated.swift */; };
 		85EF0A636EBDCAA072478B2C /* PixooRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 730925E1194B8183122443CA /* PixooRenderer.swift */; };
 		8693E499DE95572584CC9DA9 /* OpenCodeObserverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21073CA63BB9403D46212547 /* OpenCodeObserverTests.swift */; };
 		86F7FE3919CB9698A247E2A3 /* SandDisturbance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F9B51FC480E3419A6334A20 /* SandDisturbance.swift */; };
@@ -346,9 +348,11 @@
 		A2D382D31BFCC8EAEE6F19F4 /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E42A4F5681EFB215B43645 /* AppPreferences.swift */; };
 		A2D6228ECEFFE762B28EF6C9 /* CollaborationProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F09E1BD51B5102E89060963B /* CollaborationProjectionTests.swift */; };
 		A320BAAC52861E8F41588F75 /* ApmeOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DB3C4DCB23D09CFA856786 /* ApmeOutcome.swift */; };
+		A45715C40465E13F9F57B786 /* OpenClawPluginApprovalRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD9BAEA1AA19038A243F2806 /* OpenClawPluginApprovalRulesTests.swift */; };
 		A50EA56C00F6A51F498DD20E /* MonitorScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7B4E454713DFE2DECC4D154 /* MonitorScreen.swift */; };
 		A574521C09137ADFCCD9495A /* ProjectNameResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F7897FE76F480951CD34749 /* ProjectNameResolver.swift */; };
 		A5FEB3C538CE2A4C9C385F2F /* TerrariumRules.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CF3CC89437DF95538AA2AE5 /* TerrariumRules.generated.swift */; };
+		A73CF81FE653E74BF02E102E /* OpenClawPluginApprovalRules.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0874BC71B3B1DEAE2C6177D7 /* OpenClawPluginApprovalRules.generated.swift */; };
 		A7560FE516D5460EB526FA3A /* DaemonActorIndependenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E84D819AA86894944600240C /* DaemonActorIndependenceTests.swift */; };
 		A78A1918B0FC99BAA4B1F6E9 /* HttpAccessPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D805A12FAC706136018710BC /* HttpAccessPolicyTests.swift */; };
 		A7C44EC8857DB5EA6890BACA /* MatrixTerminalPreviews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AECC310DB5852BD8814BC04 /* MatrixTerminalPreviews.swift */; };
@@ -585,6 +589,7 @@
 		075254486BFFC613DB33B99D /* D200HLayoutModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = D200HLayoutModel.swift; sourceTree = "<group>"; };
 		07E03521107C667F3ED4EA7A /* OpenCodeSSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeSSEClient.swift; sourceTree = "<group>"; };
 		0815111538C63CAF8766B367 /* KelpField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KelpField.swift; sourceTree = "<group>"; };
+		0874BC71B3B1DEAE2C6177D7 /* OpenClawPluginApprovalRules.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenClawPluginApprovalRules.generated.swift; sourceTree = "<group>"; };
 		0BDA4F07842CEFAA838A0A2B /* PocketSansWorld_12.cpfont */ = {isa = PBXFileReference; path = PocketSansWorld_12.cpfont; sourceTree = "<group>"; };
 		0DD3A6826EADF11BB4C4F139 /* BubbleSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleSystem.swift; sourceTree = "<group>"; };
 		0F083DDE39507B6693AED227 /* ApmeCategoryE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApmeCategoryE2ETests.swift; sourceTree = "<group>"; };
@@ -853,6 +858,7 @@
 		FAF67F9EA0CB4FD3EE8C963A /* MicroGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicroGlyphs.swift; sourceTree = "<group>"; };
 		FB4C24732A9A2DB27CC5F7C0 /* AnthropicAdminApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicAdminApiClient.swift; sourceTree = "<group>"; };
 		FD0E0570EC405C2542D130A1 /* PairingCredentialTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingCredentialTests.swift; sourceTree = "<group>"; };
+		FD9BAEA1AA19038A243F2806 /* OpenClawPluginApprovalRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenClawPluginApprovalRulesTests.swift; sourceTree = "<group>"; };
 		FE667561A919A52759C5225E /* TimeboxDivoomPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeboxDivoomPacket.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -955,6 +961,7 @@
 				3B1754EEF69FF454C638CF1C /* MiniTomlTests.swift */,
 				767EE1D15C8564C2A5AC5713 /* ObservedAskUserQuestionTests.swift */,
 				8EB6D1182ABF3CF9649640FE /* OpenClawApprovalErrorTests.swift */,
+				FD9BAEA1AA19038A243F2806 /* OpenClawPluginApprovalRulesTests.swift */,
 				DAF69E65D3118C105A193227 /* OpenClawTokenExtractTests.swift */,
 				52BC4C62CBEEE99555CED707 /* OpenClawToolNoiseTests.swift */,
 				21073CA63BB9403D46212547 /* OpenCodeObserverTests.swift */,
@@ -1301,6 +1308,7 @@
 				7BCC68BE56702DFD637FFE02 /* GatewayProbe.swift */,
 				427B912EBD043285F0A0008D /* OpenClawAdapter.swift */,
 				4AF67EB1D0BDEE57B39E6E9F /* OpenClawApprovalRules.generated.swift */,
+				0874BC71B3B1DEAE2C6177D7 /* OpenClawPluginApprovalRules.generated.swift */,
 			);
 			path = Gateway;
 			sourceTree = "<group>";
@@ -1666,6 +1674,7 @@
 				23EA982402128EB1158AB6A9 /* MiniTomlTests.swift in Sources */,
 				BA45B7FBDCFDD8971904714D /* ObservedAskUserQuestionTests.swift in Sources */,
 				005B0DAAC1B51D7B88E775B8 /* OpenClawApprovalErrorTests.swift in Sources */,
+				10D745FF03A660573DFAD326 /* OpenClawPluginApprovalRulesTests.swift in Sources */,
 				7B0F7E18D01881EF81E3F08E /* OpenClawTokenExtractTests.swift in Sources */,
 				2CA69943196E37F61A932DEF /* OpenClawToolNoiseTests.swift in Sources */,
 				7F7AC94714D1AA6767605207 /* OpenCodeObserverTests.swift in Sources */,
@@ -1734,6 +1743,7 @@
 				A7E6158A1A9242B77356F1E8 /* MiniTomlTests.swift in Sources */,
 				3DF6BC8D6B4841A3EF370023 /* ObservedAskUserQuestionTests.swift in Sources */,
 				143AC29C25DFB6DF71A0B42F /* OpenClawApprovalErrorTests.swift in Sources */,
+				A45715C40465E13F9F57B786 /* OpenClawPluginApprovalRulesTests.swift in Sources */,
 				9A5DC975FE1C36D4AB0B13A4 /* OpenClawTokenExtractTests.swift in Sources */,
 				45C2A8320BF4C10E8106CF6B /* OpenClawToolNoiseTests.swift in Sources */,
 				8693E499DE95572584CC9DA9 /* OpenCodeObserverTests.swift in Sources */,
@@ -1889,6 +1899,7 @@
 				E98F3FC6D7134E8E65163D93 /* OnboardingSheet.swift in Sources */,
 				FD86AF81DA987540254BA326 /* OpenClawAdapter.swift in Sources */,
 				4B12BD71DAC0B74F7FB41BDA /* OpenClawApprovalRules.generated.swift in Sources */,
+				85C724787BC98E91B345697E /* OpenClawPluginApprovalRules.generated.swift in Sources */,
 				7AA10F90E922138D683C318D /* OpenClawTokenImporter.swift in Sources */,
 				46086D1358BD25389E304052 /* OpenCodeCreature.swift in Sources */,
 				F9EEBCC88FC55225E6D60AEE /* OpenCodeObserver.swift in Sources */,
@@ -2098,6 +2109,7 @@
 				F608DAD197953CC405F306A5 /* OnboardingSheet.swift in Sources */,
 				58591ABC081F2367FEE6B563 /* OpenClawAdapter.swift in Sources */,
 				36177FF16DB44FF20C64B33D /* OpenClawApprovalRules.generated.swift in Sources */,
+				A73CF81FE653E74BF02E102E /* OpenClawPluginApprovalRules.generated.swift in Sources */,
 				D53FC33DD05A32D719809874 /* OpenClawTokenImporter.swift in Sources */,
 				996C92E310F9A7E69C40C803 /* OpenCodeCreature.swift in Sources */,
 				FA2AA2B226EBD69F45238A1F /* OpenCodeObserver.swift in Sources */,
