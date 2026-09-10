@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command, InvalidArgumentError } from 'commander';
-import { writeFileSync, unlinkSync, existsSync, realpathSync, readFileSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, realpathSync, readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { execFileSync, execSync, spawn, spawnSync } from 'child_process';
@@ -4263,6 +4263,88 @@ apme
       ts: Date.now(),
     });
     log(`Vibe ${verdict} recorded for run ${run.id.slice(0, 10)}.`);
+  });
+
+apme
+  .command('prune')
+  .description(
+    'Reclaim apme.sqlite disk space by clearing old tool payloads (#302). ' +
+    'Rows are KEPT — only steps.payload and tool sample_events.payload are ' +
+    'replaced with a small marker; runs/tasks/turns/evals are never touched. ' +
+    'Default is a DRY RUN (reports what would be reclaimed and changes nothing); ' +
+    'pass --apply to actually prune. There is no automatic or background ' +
+    'pruning — this command must be run by hand (or from your own cron/launchd).',
+  )
+  .option('--older-than <days>', 'Age cutoff in days', '30')
+  .option('--apply', 'Actually prune (default is dry-run)')
+  .option('--vacuum', 'Run VACUUM after --apply, only if free disk space is >= 1.1x the file size')
+  .action(async (opts) => {
+    const { initApme } = await import('./apme/index.js');
+    const { checkVacuumSpace } = await import('./apme/payload-prune.js');
+    const apme = await initApme();
+    if (!apme) { log('APME not available (better-sqlite3 missing)'); process.exit(1); }
+
+    const days = Number(opts.olderThan);
+    if (!Number.isFinite(days) || days <= 0) {
+      log(`Invalid --older-than value: ${opts.olderThan} (must be a positive number of days)`);
+      process.exit(1);
+    }
+    const cutoffMs = Date.now() - days * 86_400_000;
+    const fileSizeOf = (p: string): number => { try { return statSync(p).size; } catch { return 0; } };
+    const sizeBefore = fileSizeOf(apme.store.dbPath);
+
+    log('');
+    log(`  ${apme.store.dbPath}`);
+    log(`  Current file size: ${formatBytes(sizeBefore)}`);
+    log(`  Pruning payloads older than ${days}d (before ${new Date(cutoffMs).toISOString()})`);
+    log('  Kept forever, never touched: runs / tasks / turns / evals.');
+    log('  Rows are never deleted — only payload content is replaced with a pruned marker.');
+    log("  A row whose age is unknown (ts=0) is never a candidate — that would be a guess, not a measurement.");
+
+    if (!opts.apply) {
+      const preview = apme.store.previewPrune(cutoffMs);
+      log('');
+      log(`  ${'Table'.padEnd(24)} ${'Rows'.padEnd(10)} Payload bytes`);
+      log(`  ${'steps'.padEnd(24)} ${String(preview.steps.rows).padEnd(10)} ${formatBytes(preview.steps.bytesBefore)}`);
+      log(`  ${"sample_events (kind='tool')".padEnd(24)} ${String(preview.sampleEvents.rows).padEnd(10)} ${formatBytes(preview.sampleEvents.bytesBefore)}`);
+      const totalRows = preview.steps.rows + preview.sampleEvents.rows;
+      const totalBytes = preview.steps.bytesBefore + preview.sampleEvents.bytesBefore;
+      log('');
+      log(`  ${totalRows} rows, ~${formatBytes(totalBytes)} of payload would be reclaimed (marker overhead is negligible).`);
+      log('  This was a DRY RUN — nothing changed. Re-run with --apply to prune for real.');
+      log('  (Reclaiming the bytes on disk also needs --vacuum, or run `agentdeck apme prune --apply --vacuum`.)');
+      log('');
+      return;
+    }
+
+    const result = apme.store.applyPrune(cutoffMs);
+    log('');
+    log(`  Pruned ${result.steps.rows} steps rows: ${formatBytes(result.steps.bytesBefore)} -> ${formatBytes(result.steps.bytesAfter ?? 0)} of payload`);
+    log(`  Pruned ${result.sampleEvents.rows} sample_events (kind='tool') rows: ${formatBytes(result.sampleEvents.bytesBefore)} -> ${formatBytes(result.sampleEvents.bytesAfter ?? 0)} of payload`);
+
+    if (opts.vacuum) {
+      const check = checkVacuumSpace(apme.store.dbPath);
+      if (!check.ok) {
+        log('');
+        log(
+          `  Skipping VACUUM: free disk space (${formatBytes(check.freeBytes)}) is below ` +
+          `1.1x the current file size (${formatBytes(check.requiredBytes)} required). ` +
+          'Free up space and re-run `agentdeck apme prune --vacuum` (with nothing new to ' +
+          'prune, --apply is a no-op) to reclaim the bytes on disk.',
+        );
+      } else {
+        log('  Running VACUUM (this rewrites the whole file; may take a while on a large store)...');
+        apme.store.vacuum();
+        log('  VACUUM complete.');
+      }
+    } else {
+      log('  Skipped VACUUM (pass --vacuum to reclaim the freed bytes on disk — SQLite does not shrink the file on its own).');
+    }
+
+    const sizeAfter = fileSizeOf(apme.store.dbPath);
+    log('');
+    log(`  File size: ${formatBytes(sizeBefore)} -> ${formatBytes(sizeAfter)}`);
+    log('');
   });
 
 apme

@@ -100,6 +100,13 @@ export interface ToolEvent extends TrajectoryEventBase {
   output?: unknown;
   error?: string | null;
   status?: ToolStatus;
+  /** True when the stored `sample_events` row's payload was reclaimed by
+   *  `agentdeck apme prune` (#302) — the row (and this event) still exists,
+   *  but `input`/`output` are unavailable, not genuinely empty. A consumer
+   *  that distinguishes "no arguments" from "arguments not retained" (a
+   *  churn/dedup scorer, a judge trajectory summary) should read this
+   *  before treating a missing `input` as a fact about the tool call. */
+  pruned?: boolean;
 }
 
 /** One child-agent lifecycle event attributed to the parent task. The child

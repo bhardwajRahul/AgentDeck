@@ -39,6 +39,10 @@ import type {
   TrajectoryEvent,
 } from '@agentdeck/shared';
 import { TASK_ATTENTION_WINDOW_MS, TASK_ATTENTION_RED_SCORE } from '@agentdeck/shared';
+import {
+  buildPrunedPayload, isPrunedPayload, PRUNED_PAYLOAD_LIKE,
+  emptyPruneEstimate, type PruneEstimate,
+} from './payload-prune.js';
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
 
@@ -343,6 +347,12 @@ CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at);
 CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id);
 CREATE INDEX IF NOT EXISTS idx_evals_run ON evals(run_id);
 CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run_id);
+-- Retention (#302): 'apme prune' scans steps by age alone and sample_events
+-- by (kind='tool', age) — neither is covered by the existing (run_id, ts)
+-- pair indexes, so a store with hundreds of thousands of rows would full-scan
+-- on every dry-run.
+CREATE INDEX IF NOT EXISTS idx_steps_ts ON steps(ts);
+CREATE INDEX IF NOT EXISTS idx_sevents_kind_ts ON sample_events(kind, ts);
 
 ${SCORECARD_DDL}
 `;
@@ -578,6 +588,45 @@ type BetterSqliteDb = {
   /** better-sqlite3 wraps `fn` in BEGIN/COMMIT and rolls back if it throws. */
   transaction: <T>(fn: () => T) => () => T;
 };
+
+/** Replace `payload` with a pruned marker for rows in `table` older than
+ *  `cutoffMs` (plus `extraWhere`, e.g. `AND kind = 'tool'`). Batched (SELECT
+ *  a page, UPDATE it, repeat) so a store with hundreds of thousands of
+ *  matching rows never holds every payload string in memory at once — each
+ *  already-pruned row drops out of the WHERE clause (`payload NOT LIKE`), so
+ *  the same query re-run is itself the next page, no OFFSET needed. Callers
+ *  wrap this in their own transaction; this function does not open one. */
+function prunePayloadColumn(
+  db: BetterSqliteDb,
+  table: 'steps' | 'sample_events',
+  extraWhere: string,
+  cutoffMs: number,
+  prunedAt: number,
+  batchSize = 2000,
+): PruneEstimate {
+  const select = db.prepare(
+    `SELECT id, payload FROM ${table}
+     WHERE ts > 0 AND ts < ? ${extraWhere} AND payload IS NOT NULL AND payload NOT LIKE ?
+     LIMIT ?`,
+  );
+  const update = db.prepare(`UPDATE ${table} SET payload = ? WHERE id = ?`);
+  let rows = 0;
+  let bytesBefore = 0;
+  let bytesAfter = 0;
+  for (;;) {
+    const batch = select.all(cutoffMs, PRUNED_PAYLOAD_LIKE, batchSize) as { id: number; payload: string }[];
+    if (batch.length === 0) break;
+    for (const r of batch) {
+      const marker = buildPrunedPayload(r.payload.length, prunedAt);
+      bytesBefore += r.payload.length;
+      bytesAfter += marker.length;
+      update.run(marker, r.id);
+    }
+    rows += batch.length;
+    if (batch.length < batchSize) break;
+  }
+  return { rows, bytesBefore, bytesAfter };
+}
 
 /** The latest overall judge score for a task, else its composite. Inlined into
  *  several `TASK_VIEW_SQL` buckets so "judged" means one thing everywhere. */
@@ -1534,6 +1583,78 @@ export class ApmeStore {
     }));
   }
 
+  // ─── Retention / prune (#302) ─────────────────────────────────────────────
+  // `steps` and `sample_events` are the two payload-heavy tables (measured
+  // 2026-09-09: 71% of a 2.33 GB apme.sqlite, ~7.7 KB/row). `runs`/`tasks`/
+  // `turns`/`evals` are never touched by any of this — they are kept forever
+  // per the owner's decision. Rows are never DELETEd either: only the
+  // payload TEXT is replaced by a small marker (`buildPrunedPayload`), so
+  // every reader that counts/keys off row existence (scorers, classifier,
+  // outcome, the graph, the dashboard, the judge) keeps working. `steps` is
+  // pruned by age alone regardless of hook kind (`PreToolUse`/`PostToolUse`/
+  // `tool_end`/… — there is no literal `kind='tool'` there); `sample_events`
+  // is pruned ONLY where `kind='tool'`, since that one kind is ~98% of that
+  // table's payload bytes on a live store and the other kinds
+  // (user_message/assistant_message/model/subagent/state/info/relation) hold
+  // small, semantically load-bearing text (task titles, judge context) that
+  // this command has no reason to touch. A `ts=0` row's age is unknown (pre-
+  // instrumentation or a clock fault) and is never a candidate — pruning it
+  // would be a guess, not a measurement.
+
+  /** Preview: rows and payload bytes an `apme prune --older-than <days>`
+   *  would touch, without writing anything. */
+  previewPrune(cutoffMs: number): { steps: PruneEstimate; sampleEvents: PruneEstimate } {
+    if (!this.db) return { steps: emptyPruneEstimate(), sampleEvents: emptyPruneEstimate() };
+    const steps = this.db.prepare(
+      `SELECT COUNT(*) AS rows, COALESCE(SUM(LENGTH(payload)),0) AS bytes
+       FROM steps WHERE ts > 0 AND ts < ? AND payload IS NOT NULL AND payload NOT LIKE ?`,
+    ).get(cutoffMs, PRUNED_PAYLOAD_LIKE) as { rows: number; bytes: number };
+    const sampleEvents = this.db.prepare(
+      `SELECT COUNT(*) AS rows, COALESCE(SUM(LENGTH(payload)),0) AS bytes
+       FROM sample_events WHERE kind = 'tool' AND ts > 0 AND ts < ? AND payload IS NOT NULL AND payload NOT LIKE ?`,
+    ).get(cutoffMs, PRUNED_PAYLOAD_LIKE) as { rows: number; bytes: number };
+    return {
+      steps: { rows: steps.rows, bytesBefore: steps.bytes, bytesAfter: null },
+      sampleEvents: { rows: sampleEvents.rows, bytesBefore: sampleEvents.bytes, bytesAfter: null },
+    };
+  }
+
+  /** Apply: replace payloads older than `cutoffMs` with a pruned marker, for
+   *  `steps` (all kinds) and `sample_events` (kind='tool' only). Batched
+   *  SELECT+UPDATE so a very large store never holds every touched payload
+   *  in memory at once, all wrapped in ONE transaction so the pair of tables
+   *  commits or rolls back together. */
+  applyPrune(cutoffMs: number, prunedAt: number = Date.now()): { steps: PruneEstimate; sampleEvents: PruneEstimate } {
+    if (!this.db) return { steps: emptyPruneEstimate(), sampleEvents: emptyPruneEstimate() };
+    const db = this.db;
+    let steps = emptyPruneEstimate();
+    let sampleEvents = emptyPruneEstimate();
+    const run = db.transaction(() => {
+      steps = prunePayloadColumn(db, 'steps', '', cutoffMs, prunedAt);
+      sampleEvents = prunePayloadColumn(db, 'sample_events', "AND kind = 'tool'", cutoffMs, prunedAt);
+    });
+    run();
+    return { steps, sampleEvents };
+  }
+
+  /** Run SQLite VACUUM — rewrites the whole file, so this reclaims the disk
+   *  space `applyPrune` freed within pages. Callers gate this on
+   *  `checkVacuumSpace` (payload-prune.ts) first; this method does not.
+   *
+   *  In `journal_mode = WAL` (this store's mode), VACUUM's own rewrite
+   *  lands in the WAL, not the main file — measured: the on-disk
+   *  `apme.sqlite` stayed at its pre-VACUUM size until `close()` forced a
+   *  checkpoint, so a caller that stats the file right after `vacuum()`
+   *  (to report before/after size, as the CLI does) would print an
+   *  unchanged size despite VACUUM having genuinely run. `wal_checkpoint
+   *  (TRUNCATE)` forces that merge-and-shrink immediately, without closing
+   *  the connection. */
+  vacuum(): void {
+    if (!this.db) return;
+    this.db.exec('VACUUM');
+    try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* best-effort */ }
+  }
+
   insertArtifact(row: ApmeArtifactRow): void {
     if (!this.db) return;
     this.db.prepare(
@@ -2212,8 +2333,22 @@ function sampleEventRowToTrajectory(r: ApmeSampleEventRow): TrajectoryEvent | nu
       return { ...base, kind: 'assistant_message', text: (p.text as string) ?? '', responseKind: ((p.responseKind as string) ?? 'text') as 'text' | 'tool_only' | 'empty' };
     case 'model':
       return { ...base, kind: 'model', model: r.model ?? 'unknown', inputTokens: r.inputTokens ?? 0, outputTokens: r.outputTokens ?? 0, costUsd: r.costUsd ?? 0, latencyMs: r.latencyMs ?? 0 };
-    case 'tool':
-      return { ...base, kind: 'tool', name: r.toolName ?? 'tool', input: p.input, output: p.output, error: r.toolError ?? null, status: (r.toolStatus as 'pending' | 'success' | 'error' | undefined) ?? undefined };
+    case 'tool': {
+      // A pruned row (#302) is still valid JSON with none of `input`/`output`,
+      // so this already degrades to "no content" — `pruned: true` makes that
+      // an explicit fact instead of an accident, for consumers that must not
+      // read "no input recorded" as "called with no arguments" (churn/dedup
+      // scoring, the judge's trajectory summary).
+      const pruned = isPrunedPayload(r.payload);
+      return {
+        ...base, kind: 'tool', name: r.toolName ?? 'tool',
+        input: pruned ? undefined : p.input,
+        output: pruned ? undefined : p.output,
+        error: r.toolError ?? null,
+        status: (r.toolStatus as 'pending' | 'success' | 'error' | undefined) ?? undefined,
+        ...(pruned ? { pruned: true } : {}),
+      };
+    }
     case 'subagent':
       return {
         ...base,

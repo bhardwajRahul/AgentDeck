@@ -14,6 +14,7 @@
 
 import type { ApmeStore } from './store.js';
 import { loadMlxSettings, resolveMlxModel } from '@agentdeck/shared';
+import { isPrunedPayload } from './payload-prune.js';
 
 // ─── TaskSignals — agent-agnostic feature vector ─────────────────────────────
 
@@ -80,6 +81,14 @@ export function computeSignals(store: ApmeStore, runId: string): TaskSignals {
   const ocToolNames = new Set<string>();
 
   for (const step of steps) {
+    // A pruned row (#302) is still valid JSON, so an unguarded JSON.parse
+    // below would silently read the marker's `pruned`/`prunedAt`/`bytes`
+    // keys as "this step had no command / no mode / no OpenClaw flags" —
+    // true by accident, not by measurement. `kind`-only counters (turn
+    // count, permission/diff prompts) don't read the payload at all and
+    // stay correct either way; only content extraction is skipped here.
+    const contentAvailable = !isPrunedPayload(step.payload);
+
     if (step.kind === 'PreToolUse' && step.toolName) {
       toolCounts[step.toolName] = (toolCounts[step.toolName] ?? 0) + 1;
 
@@ -87,7 +96,7 @@ export function computeSignals(store: ApmeStore, runId: string): TaskSignals {
       if (step.toolName === 'Edit') filesModified++;
       if (step.toolName === 'WebSearch' || step.toolName === 'WebFetch') webSearches++;
       if (step.toolName === 'Agent') agentDelegations++;
-      if (step.toolName === 'Bash') {
+      if (step.toolName === 'Bash' && contentAvailable) {
         try {
           const payload = JSON.parse(step.payload);
           const cmd = typeof payload.command === 'string' ? payload.command : '';
@@ -97,23 +106,25 @@ export function computeSignals(store: ApmeStore, runId: string): TaskSignals {
     }
 
     if (step.kind === 'UserPromptSubmit') turnCount++;
+    if (step.kind === 'permission_prompt') permissionRequests++;
+    if (step.kind === 'diff_prompt') diffReviews++;
 
     // State-based signals from step payloads
-    try {
-      const payload = JSON.parse(step.payload);
-      if (payload.mode === 'plan' || step.kind === 'mode_change') {
-        if (typeof payload.mode === 'string' && payload.mode === 'plan') planModeUsed = true;
-      }
-      if (step.kind === 'permission_prompt') permissionRequests++;
-      if (step.kind === 'diff_prompt') diffReviews++;
-      // OpenClaw signals
-      if (typeof payload.chatIsAutomated === 'boolean') isAutomated = payload.chatIsAutomated;
-      if (Array.isArray(payload.chatToolNames)) {
-        for (const t of payload.chatToolNames) {
-          if (typeof t === 'string') ocToolNames.add(t);
+    if (contentAvailable) {
+      try {
+        const payload = JSON.parse(step.payload);
+        if (payload.mode === 'plan' || step.kind === 'mode_change') {
+          if (typeof payload.mode === 'string' && payload.mode === 'plan') planModeUsed = true;
         }
-      }
-    } catch { /* ignore */ }
+        // OpenClaw signals
+        if (typeof payload.chatIsAutomated === 'boolean') isAutomated = payload.chatIsAutomated;
+        if (Array.isArray(payload.chatToolNames)) {
+          for (const t of payload.chatToolNames) {
+            if (typeof t === 'string') ocToolNames.add(t);
+          }
+        }
+      } catch { /* ignore */ }
+    }
   }
 
   const totalToolCalls = Object.values(toolCounts).reduce((a, b) => a + b, 0);
