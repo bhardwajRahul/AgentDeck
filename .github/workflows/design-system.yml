@@ -51,6 +51,11 @@ jobs:
       - name: Verify Markdown links, anchors, and heading structure
         run: node scripts/check-docs.mjs
 
+      # The active DEVELOPMENT_LOG.md promises to hold only the current and previous
+      # month; kept by hand it drifted to four months / 1.34 MB (2026-09-10).
+      - name: Verify the active development log is within its month window
+        run: node scripts/devlog-archive.mjs --check
+
       # The ESP32 board set is written out in four places and only one edge had
       # a gate. A board missing from the release matrix ships no firmware and
       # nothing else fails — which is how three boards had no binaries at 1.0.1.

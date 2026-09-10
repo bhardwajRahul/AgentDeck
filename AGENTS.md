@@ -15,7 +15,7 @@
 - `CLAUDE.md` 상단 표가 `paths → 규칙 파일` 지도입니다. 작업 대상 경로에 맞는 규칙 파일을 **첫 편집 전에** 읽으십시오. 규칙 파일은 git 에 추적됩니다(`.gitignore` 의 `!.claude/rules/`). `.claude/` 의 나머지(`skills/`, `settings*`, `worktrees/`)는 개발자 로컬입니다.
 - 규칙 본문은 옮기되 다듬지 않습니다: 굵은 첫 문장이 규칙이고 나머지는 근거입니다. 새 도메인 규칙은 해당 규칙 파일에, 둘 이상의 도메인이 필요한 규칙만 `CLAUDE.md` 의 Key Conventions 에 추가합니다.
 - `esp32/CLAUDE.md` 는 Claude Code 가 `esp32/` 아래 파일을 읽을 때 자동으로 붙는 중첩 지침입니다. Codex 는 cwd 가 `esp32/` 일 때 `esp32/AGENTS.md` 를 통해 같은 파일에 도달하고, 저장소 루트에서 작업할 때는 `.claude/rules/esp32-flash.md` 와 함께 직접 읽으십시오.
-- `DEVELOPMENT_LOG.md` 는 통독하지 마십시오. 상단 최신 항목만 보고, 작업 키워드/파일명으로 `rg` 검색하십시오. 오래된 달은 `docs/devlog/<YYYY-MM>.md` 로 아카이브됩니다(인덱스 `docs/devlog/README.md`) — 활성 로그에 어느 달까지 남아 있는지는 `grep -n '^## 2026-' DEVELOPMENT_LOG.md | head -1` 로 확인하고, 아카이브가 필요하면 **해당 월 파일만** 검색하십시오.
+- `DEVELOPMENT_LOG.md` 는 통독하지 마십시오. 상단 최신 항목만 보고, 작업 키워드/파일명으로 `rg` 검색하십시오. 활성 로그는 **이번 달 + 지난 달**만 담습니다(CI 의 `pnpm devlog:check` 가 강제, `pnpm devlog:archive` 가 오래된 달을 `docs/devlog/<YYYY-MM>.md` 로 잘라냄, 인덱스 `docs/devlog/README.md`). 옛 기록이 필요하면 **해당 월 파일만** 검색하십시오. 새 항목은 파일 맨 위 H1 바로 아래에 `## YYYY-MM-DD — 제목` 으로 붙이며, 다른 세션과 같은 자리에 붙이므로 커밋 전 `git pull --rebase` 로 충돌을 먼저 받으십시오.
 
 ### 1. 에이전트별 차이 (실측 근거는 `docs/agent-harness.md`)
 
