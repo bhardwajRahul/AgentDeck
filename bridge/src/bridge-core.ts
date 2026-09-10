@@ -138,6 +138,37 @@ export interface BridgeCoreOptions {
  *
  * Callers (startSession / startDaemon) wire adapters, voice, utility, etc.
  */
+/** Interval of the wake-detector tick. */
+export const WAKE_TICK_MS = 5_000;
+/** A tick this much later than scheduled is a discontinuity worth classifying. */
+export const WAKE_GAP_MS = 15_000;
+
+/** Monotonic milliseconds — excludes suspend on Darwin/Linux, which is the
+ *  property the wake detector depends on. */
+export function monotonicNowMs(): number {
+  return Number(process.hrtime.bigint() / 1_000_000n);
+}
+
+/** Classify one wake-detector tick.
+ *
+ *  `wake`  — the wall clock advanced far more than the monotonic clock: the
+ *            machine was suspended (or, on win32 where the monotonic clock
+ *            keeps counting through sleep, a large gap on either clock).
+ *  `lag`   — both clocks advanced together past the gap: the event loop was
+ *            starved. Not a wake, and running the wake recovery here is what
+ *            starves the NEXT tick.
+ *  `normal` — on schedule.
+ *
+ *  Pure, so the two cases that look identical to a gap-only rule can be
+ *  driven side by side. */
+export function classifyClockTick(t: { wallDeltaMs: number; monoDeltaMs: number; platform: NodeJS.Platform }): 'wake' | 'lag' | 'normal' {
+  const gap = t.wallDeltaMs > WAKE_GAP_MS;
+  if (!gap) return 'normal';
+  if (t.platform === 'win32') return 'wake';
+  const drift = t.wallDeltaMs - t.monoDeltaMs;
+  return drift > WAKE_GAP_MS ? 'wake' : 'lag';
+}
+
 export class BridgeCore {
   // Core components
   readonly port: number;
@@ -311,16 +342,41 @@ export class BridgeCore {
     });
     this.displayMonitor.start();
 
-    // Time-discontinuity safety net (python3 process may die during deep sleep)
-    let lastTick = Date.now();
+    // Time-discontinuity safety net (python3 process may die during deep sleep).
+    //
+    // A late timer is NOT a wake. This used to fire the wake handler whenever
+    // a 5 s tick landed more than 15 s after the previous one — which is what
+    // an event loop starved by load does routinely, sleep or no sleep. On
+    // 2026-09-10 (load average 13–17, `pmset -g log` showing ZERO sleep events
+    // all day) it fired 123 times, every one to four minutes, and each firing
+    // ran the whole device-recovery storm: mDNS republish, pairing re-arm on
+    // every ESP32 board, BLE workers restarted, a usage refetch. That work is
+    // what blocked the loop for the NEXT tick, so the detector fed itself —
+    // and each storm left `/health` unanswered long enough for the macOS app
+    // to read the daemon as gone, promote to a fallback port, and stand down
+    // again a minute later, three times in five minutes.
+    //
+    // The distinction that separates the two is which clocks advanced. Across
+    // a real sleep the wall clock jumps while the monotonic clock does not
+    // (Darwin and Linux CLOCK_MONOTONIC exclude suspend); under load both
+    // advance together. So the wake signal is the DRIFT between them, never
+    // the gap alone. Windows' monotonic clock keeps counting through sleep, so
+    // there the gap rule stays, documented as the weaker instrument it is.
+    let lastWall = Date.now();
+    let lastMono = monotonicNowMs();
     setInterval(() => {
-      const now = Date.now();
-      if (now - lastTick > 15_000) {
-        debug('core', `Time discontinuity (${now - lastTick}ms) — likely system wake`);
+      const wall = Date.now();
+      const mono = monotonicNowMs();
+      const verdict = classifyClockTick({ wallDeltaMs: wall - lastWall, monoDeltaMs: mono - lastMono, platform: process.platform });
+      if (verdict === 'wake') {
+        debug('core', `Time discontinuity (wall +${wall - lastWall}ms, monotonic +${Math.round(mono - lastMono)}ms) — system wake`);
         this._wakeHandler?.();
+      } else if (verdict === 'lag') {
+        debug('core', `Timer lag (${wall - lastWall}ms for a ${WAKE_TICK_MS}ms tick) — the loop is starved, not a wake`);
       }
-      lastTick = now;
-    }, 5000);
+      lastWall = wall;
+      lastMono = mono;
+    }, WAKE_TICK_MS);
   }
 
   /** Register a callback for system wake recovery. */
