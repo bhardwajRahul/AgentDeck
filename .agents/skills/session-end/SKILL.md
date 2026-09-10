@@ -13,7 +13,7 @@ Produce a concise handoff that lets the next session continue without rereading 
 
 ## Workflow
 
-1. Read `CLAUDE.md` and the top of `DEVELOPMENT_LOG.md`.
+1. Read `CLAUDE.md` and the top of `DEVELOPMENT_LOG.md` (a generated aggregate — the entries behind it live in `docs/devlog/entries/`).
 2. Inspect the current work state:
 
 ```bash
@@ -29,7 +29,7 @@ git diff --stat
    - unresolved risks or blockers
    - exact next action for the next session
 5. Update durable docs only when warranted:
-   - `DEVELOPMENT_LOG.md`: add an entry for meaningful fixes, architectural decisions, hardware findings, or known pitfalls.
+   - Development log: for meaningful fixes, architectural decisions, hardware findings, or known pitfalls, create `docs/devlog/entries/YYYY-MM-DD-<slug>.md` (first line `# YYYY-MM-DD — title`, sections as `###`, links relative to the repo root), then run `pnpm devlog:build` and commit the entry together with the regenerated `DEVELOPMENT_LOG.md`. Never edit `DEVELOPMENT_LOG.md` or `docs/devlog/YYYY-MM.md` by hand.
    - `CLAUDE.md`: update only for project-wide architecture, invariants, setup, or workflow changes.
    - `AGENTS.md`: update only for persistent agent behavior expectations.
 6. Do not write secrets, credentials, tokens, private device passcodes, or raw prompt transcripts into durable docs.

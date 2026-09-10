@@ -6,6 +6,7 @@ dist/
 **/*.sdPlugin/logs/
 .claude/*
 !.claude/rules/
+!.claude/skills/
 
 # OS
 .DS_Store

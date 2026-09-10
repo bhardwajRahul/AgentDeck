@@ -10,7 +10,7 @@ Use this skill when the user asks to build, run dev mode, link/package the Strea
 ## Required Context
 
 1. Read `CLAUDE.md` before running workflow commands.
-2. Read the top of `DEVELOPMENT_LOG.md`, then search it for the subsystem you are touching instead of loading the full file.
+2. Read the top of `DEVELOPMENT_LOG.md` (generated from `docs/devlog/entries/`), then search it for the subsystem you are touching instead of loading the full file; older months are in `docs/devlog/YYYY-MM.md`, one at a time.
 3. Preserve App Store invariants from `CLAUDE.md` and `AGENTS.md` when touching Apple UI, daemon, setup, or diagnostics.
 
 ## Workflow Map

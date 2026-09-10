@@ -110,6 +110,13 @@ function checkDestination(sourceFile, sourceText, rawDestination, index) {
   }
 }
 
+// Development-log entries (docs/devlog/entries/*.md) are authored with links relative
+// to the REPOSITORY ROOT, because they are only ever read through the generated
+// aggregates (DEVELOPMENT_LOG.md at the root, docs/devlog/YYYY-MM.md two levels down),
+// which scripts/devlog-build.mjs rewrites per depth and which this checker validates.
+// Validating the same links against the entry's own directory would fail every one.
+const ROOT_RELATIVE_LINK_DIRS = ['docs/devlog/entries/'];
+
 for (const relativeFile of markdownFiles) {
   const source = readFileSync(path.join(repoRoot, relativeFile), 'utf8');
   const text = stripCode(source);
@@ -120,6 +127,8 @@ for (const relativeFile of markdownFiles) {
       failures.push(`${relativeFile}: expected exactly one H1 outside code blocks; found ${h1Count}`);
     }
   }
+
+  if (ROOT_RELATIVE_LINK_DIRS.some((dir) => relativeFile.startsWith(dir))) continue;
 
   for (const match of text.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)) {
     checkDestination(relativeFile, text, match[1], match.index);

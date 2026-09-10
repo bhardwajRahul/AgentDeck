@@ -15,11 +15,11 @@
 - `CLAUDE.md` 상단 표가 `paths → 규칙 파일` 지도입니다. 작업 대상 경로에 맞는 규칙 파일을 **첫 편집 전에** 읽으십시오. 규칙 파일은 git 에 추적됩니다(`.gitignore` 의 `!.claude/rules/`). `.claude/` 의 나머지(`skills/`, `settings*`, `worktrees/`)는 개발자 로컬입니다.
 - 규칙 본문은 옮기되 다듬지 않습니다: 굵은 첫 문장이 규칙이고 나머지는 근거입니다. 새 도메인 규칙은 해당 규칙 파일에, 둘 이상의 도메인이 필요한 규칙만 `CLAUDE.md` 의 Key Conventions 에 추가합니다.
 - `esp32/CLAUDE.md` 는 Claude Code 가 `esp32/` 아래 파일을 읽을 때 자동으로 붙는 중첩 지침입니다. Codex 는 cwd 가 `esp32/` 일 때 `esp32/AGENTS.md` 를 통해 같은 파일에 도달하고, 저장소 루트에서 작업할 때는 `.claude/rules/esp32-flash.md` 와 함께 직접 읽으십시오.
-- `DEVELOPMENT_LOG.md` 는 통독하지 마십시오. 상단 최신 항목만 보고, 작업 키워드/파일명으로 `rg` 검색하십시오. 활성 로그는 **이번 달 + 지난 달**만 담습니다(CI 의 `pnpm devlog:check` 가 강제, `pnpm devlog:archive` 가 오래된 달을 `docs/devlog/<YYYY-MM>.md` 로 잘라냄, 인덱스 `docs/devlog/README.md`). 옛 기록이 필요하면 **해당 월 파일만** 검색하십시오. 새 항목은 파일 맨 위 H1 바로 아래에 `## YYYY-MM-DD — 제목` 으로 붙이며, 다른 세션과 같은 자리에 붙이므로 커밋 전 `git pull --rebase` 로 충돌을 먼저 받으십시오.
+- `DEVELOPMENT_LOG.md` 는 **생성물**입니다(첫 줄 주석이 그렇게 말합니다). 항목의 정본은 `docs/devlog/entries/YYYY-MM-DD-<slug>.md` 한 항목 = 한 파일이며, `pnpm devlog:build` 가 활성 로그(이번 달 + 지난 달)와 `docs/devlog/YYYY-MM.md` 월별 파일, 인덱스를 다시 만들고 `pnpm devlog:check` 가 CI 에서 어긋남을 막습니다. **새 항목은 entries/ 에 파일을 만들고 빌드**하십시오(첫 줄 `# YYYY-MM-DD — 제목`, 링크는 저장소 루트 기준, 본문 소제목은 `###`). 생성물을 직접 고치지 말고, 생성물에서 머지 충돌이 나면 한쪽을 고르지 말고 다시 빌드하십시오 — 병렬 세션이 같은 파일 맨 위에 prepend 하던 충돌은 이렇게 없앤 것입니다. 읽을 때는 통독하지 말고 상단 최신 항목만 보고 `rg` 로 키워드 검색하며, 옛 기록은 **해당 월 파일만** 검색하십시오.
 
 ### 1. 에이전트별 차이 (실측 근거는 `docs/agent-harness.md`)
 
-- **Claude Code** — `CLAUDE.md` 매 세션 주입, `.claude/rules/` 경로 조건부 로드, `esp32/CLAUDE.md` 중첩 로드. skill 은 `.claude/skills/*.md` 포인터(로컬) → `.agents/skills/` 정본.
+- **Claude Code** — `CLAUDE.md` 매 세션 주입, `.claude/rules/` 경로 조건부 로드, `esp32/CLAUDE.md` 중첩 로드. skill 은 `.claude/skills/<name>` 이 `.agents/skills/<name>` 으로의 **심볼릭 링크**(git 추적)라 같은 정본을 자동 발견합니다(2026-09-10 `claude -p` 프로브로 5개 전부 확인).
 - **Codex** (현재 `gpt-6-astra`) — 루트→cwd 경로의 `AGENTS.md` 만 자동 주입되며 **합계 32 KiB(`project_doc_max_bytes`)를 넘는 파일은 소리 없이 버려집니다**. 이 파일을 짧게 유지하는 이유입니다. 경로 조건부 지침 파일은 없으므로(`.codex/rules` 는 실행 정책 전용) 규칙 파일은 직접 읽습니다. 셸 출력은 모델에 **약 10,000 토큰(≈40 KB)까지만 head+tail 로 전달**되고 중간이 잘립니다(`…N tokens truncated…`) — `CLAUDE.md` 는 그 안에 들어가도록 유지하고(현재 ≈30 KB), 그보다 큰 파일은 `sed -n` 으로 나누어 읽으십시오. skill 은 `.agents/skills/` 를 자동 발견합니다. Astra 계열은 모순되거나 불명확한 지침에 민감해 멈출 수 있으므로, 이 파일과 `CLAUDE.md` 가 서로 다른 말을 하면 `CLAUDE.md` 를 따르고 이 파일을 고치십시오.
 - **OpenCode** — 제품 세션 타입으로는 완전 지원(observer plugin)이지만 저작 도구로서는 hook/skill 자동 발견이 없습니다. `AGENTS.md` → `CLAUDE.md` → 해당 규칙 파일을 읽고, 절차는 `.agents/workflows/<name>.md` 경로를 직접 지정하십시오.
 - **Antigravity** — 지침 파일만 읽습니다. 세션 관측·hook·skill 자동 발견이 없고, Apple 앱은 사용량/크레딧 통계만 읽습니다. 워크플로우 파일 경로를 직접 인용하십시오.
@@ -27,7 +27,7 @@
 ### 2. 워크플로우 · 스킬 · 인계
 
 - 빌드, 환경 설정 등 반복 작업은 명령을 유추하지 말고 `.agents/workflows/` 의 워크플로우를 사용하십시오(예: `build-android.md`).
-- `.agents/skills/<name>/SKILL.md` 가 절차의 **정본**입니다. `.claude/skills/*.md` 는 얇은 포인터이므로 절차 내용을 거기에 복제·편집하지 마십시오.
+- `.agents/skills/<name>/SKILL.md` 가 절차의 **정본**이며 유일한 사본입니다. `.claude/skills/<name>` 은 그 디렉토리로의 심볼릭 링크이므로 새 skill 은 `.agents/skills/` 에 만들고 `ln -s ../../.agents/skills/<name> .claude/skills/<name>` 로 링크만 추가하십시오. 포인터 파일을 따로 쓰지 마십시오.
 - 세션 인계: `/clear`·`/new`·작업 전환·다른 에이전트로 넘기기 전에 `session-end` skill 을 실행하십시오.
 
 ### 3. 주요 개발 원칙 요약 (본문은 `CLAUDE.md` / 규칙 파일)
