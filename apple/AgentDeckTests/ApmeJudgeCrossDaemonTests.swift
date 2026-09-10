@@ -131,5 +131,114 @@ final class ApmeJudgeCrossDaemonTests: XCTestCase {
             // any refusal is the assertion — the body gate owns which one
         }
     }
+
+    // MARK: - #299 item 1: the per-endpoint "unsupported field" memory is gone
+    //
+    // Owner decision, 2026-09-10: both legs now retry a refused field ONCE,
+    // PER REQUEST, and remember nothing — no Set, no NSLock, nothing survives
+    // past the call that discovered the refusal. The old memory produced a
+    // HIGH/MEDIUM defect in four consecutive adversarial review rounds and
+    // defended against a server never once observed on this fleet.
+
+    /// The MLX leg's full ladder: `repetition_penalty` refused, then
+    /// `response_format` refused, then success — three requests, in that
+    /// order — and a SECOND call to the identical endpoint pays the same cost
+    /// again because nothing was written down the first time.
+    func testMlxJudgeDropsPenaltyThenJsonModePerRequestAndRemembersNothing() async {
+        let url = URL(string: "http://127.0.0.1:65889/v1/chat/completions")!
+        var config = ApmeJudgeConfig()
+        config.endpoint = url.absoluteString
+        config.model = "test-model"          // skips the /v1/models auto-detect
+        let verdict = #"{"choices":[{"message":{"content":"{\"overall\":0.8}"}}]}"#
+
+        let t = ApmeParseJudgeTests.ScriptedTransport([.clientError(400), .clientError(400), .ok(verdict)])
+        let text = await ApmeJudgeMlx.withTransportForTests({ b, u in t.handle(b, u) }) {
+            await ApmeJudgeMlx.judge(prompt: "p", config: config)
+        }
+        XCTAssertEqual(text, verdict)
+        XCTAssertEqual(t.sent.count, 3)
+        // Request 1: both fields.
+        XCTAssertTrue(t.sent[0].keys.contains("repetition_penalty"))
+        XCTAssertTrue(t.sent[0].keys.contains("response_format"))
+        // Request 2: penalty dropped first (non-standard, cheaper to lose).
+        XCTAssertFalse(t.sent[1].keys.contains("repetition_penalty"))
+        XCTAssertTrue(t.sent[1].keys.contains("response_format"))
+        // Request 3: response_format dropped too.
+        XCTAssertFalse(t.sent[2].keys.contains("repetition_penalty"))
+        XCTAssertFalse(t.sent[2].keys.contains("response_format"))
+
+        // A second call to the SAME endpoint starts fresh with both fields —
+        // nothing survived the first call.
+        let t2 = ApmeParseJudgeTests.ScriptedTransport([.ok(verdict)])
+        let text2 = await ApmeJudgeMlx.withTransportForTests({ b, u in t2.handle(b, u) }) {
+            await ApmeJudgeMlx.judge(prompt: "p", config: config)
+        }
+        XCTAssertEqual(text2, verdict)
+        XCTAssertEqual(t2.sent.count, 1)
+        XCTAssertTrue(t2.sent[0].keys.contains("repetition_penalty"))
+        XCTAssertTrue(t2.sent[0].keys.contains("response_format"))
+    }
+
+    /// Thread-safe accumulator for a `@Sendable` transport closure — the
+    /// closures below run inside `ApmeJudgeOpenAI`'s transport seam, which is
+    /// `@Sendable`, so a plain captured `var` cannot be mutated from it.
+    private final class Recorder<T>: @unchecked Sendable {
+        private var values: [T] = []
+        private let lock = NSLock()
+        func append(_ v: T) { lock.lock(); values.append(v); lock.unlock() }
+        func snapshot() -> [T] { lock.lock(); defer { lock.unlock() }; return values }
+        func reset() { lock.lock(); values.removeAll(); lock.unlock() }
+    }
+
+    /// The OpenAI-compatible leg's `response_format` retry, mirroring the
+    /// Node `callOpenAICompatible` ladder: refused once, retried without it,
+    /// and a second call to the same endpoint offers the field again.
+    func testOpenAILegRetriesResponseFormatPerRequestAndRemembersNothing() async throws {
+        let config = openAIConfig()
+        let sawJsonMode = Recorder<Bool>()
+
+        let text = try await ApmeJudgeOpenAI.withTransportForTests({ req in
+            let body = (try? JSONSerialization.jsonObject(with: req.httpBody ?? Data())) as? [String: Any] ?? [:]
+            let jsonMode = body["response_format"] != nil
+            sawJsonMode.append(jsonMode)
+            if jsonMode {
+                return (Data("unknown field response_format".utf8), 400)
+            }
+            return (Self.verdictBody(), 200)
+        }) {
+            try await ApmeJudgeOpenAI.judgeThrowing(prompt: "judge", config: config)
+        }
+        XCTAssertTrue(text.contains("overall"))
+        XCTAssertEqual(sawJsonMode.snapshot(), [true, false], "one probe, one retry without the field")
+
+        // A second call must start again WITH the field — nothing remembered.
+        sawJsonMode.reset()
+        _ = try await ApmeJudgeOpenAI.withTransportForTests({ req in
+            let body = (try? JSONSerialization.jsonObject(with: req.httpBody ?? Data())) as? [String: Any] ?? [:]
+            sawJsonMode.append(body["response_format"] != nil)
+            return (Self.verdictBody(), 200)
+        }) {
+            try await ApmeJudgeOpenAI.judgeThrowing(prompt: "judge", config: config)
+        }
+        XCTAssertEqual(sawJsonMode.snapshot(), [true], "the second call must offer response_format again")
+    }
+
+    /// Documented scope, not an omission (bridge/src/apme/runner.ts,
+    /// `callOpenAICompatible`): this leg never sends `repetition_penalty`,
+    /// whatever the user configured, because it also serves hosted providers
+    /// (OpenRouter etc.) that DO honour the field.
+    func testOpenAILegNeverSendsRepetitionPenalty() async throws {
+        var config = openAIConfig()
+        config.repetitionPenalty = 1.3
+        let sawPenalty = Recorder<Bool>()
+        _ = try await ApmeJudgeOpenAI.withTransportForTests({ req in
+            let body = (try? JSONSerialization.jsonObject(with: req.httpBody ?? Data())) as? [String: Any] ?? [:]
+            sawPenalty.append(body["repetition_penalty"] != nil)
+            return (Self.verdictBody(), 200)
+        }) {
+            try await ApmeJudgeOpenAI.judgeThrowing(prompt: "judge", config: config)
+        }
+        XCTAssertFalse(sawPenalty.snapshot().contains(true))
+    }
 }
 #endif

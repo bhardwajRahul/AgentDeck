@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { callJudge, clearJudgeEndpointCachesForTests } from '../apme/runner.js';
+import { callJudge } from '../apme/runner.js';
 import type { ApmeJudgeConfig } from '../apme/settings.js';
 
 // The judge prompt asks for strict JSON and the runner parses the reply as
@@ -52,7 +52,6 @@ const openAiCfg: ApmeJudgeConfig = {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'apme-json-mode-'));
   process.env.AGENTDECK_DATA_DIR = tmpDir;
-  clearJudgeEndpointCachesForTests();
 });
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
@@ -77,23 +76,24 @@ describe('judge JSON mode', () => {
     expect(calls[0].body.max_tokens).toBe(1024);
   });
 
-  it('converges on a server that refuses JSON mode, without ever writing off a field it did not refuse permanently', async () => {
+  // Owner decision (#299 item 1, 2026-09-10): the per-endpoint "unsupported
+  // field" memory is DELETED. Retry once per request when a field is refused
+  // — remember nothing. A strict server therefore costs the SAME extra
+  // request on every call, forever; nothing converges to a cheaper steady
+  // state, and nothing needs to (the memory itself was the defect: it
+  // produced a HIGH/MEDIUM finding in four consecutive adversarial review
+  // rounds and defended against a server this fleet never once observed).
+  it('pays the same per-request ladder on every call — nothing converges, nothing is remembered', async () => {
     // Two non-standard-ish fields ride this request, so a 400 is ambiguous and
     // the ladder gives them up in order of likelihood: `repetition_penalty`
     // first (not an OpenAI field at all, and losing it only raises the cut
     // rate), then `response_format` (losing it costs the strict-JSON request).
-    //
-    // When BOTH came off before the request succeeded, the evidence does not
-    // say which one mattered — so the rule is not "guess right", it is "make
-    // the CHEAP mistake". Blaming the penalty costs the cut-rate improvement
-    // and self-corrects on the next call; blaming JSON mode is permanent and
-    // never re-probed. This test is that convergence, call by call.
     const calls = mockFetch([
       { status: 400, text: 'unknown field response_format' },
       { status: 400, text: 'unknown field response_format' },
       { status: 200, body: verdict },
       { status: 400, text: 'unknown field response_format' },
-      { status: 200, body: verdict },
+      { status: 400, text: 'unknown field response_format' },
       { status: 200, body: verdict },
     ]);
 
@@ -106,31 +106,27 @@ describe('judge JSON mode', () => {
     expect(calls[1].body.repetition_penalty).toBeUndefined();
     expect(calls[1].body.response_format).toEqual({ type: 'json_object' });
     expect(calls[2].body.response_format).toBeUndefined();
+    expect(calls[2].body.repetition_penalty).toBeUndefined();
 
-    // Call 2 — the penalty was blamed, so it is gone; JSON mode was NOT
-    // written off on ambiguous evidence, so it is asked for again. This time
-    // the 400 is unambiguous (only one field left to give up), and THAT is
-    // what earns the json-mode memory.
-    expect(await callJudge('p', mlxCfg)).toContain('overall');
-    expect(calls).toHaveLength(5);
-    expect(calls[3].body.repetition_penalty).toBeUndefined();
-    expect(calls[3].body.response_format).toEqual({ type: 'json_object' });
-    expect(calls[4].body.response_format).toBeUndefined();
-
-    // Call 3 — converged: one request, neither field.
+    // Call 2 — SAME endpoint, identical server behaviour. Nothing was written
+    // down after call 1, so this pays the identical three-request cost again,
+    // in the same order: both fields first, penalty dropped, then JSON mode.
     expect(await callJudge('p', mlxCfg)).toContain('overall');
     expect(calls).toHaveLength(6);
+    expect(calls[3].body.response_format).toEqual({ type: 'json_object' });
+    expect(calls[3].body.repetition_penalty).toBeDefined();
+    expect(calls[4].body.repetition_penalty).toBeUndefined();
+    expect(calls[4].body.response_format).toEqual({ type: 'json_object' });
     expect(calls[5].body.response_format).toBeUndefined();
     expect(calls[5].body.repetition_penalty).toBeUndefined();
   });
 
-  it('writes off neither field when giving them up did not help', async () => {
+  it('surfaces its own status after 3 attempts, and the next call starts fresh with both fields', async () => {
     // A 400 that has nothing to do with either field — a wrong model id, an
     // auth proxy, any rejected request. The ladder walks the whole way down
-    // and still fails, which PROVES both guesses were wrong. Before the
-    // evidence rule, that single call marked the endpoint for both fields for
-    // the life of the process: the server recovers and never gets JSON mode
-    // again.
+    // and still fails. Nothing is written down, so this proves nothing about
+    // either field either way — it just spends its 3-attempt budget and
+    // throws with the status that caused it.
     const calls = mockFetch([
       { status: 400, text: "the model 'nope' does not exist" },
       { status: 400, text: "the model 'nope' does not exist" },
@@ -141,13 +137,14 @@ describe('judge JSON mode', () => {
       .rejects.toThrow(/MLX judge HTTP 400/);
     expect(calls).toHaveLength(3);
 
-    // The server is healthy now. Both fields must come back.
+    // The server is healthy now. Both fields must come back — there was never
+    // anything to "come back", since nothing was ever taken away.
     expect(await callJudge('p', { ...mlxCfg, endpoint: 'http://127.0.0.1:8801' })).toContain('overall');
     expect(calls[3].body.response_format).toEqual({ type: 'json_object' });
     expect(calls[3].body.repetition_penalty).toBeDefined();
   });
 
-  it('remembers per endpoint, so one refusing server does not disable the others', async () => {
+  it('one endpoint refusing the field never touches another — there is no shared memory to leak', async () => {
     const calls = mockFetch([
       { status: 400, text: 'unknown field response_format' },
       { status: 200, body: verdict },
@@ -169,9 +166,8 @@ describe('judge JSON mode', () => {
     expect(await callJudge(longPrompt, mlxCfg)).toContain('overall');
     expect(calls).toHaveLength(2);
     expect(calls[1].body.response_format).toEqual({ type: 'json_object' });
-    // …and the penalty survives too: an overflow says nothing about the field,
-    // so giving it up here would spend the endpoint's penalty memory on a
-    // diagnosis that was never made.
+    // …and the penalty survives too: an overflow says nothing about the
+    // field, so dropping it here would be a diagnosis the ladder never made.
     expect(calls[1].body.repetition_penalty).toBeDefined();
     expect(String((calls[1].body.messages as Array<{ content: string }>)[1].content).length)
       .toBeLessThan(longPrompt.length);

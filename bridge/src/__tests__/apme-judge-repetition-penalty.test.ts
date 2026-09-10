@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { callJudgeWithMeta, clearJudgeEndpointCachesForTests, MLX_JUDGE_REPETITION_PENALTY } from '../apme/runner.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { callJudgeWithMeta, MLX_JUDGE_REPETITION_PENALTY } from '../apme/runner.js';
 import { DEFAULT_APME_CONFIG, loadApmeConfig } from '../apme/settings.js';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,15 +15,6 @@ const mlxCfg = (over: Record<string, unknown> = {}) => ({
 });
 const sentBody = (f: ReturnType<typeof vi.fn>) =>
   JSON.parse((f.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
-
-// The endpoint memories are MODULE-level and survive between tests, and this
-// file avoids collisions by giving each describe its own port — isolation by
-// coincidence. Round 4 added this reset inside the FIRST describe only, which
-// left the later blocks exactly as exposed: with a process-global penalty
-// memory, `remembers the endpoint so the cost is one request` passed because
-// an earlier test had already switched the penalty off, not because the
-// scoping worked. Hoisted to file scope so every block starts clean.
-beforeEach(() => { clearJudgeEndpointCachesForTests(); });
 
 describe('MLX judge repetition penalty', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -145,33 +136,6 @@ describe('the retry ladder allows every diagnosis', () => {
     expect(String((seen[3].messages as Array<{ content: string }>)[1].content).length).toBeLessThan(20_000);
   });
 
-  it('writes nothing off when the prompt was compacted after a field came off', async () => {
-    // Two changes between the failing request and the succeeding one: the
-    // field is gone AND the prompt no longer overflows. The second is a
-    // complete explanation by itself, so blaming the field would mark this
-    // endpoint permanently for a prompt that happened to be too long once.
-    const calls: Array<Record<string, unknown>> = [];
-    const f = vi.fn(async (_u: string, o: RequestInit) => {
-      const body = JSON.parse(o.body as string);
-      calls.push(body);
-      const content = (body.messages as Array<{ content: string }>)[1].content;
-      if ('repetition_penalty' in body) return new Response('unknown field', { status: 400 });
-      if (content.length > 15_000) {
-        return new Response('Request needs 9000 context tokens (8000 prompt + 800 max generation), but MAX_KV_SIZE is 4096', { status: 400 });
-      }
-      return ok();
-    });
-    vi.stubGlobal('fetch', f);
-    const cfg = mlxCfg({ endpoint: 'http://127.0.0.1:9991/v1/chat/completions' });
-    const { text } = await callJudgeWithMeta('z'.repeat(20_000), cfg);
-    expect(text).toContain('overall');
-    const firstRun = calls.length;
-
-    // The next call must probe the penalty again: nothing was proven about it.
-    await callJudgeWithMeta('short prompt', cfg);
-    expect(calls[firstRun]).toHaveProperty('repetition_penalty');
-  });
-
   it('stops when the prompt is already at the compaction target instead of resending it', async () => {
     // `compacted === body` means another pass would post byte-identical bytes.
     // Without the break the loop spends its remaining attempts on a request
@@ -238,7 +202,11 @@ describe('a server that refuses repetition_penalty', () => {
     expect(seen[1]).toHaveProperty('response_format');
   });
 
-  it('remembers the endpoint so the cost is one request, not one per call', async () => {
+  // Owner decision (#299 item 1, 2026-09-10): the per-endpoint "unsupported
+  // field" memory is DELETED. A strict server costs one extra request on
+  // EVERY call, forever — never remembered, never amortized across calls or
+  // scoped per endpoint, because there is no memory left to scope.
+  it('costs one extra request on every call — nothing is remembered between calls', async () => {
     const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
     const f = vi.fn(async (u: string, o: RequestInit) => {
       const body = JSON.parse(o.body as string);
@@ -249,41 +217,16 @@ describe('a server that refuses repetition_penalty', () => {
     vi.stubGlobal('fetch', f);
     const cfg = mlxCfg({ endpoint: 'http://127.0.0.1:9998/v1/chat/completions' });
     await callJudgeWithMeta('judge', cfg);
-    const afterFirst = seen.length;
-    await callJudgeWithMeta('judge', cfg);
-    // Second call must not re-probe: one extra request, not two.
-    expect(seen.length - afterFirst).toBe(1);
-    // Assert the SHAPES, not only the count — a count alone passes just as
-    // happily when the penalty was switched off globally by an earlier test,
-    // which is how a process-global memory hid behind this assertion.
+    // First call: two requests (probe, then the field dropped).
+    expect(seen).toHaveLength(2);
     expect(seen[0].body).toHaveProperty('repetition_penalty');
     expect(seen[1].body).not.toHaveProperty('repetition_penalty');
-    expect(seen[2].body).not.toHaveProperty('repetition_penalty');
-  });
 
-  it('scopes that memory to the endpoint, so one strict server does not disarm the rest', async () => {
-    // The penalty memory had no scoping test at all: making it process-global
-    // left the whole suite green, while the same mutation on the json-mode
-    // memory went red in two places. A one-sided gate is how an asymmetry
-    // survives a green suite.
-    const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
-    const f = vi.fn(async (u: string, o: RequestInit) => {
-      const body = JSON.parse(o.body as string);
-      seen.push({ url: u, body });
-      // ONLY the strict endpoint refuses the field.
-      if (u.includes(':9994') && 'repetition_penalty' in body) {
-        return new Response('unknown field', { status: 400 });
-      }
-      return ok();
-    });
-    vi.stubGlobal('fetch', f);
-    await callJudgeWithMeta('judge', mlxCfg({ endpoint: 'http://127.0.0.1:9994/v1/chat/completions' }));
-    expect(seen.filter((c) => c.url.includes(':9994'))).toHaveLength(2);
-
-    // A DIFFERENT endpoint must still be offered the penalty.
-    await callJudgeWithMeta('judge', mlxCfg({ endpoint: 'http://127.0.0.1:9993/v1/chat/completions' }));
-    const other = seen.filter((c) => c.url.includes(':9993'));
-    expect(other).toHaveLength(1);
-    expect(other[0].body).toHaveProperty('repetition_penalty');
+    await callJudgeWithMeta('judge', cfg);
+    // Second call to the SAME strict endpoint must probe again — two more
+    // requests, not one. A memory would have made this one.
+    expect(seen).toHaveLength(4);
+    expect(seen[2].body).toHaveProperty('repetition_penalty');
+    expect(seen[3].body).not.toHaveProperty('repetition_penalty');
   });
 });
