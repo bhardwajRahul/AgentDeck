@@ -5,7 +5,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createPublicKey, createPrivateKey, sign as cryptoSign, randomUUID } from 'crypto';
 import WebSocket from 'ws';
-import { debug, logError } from '../logger.js';
+import { debug, log, logError } from '../logger.js';
 import { summarizeResponse } from '../timeline-summarizer.js';
 import { extractTopicHint, extractTopicHintWithKind, promptSnippetFallback, prepareMarkdownDetail } from '@agentdeck/shared';
 import {
@@ -50,6 +50,7 @@ import {
 } from '@agentdeck/shared';
 import { OPENCLAW_CAPABILITIES, OPENCLAW_GATEWAY_PORT } from '../types.js';
 import { fetchModelCatalog, getDefaultModelName, invalidateModelCache } from '../model-catalog.js';
+import { catalogFromModelsList, catalogRetryDelayMs, type ResolvedModelCatalog } from '../openclaw-model-catalog.js';
 import { getApme } from '../apme/index.js';
 import { ApmeCollector } from '../apme/collector.js';
 import {
@@ -170,6 +171,13 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
     method: string;
   }>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private catalogRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private catalogAttempt = 0;
+  /** Bumped on every connect and disconnect: a fetch that started under an
+   *  older generation belongs to a link that is gone and must not emit. */
+  private catalogGeneration = 0;
+  /** Methods the Gateway advertised in hello-ok (`features.methods`), when it did. */
+  private gatewayMethods: Set<string> | null = null;
   private projectName: string | null = null;
   private alive = false;
   private shutdownRequested = false;
@@ -1205,6 +1213,10 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    // Not just the timer: a fetch in flight (the CLI fallback runs on its own
+    // 15 s subprocess clock) must find the generation moved, because shutdown
+    // must not depend on the socket's close callback firing first.
+    this.invalidateCatalogFetch();
 
     // Cancel any pending idle-gap timer so it doesn't fire after shutdown.
     this.clearAllIdleGapTimers();
@@ -1370,6 +1382,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       debug('adapter:openclaw', 'Gateway disconnected');
       const wasAlive = this.alive;
       this.alive = false;
+      this.invalidateCatalogFetch();
       // Pending approvals are Gateway-process state: a reconnect issues new
       // ids, so holding the old one would offer buttons that resolve to
       // "unknown or expired approval id". Unlike the turn-end paths below,
@@ -2100,6 +2113,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       resolve: (payload) => {
         debug('adapter:openclaw', 'Handshake complete (hello-ok)');
         this.alive = true;
+        this.catalogGeneration += 1;
         this.reconnectDelay = 1000;
 
         this.emitAdapterEvent({ source: 'connection', status: 'connected' });
@@ -2113,6 +2127,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
             const methods = features.methods as string[] | undefined;
             const events = features.events as string[] | undefined;
             debug('adapter:openclaw', `Gateway features: ${methods?.length || 0} methods, ${events?.length || 0} events`);
+            this.gatewayMethods = Array.isArray(methods) ? new Set(methods.filter((m) => typeof m === 'string')) : null;
           }
         }
 
@@ -2237,44 +2252,116 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
     }
   }
 
-  /** Fetch model catalog via CLI and emit events. Retries once on failure. */
-  private async emitModelCatalog(retry = true): Promise<void> {
-    // Invalidate cache on reconnect to get fresh data
-    invalidateModelCache();
+  private clearCatalogRetry(): void {
+    if (this.catalogRetryTimer) {
+      clearTimeout(this.catalogRetryTimer);
+      this.catalogRetryTimer = null;
+    }
+  }
 
+  /**
+   * The link is gone: whatever catalog fetch is in flight belongs to it. A
+   * fast reconnect starts a fresh fetch, and without this the old one — often
+   * the slower CLI fallback — resolved afterwards and overwrote the fresh
+   * catalog with a stale one (adversarial review, 2026-09-11).
+   */
+  private invalidateCatalogFetch(): void {
+    this.catalogGeneration += 1;
+    this.gatewayMethods = null;
+    this.clearCatalogRetry();
+  }
+
+  /** The Gateway's own `models.list` — the socket we already hold, no subprocess. */
+  private async fetchCatalogViaGateway(): Promise<ResolvedModelCatalog | null> {
+    // A Gateway that advertised its methods and left this one out is asked
+    // nothing: a build that drops unknown methods on the floor would cost the
+    // full RPC timeout on every retry tick, forever.
+    if (this.gatewayMethods && !this.gatewayMethods.has('models.list')) {
+      debug('adapter:openclaw', 'Gateway does not advertise models.list — using the CLI catalog');
+      return null;
+    }
+    try {
+      const result = await this.rpcCall('models.list', {});
+      const catalog = catalogFromModelsList(result);
+      if (!catalog) debug('adapter:openclaw', 'models.list answered without a usable model list');
+      return catalog;
+    } catch (err) {
+      debug('adapter:openclaw', `models.list RPC failed: ${err}`);
+      return null;
+    }
+  }
+
+  /** `openclaw models list --json` — kept as the fallback for a Gateway build without `models.list`. */
+  private async fetchCatalogViaCli(): Promise<ResolvedModelCatalog | null> {
+    invalidateModelCache();
     try {
       const catalog = await fetchModelCatalog();
-      if (!catalog) {
-        if (retry && this.alive) {
-          debug('adapter:openclaw', 'Model catalog empty — retrying in 10s');
-          setTimeout(() => this.emitModelCatalog(false), 10_000);
-        }
-        return;
-      }
-
-      // Emit model_info for default model name (StateMachine uses this)
-      const defaultModel = await getDefaultModelName();
-      if (defaultModel) {
-        this.emitAdapterEvent({
-          source: 'parser',
-          event: 'model_info',
-          data: { model: defaultModel, plan: null },
-        });
-      }
-
-      // Emit model_catalog metadata for the full list
-      this.emitAdapterEvent({
-        source: 'metadata',
-        event: 'model_catalog',
-        data: { models: catalog.entries },
-      });
+      if (!catalog) return null;
+      return { entries: catalog.entries, defaultModel: await getDefaultModelName() };
     } catch (err) {
-      debug('adapter:openclaw', `Model catalog fetch failed: ${err}`);
-      if (retry && this.alive) {
-        debug('adapter:openclaw', 'Retrying model catalog in 10s');
-        setTimeout(() => this.emitModelCatalog(false), 10_000);
-      }
+      debug('adapter:openclaw', `Model catalog CLI fetch failed: ${err}`);
+      return null;
     }
+  }
+
+  /**
+   * Fetch the model catalog and emit `model_info` + `model_catalog`.
+   *
+   * Gateway RPC first, CLI second, and a failure is never final while the
+   * adapter is alive: the previous shape (CLI only, 5 s budget, one retry ten
+   * seconds later, then nothing until the next reconnect) left every surface
+   * without a catalog for the connection's whole lifetime when both attempts
+   * happened to land under build load (2026-09-11). Retries follow
+   * `catalogRetryDelayMs` — quick, then every five minutes — and stop on
+   * shutdown or disconnect (`alive` is re-checked on every tick).
+   */
+  private async emitModelCatalog(): Promise<void> {
+    this.clearCatalogRetry();
+    if (!this.alive) return;
+    const generation = this.catalogGeneration;
+
+    const catalog = await this.fetchCatalogViaGateway() ?? await this.fetchCatalogViaCli();
+    // The link this fetch started on is gone (or was replaced): its result,
+    // success or failure, is not ours to emit or to retry.
+    if (generation !== this.catalogGeneration || !this.alive || this.shutdownRequested) return;
+    if (!catalog) {
+      if (!this.alive || this.shutdownRequested) return;
+      const delay = catalogRetryDelayMs(this.catalogAttempt);
+      this.catalogAttempt += 1;
+      // The first miss is routine (the Gateway is often busy right after
+      // connect); from the second on it is worth a line in the daemon log,
+      // because until it succeeds the Gateway row shows no model and every
+      // surface shows no catalog.
+      const line = `OpenClaw model catalog unavailable (models.list RPC and CLI both failed, attempt ${this.catalogAttempt}) — retrying in ${Math.round(delay / 1000)}s`;
+      if (this.catalogAttempt >= 2) log(`[agentdeck] ${line}`); else debug('adapter:openclaw', line);
+      this.catalogRetryTimer = setTimeout(() => {
+        this.catalogRetryTimer = null;
+        this.emitModelCatalog().catch((err) => debug('adapter:openclaw', `emitModelCatalog retry error: ${err}`));
+      }, delay);
+      this.catalogRetryTimer.unref?.();
+      return;
+    }
+
+    if (this.catalogAttempt > 0) {
+      log(`[agentdeck] OpenClaw model catalog recovered after ${this.catalogAttempt} failed attempt(s): ${catalog.entries.length} models`);
+    }
+    this.catalogAttempt = 0;
+
+    // Emit model_info for the configured default model (StateMachine uses this)
+    if (catalog.defaultModel) {
+      this.emitAdapterEvent({
+        source: 'parser',
+        event: 'model_info',
+        data: { model: catalog.defaultModel, plan: null },
+      });
+    }
+
+    // Emit model_catalog metadata for the full list
+    this.emitAdapterEvent({
+      source: 'metadata',
+      event: 'model_catalog',
+      data: { models: catalog.entries },
+    });
   }
 
   /**

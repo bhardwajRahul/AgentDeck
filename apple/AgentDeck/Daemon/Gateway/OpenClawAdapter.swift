@@ -170,6 +170,18 @@ actor OpenClawAdapter {
     private let gatewayUrl: String
     private var isConnected = false
     private var isStopping = false
+    /// Catalog retry — see `emitModelCatalog`. Cancelled on stop and on every
+    /// fresh fetch so a reconnect never races a sleeping retry.
+    private var catalogRetryTask: Task<Void, Never>?
+    private var catalogAttempt = 0
+    /// Bumped on every connect and disconnect: a fetch that started under an
+    /// older generation belongs to a link that is gone and must not emit
+    /// (actor reentrancy lets it resume after a fresh fetch already did).
+    private var catalogGeneration = 0
+    /// Quick at first (the Gateway is usually just busy right after connect),
+    /// then every five minutes for as long as the adapter lives. Mirror of Node
+    /// `CATALOG_RETRY_LADDER_MS` (bridge/src/openclaw-model-catalog.ts).
+    static let catalogRetryLadderSeconds: [Double] = [10, 30, 60, 120, 300]
     private var pairingRequired = false
     /// Set after a `DEVICE_AUTH_INVALID` response with a shared token configured.
     /// Suppresses device-auth on the next connect so a Gateway running in
@@ -323,6 +335,9 @@ actor OpenClawAdapter {
 
     func stop() {
         isStopping = true
+        catalogGeneration += 1
+        catalogRetryTask?.cancel()
+        catalogRetryTask = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         sessionsPollTask?.cancel()
@@ -370,6 +385,10 @@ actor OpenClawAdapter {
             // RPC that the old socket would never get to answer.
             clearPendingRPCs(for: existing, reason: "Socket replaced before response")
             wsTask = nil
+            // The replaced socket's catalog fetch (if any) belongs to it.
+            catalogGeneration += 1
+            catalogRetryTask?.cancel()
+            catalogRetryTask = nil
         }
         let task = URLSession.shared.webSocketTask(with: url)
         self.wsTask = task
@@ -787,6 +806,7 @@ actor OpenClawAdapter {
             emitAuthStatus("connected", requestId: nil, message: nil)
             requestBaselineState()
             requestSessionsList()
+            catalogGeneration += 1
             Task { await self.emitModelCatalog() }
             // Catch up on approvals already waiting. `exec.approval.requested`
             // is a broadcast and is never replayed, so without this a daemon
@@ -855,6 +875,9 @@ actor OpenClawAdapter {
         }
         isConnected = false
         wsTask = nil
+        catalogGeneration += 1
+        catalogRetryTask?.cancel()
+        catalogRetryTask = nil
         sessionsSubscribed = false
         sessionsPollTask?.cancel()
         sessionsPollTask = nil
@@ -1873,16 +1896,38 @@ actor OpenClawAdapter {
         _onEvent?(event)
     }
 
-    private func emitModelCatalog(retry: Bool = true) async {
+    /// Fetch the model catalog and emit it. A failure is never final while the
+    /// adapter is alive: one retry ten seconds after connect (the previous
+    /// shape) left the Gateway row without a model and every surface without a
+    /// catalog for the connection's whole lifetime whenever both attempts
+    /// landed under load (2026-09-11, Node daemon; same shape here).
+    private func emitModelCatalog() async {
+        catalogRetryTask?.cancel()
+        catalogRetryTask = nil
+        guard !isStopping else { return }
+        let generation = catalogGeneration
         guard let (entries, defaultModel) = await fetchModelCatalog() else {
-            if retry && !isStopping {
-                DaemonLogger.shared.debug("OpenClaw", "Model catalog empty — retrying in 10s")
-                try? await Task.sleep(for: .seconds(10))
-                guard !Task.isCancelled, !isStopping else { return }
-                await emitModelCatalog(retry: false)
+            guard !isStopping, generation == catalogGeneration else { return }
+            let rung = min(catalogAttempt, Self.catalogRetryLadderSeconds.count - 1)
+            let delay = Self.catalogRetryLadderSeconds[rung]
+            catalogAttempt += 1
+            // The first miss is routine; from the second on it earns a log line,
+            // because until it succeeds no surface shows a model or a catalog.
+            let line = "OpenClaw model catalog unavailable (models.list, attempt \(catalogAttempt)) — retrying in \(Int(delay))s"
+            if catalogAttempt >= 2 { DaemonLogger.shared.info(line) } else { DaemonLogger.shared.debug("OpenClaw", line) }
+            catalogRetryTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                // `emitModelCatalog` re-checks `isStopping` on entry.
+                guard !Task.isCancelled, let self else { return }
+                await self.emitModelCatalog()
             }
             return
         }
+        guard generation == catalogGeneration else { return }
+        if catalogAttempt > 0 {
+            DaemonLogger.shared.info("OpenClaw model catalog recovered after \(catalogAttempt) failed attempt(s): \(entries.count) models")
+        }
+        catalogAttempt = 0
         _onEvent?([
             "type": "model_catalog",
             "models": entries,
@@ -1905,8 +1950,15 @@ actor OpenClawAdapter {
             return nil
         }
         let entries = models.compactMap { model -> [String: Any]? in
+            // Live Gateway shape: bare `id` + `provider`. Join them the way the
+            // CLI `key` was (`zai/glm-5.3`, provider prefixed even when the id
+            // carries a slash) — the form `mainSessionModelKey` is built in, so
+            // the display-name lookup below actually matches. Node mirror:
+            // bridge/src/openclaw-model-catalog.ts.
+            let provider = Self.stringValue(model["provider"])
+            let id = Self.stringValue(model["id"])
             let key = model["key"] as? String
-                ?? model["id"] as? String
+                ?? (id.flatMap { id in provider.map { "\($0)/\(id)" } ?? id })
                 ?? [model["provider"] as? String, model["name"] as? String].compactMap { $0 }.joined(separator: "/")
             let name = model["name"] as? String
                 ?? model["title"] as? String
