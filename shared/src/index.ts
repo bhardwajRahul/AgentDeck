@@ -33,6 +33,7 @@ export * from './svg-renderers/index.js';
 export * from './d200h-layout.js';
 export * from './idotmatrix-identity.js';
 export * from './llm-settings.js';
+export * from './mlx-safety.js';
 export * from './eval-schema.js';
 export * from './sample.js';
 export * from './apme-graph.js';

@@ -15,7 +15,8 @@
 import type { ApmeStore } from './store.js';
 import {
   loadMlxSettings,
-  resolveMlxModel,
+  guardedMlxFetch,
+  mlxBaseUrl,
   APME_CLASSIFIER_SYSTEM_PROMPT,
   APME_CLASSIFIER_MAX_TOKENS,
   APME_CLASSIFIER_TIMEOUT_MS,
@@ -289,26 +290,11 @@ async function classifyWithFoundationModels(userMsg: string): Promise<TaskCatego
  *  has already paid in GPU watts). Returns null on any failure. */
 async function classifyWithMlx(userMsg: string): Promise<TaskCategory | null> {
   try {
-    // Use the explicit llm.mlx pin before catalog discovery. mlx-vlm's model
-    // endpoint lists downloaded models, not just the loaded one; treating its
-    // first row as active can unload the operating model and hot-swap an old
-    // candidate. Only probe when the user has not pinned a model.
-    const pinnedModel = loadMlxSettings().model;
-    let probedModel: string | null = null;
-    const base = 'http://127.0.0.1:8800';
-    if (!pinnedModel) {
-      for (const path of ['/v1/models', '/models']) {
-        const mResp = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
-        if (mResp?.ok) {
-          const mJson = await mResp.json() as { data?: Array<{ id?: string }> };
-          const first = mJson.data?.find(m => m.id && !m.id.toLowerCase().includes('nanollava'))?.id;
-          if (first) { probedModel = first; break; }
-        }
-      }
-    }
-    const model = resolveMlxModel(probedModel);
+    const settings = loadMlxSettings();
+    const base = mlxBaseUrl(settings.endpoint);
+    const model = settings.model;
 
-    const resp = await fetch(`${base}/chat/completions`, {
+    const resp = await guardedMlxFetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

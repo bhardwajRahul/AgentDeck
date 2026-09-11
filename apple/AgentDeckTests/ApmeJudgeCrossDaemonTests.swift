@@ -65,6 +65,23 @@ final class ApmeJudgeCrossDaemonTests: XCTestCase {
         }
     }
 
+    func testNonMlxJudgeDoesNotLeakIntoMlxSettings() {
+        for backend in ["openai", "api", "foundationModels", "openclaw"] {
+            withSettings(["apme": ["judge": ["backend": backend, "endpoint": "https://other.invalid/v1", "model": "other"]]]) {
+                let config = ApmeSettings.loadMlxConfig()
+                XCTAssertEqual(config.endpoint, "http://127.0.0.1:8800")
+                XCTAssertNil(config.model)
+            }
+        }
+    }
+
+    func testExplicitDefaultMlxEndpointWinsOverLegacyEndpoint() {
+        withSettings(["llm": ["mlx": ["endpoint": "http://127.0.0.1:8800"]],
+                      "apme": ["judge": ["backend": "mlx", "endpoint": "http://other.invalid:8800"]]]) {
+            XCTAssertEqual(ApmeSettings.loadMlxConfig().endpoint, "http://127.0.0.1:8800")
+        }
+    }
+
     // MARK: - Which statuses are a verdict on the OpenAI-compatible leg
 
     private func openAIConfig() -> ApmeJudgeConfig {

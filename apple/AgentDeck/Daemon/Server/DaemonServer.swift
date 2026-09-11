@@ -1601,7 +1601,6 @@ final class DaemonServer {
     private var cachedMlxModels: [String] = []
     private var cachedMlxModelCatalog: [String] = []
     private var cachedJudgeBackendStatus: JudgeBackendStatus?
-    private var preferredMlxModelsEndpoint: String?
 
     // Backoff state for local LLM discovery. Probe functions read/update these;
     // the polling task reads `nextInterval` on every iteration so the sleep
@@ -10070,20 +10069,8 @@ final class DaemonServer {
     private func probeMLX() async {
         let previous = cachedMlxModels
         let previousCatalog = cachedMlxModelCatalog
-        let fallbackCandidates = [
-            "http://127.0.0.1:8800/v1/models",
-            "http://127.0.0.1:8800/models",
-        ]
-        // Once an endpoint has been resolved, prefer it exclusively. Only when
-        // discovery keeps failing do we broaden the search back to all
-        // fallbacks — this avoids burning 2 × N seconds on every poll cycle
-        // while the service is absent.
-        let candidates: [String]
-        if let preferred = preferredMlxModelsEndpoint, mlxFailureCount < Self.probeStaleThreshold {
-            candidates = [preferred]
-        } else {
-            candidates = Array(Set(([preferredMlxModelsEndpoint].compactMap { $0 }) + fallbackCandidates))
-        }
+        let base = try? MlxInference.base(ApmeSettings.loadMlxConfig().endpoint)
+        let candidates = base.map { [$0 + "/v1/models", $0 + "/models"] } ?? []
         var resolved: [String] = []
         var success = false
 
@@ -10105,7 +10092,6 @@ final class DaemonServer {
                     return nil
                 }.filter { !$0.lowercased().contains("nanollava") })).sorted()
                 if !resolved.isEmpty {
-                    preferredMlxModelsEndpoint = endpoint
                     success = true
                     break
                 }
@@ -10119,7 +10105,10 @@ final class DaemonServer {
             mlxNextInterval = Self.probeBaseInterval
             let pin = ApmeSettings.loadMlxConfig().model
             cachedMlxModelCatalog = resolved
-            cachedMlxModels = Self.pickMlxModels(catalog: resolved, pin: pin)
+            let config = ApmeSettings.loadMlxConfig()
+            if let resident = try? await MlxInference.shared.resolve(endpoint: config.endpoint, pin: pin) {
+                cachedMlxModels = [resident]
+            } else { cachedMlxModels = [] }
         } else {
             mlxFailureCount += 1
             mlxNextInterval = min(mlxNextInterval * 2, Self.probeMaxInterval)
@@ -10138,17 +10127,8 @@ final class DaemonServer {
     }
 
     private static func pickMlxModels(catalog: [String], pin: String?) -> [String] {
-        if let pin, catalog.contains(pin) {
-            return [pin]
-        }
-        let fallback = "mlx-community/Qwen3-1.7B-4bit"
-        if catalog.contains(fallback) {
-            return [fallback]
-        }
-        if let first = catalog.first {
-            return [first]
-        }
-        return []
+        guard let model = try? MlxSafetyRules.select(loadedKnown: false, loaded: nil, catalog: catalog, requested: pin) else { return [] }
+        return [model]
     }
 
     /// Probe the APME judge backend status. Returns a Sendable snapshot

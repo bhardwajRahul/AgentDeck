@@ -1,3 +1,4 @@
+import { withMlxResident } from './mlx-test-server.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -356,7 +357,7 @@ describe('callJudge foundationModels routing', () => {
 
   it('compacts and retries once when MLX reports an exact context overflow', async () => {
     const sentPrompts: string[] = [];
-    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = withMlxResident((async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
       sentPrompts.push(body.messages[1].content);
       if (sentPrompts.length === 1) {
@@ -368,7 +369,7 @@ describe('callJudge foundationModels routing', () => {
         JSON.stringify({ choices: [{ message: { content: '{"overall":0.6}' } }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
-    }) as typeof fetch;
+    }) as typeof fetch, 'gemma-test');
 
     const mod = await import('../apme/runner.js');
     const prompt = `rubric-start\n${'x'.repeat(40_000)}\nlatest-result`;

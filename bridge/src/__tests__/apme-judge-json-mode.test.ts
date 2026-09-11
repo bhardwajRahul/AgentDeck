@@ -1,3 +1,4 @@
+import { clearMlxSafetyForTests, clearMlxSettingsCache } from '@agentdeck/shared';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -25,6 +26,8 @@ function mockFetch(responses: Array<{ status: number; body?: unknown; text?: str
   let i = 0;
   globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
     const url = String(input);
+    if (url.endsWith('/health')) return Response.json({ loaded_model: 'test-model' });
+    if (url.endsWith('/metrics')) return Response.json({ summary: { in_flight: 0 } });
     // Model discovery (`/models`) is not a judge call — answer it and move on.
     if (url.endsWith('/models')) {
       return new Response(JSON.stringify({ data: [{ id: 'test-model' }] }), { status: 200 });
@@ -50,6 +53,8 @@ const openAiCfg: ApmeJudgeConfig = {
 };
 
 beforeEach(() => {
+  clearMlxSafetyForTests();
+  clearMlxSettingsCache();
   tmpDir = mkdtempSync(join(tmpdir(), 'apme-json-mode-'));
   process.env.AGENTDECK_DATA_DIR = tmpDir;
 });

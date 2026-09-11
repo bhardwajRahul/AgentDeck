@@ -1,3 +1,5 @@
+import { clearMlxSafetyForTests } from '@agentdeck/shared';
+import { withMlxResident } from './mlx-test-server.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -153,6 +155,7 @@ describe('classifyWithLlm()', () => {
   let settingsDir: string;
 
   beforeEach(() => {
+    clearMlxSafetyForTests();
     settingsDir = mkdtempSync(join(tmpdir(), 'apme-classifier-settings-'));
     process.env.AGENTDECK_DATA_DIR = settingsDir;
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({
@@ -178,7 +181,7 @@ describe('classifyWithLlm()', () => {
   it('uses the configured MLX pin without probing a stale download catalog', async () => {
     const urls: string[] = [];
     let sentModel = '';
-    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = withMlxResident((async (url: string | URL | Request, init?: RequestInit) => {
       urls.push(String(url));
       const body = JSON.parse(String(init?.body)) as { model: string };
       sentModel = body.model;
@@ -186,7 +189,7 @@ describe('classifyWithLlm()', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
-    }) as typeof fetch;
+    }) as typeof fetch, 'mlx-community/gemma-pinned');
 
     const category = await classifyWithLlm('Investigate the current behavior', makeBaseSignals());
 
@@ -199,10 +202,10 @@ describe('classifyWithLlm()', () => {
     mockedCallFoundationModelsHelper.mockImplementation(async () => {
       throw new Error('Foundation Models must not be reached when MLX already answered');
     });
-    globalThis.fetch = (async () => new Response(
+    globalThis.fetch = withMlxResident((async () => new Response(
       JSON.stringify({ choices: [{ message: { content: 'debugging' } }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )) as typeof fetch;
+    )) as typeof fetch, 'mlx-community/gemma-pinned');
 
     const category = await classifyWithLlm('Fix the failing test', makeBaseSignals());
     expect(category).toBe('debugging');
@@ -210,7 +213,7 @@ describe('classifyWithLlm()', () => {
   });
 
   it('falls through to Foundation Models when MLX is unreachable — the no-MLX-server Mac', async () => {
-    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+    globalThis.fetch = withMlxResident((async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch, 'mlx-community/gemma-pinned');
     mockedCallFoundationModelsHelper.mockResolvedValueOnce('coding');
 
     const category = await classifyWithLlm('Fix the failing test', makeBaseSignals());
@@ -241,11 +244,11 @@ describe('classifyWithLlm()', () => {
     clearMlxSettingsCache();
 
     const urls: string[] = [];
-    globalThis.fetch = (async (url: string | URL | Request) => {
+    globalThis.fetch = withMlxResident((async (url: string | URL | Request) => {
       urls.push(String(url));
       // MLX down — force the fall-through to `rules`.
       throw new Error('connection refused');
-    }) as typeof fetch;
+    }) as typeof fetch, 'mlx-community/gemma-pinned');
 
     const category = await classifyWithLlm('Investigate the current behavior', makeBaseSignals());
 
@@ -259,10 +262,10 @@ describe('classifyWithLlm()', () => {
   });
 
   it('falls back to the rule-based category when every backend answers with an out-of-vocabulary label', async () => {
-    globalThis.fetch = (async () => new Response(
+    globalThis.fetch = withMlxResident((async () => new Response(
       JSON.stringify({ choices: [{ message: { content: 'this is not a category at all' } }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )) as typeof fetch;
+    )) as typeof fetch, 'mlx-community/gemma-pinned');
 
     const signals = makeBaseSignals();
     const category = await classifyWithLlm('Investigate the current behavior', signals);
@@ -270,7 +273,7 @@ describe('classifyWithLlm()', () => {
   });
 
   it('falls through to the next backend when one answers but is unreachable, then to rules', async () => {
-    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
+    globalThis.fetch = withMlxResident((async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch, 'mlx-community/gemma-pinned');
     const signals = makeBaseSignals();
     const category = await classifyWithLlm('Investigate the current behavior', signals);
     expect(category).toBe(classify(signals));
@@ -278,14 +281,14 @@ describe('classifyWithLlm()', () => {
 
   it('classification calls use the shared max_tokens cap and never the judge budget', async () => {
     let sentMaxTokens: number | undefined;
-    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = withMlxResident((async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { max_tokens?: number };
       sentMaxTokens = body.max_tokens;
       return new Response(JSON.stringify({ choices: [{ message: { content: 'coding' } }] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
-    }) as typeof fetch;
+    }) as typeof fetch, 'mlx-community/gemma-pinned');
 
     await classifyWithLlm('Fix the bug', makeBaseSignals());
     expect(sentMaxTokens).toBe(APME_CLASSIFIER_MAX_TOKENS);

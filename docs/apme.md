@@ -1077,7 +1077,7 @@ start/completion·duration·summary 를 읽고, 양 데몬의 `/apme/graph` 는 
 | `deterministic.timeoutSec` | `180` | 단계별 하드 타임아웃 (초) |
 | `deterministic.commands` | `{}` | 언어별 명령 override |
 | `judge.backend` | `"mlx"` | `"mlx"` \| `"foundationModels"` \| `"openai"` \| `"openclaw"` \| `"api"` |
-| `judge.model` | `"qwen3-30b"` | 백엔드에서 사용할 모델 id. `qwen3-30b`는 legacy placeholder 로 취급되고, 실제 MLX fallback 은 `mlx-community/Qwen3-1.7B-4bit` |
+| `judge.model` | `"qwen3-30b"` | 백엔드에서 사용할 모델 id. `qwen3-30b`는 legacy placeholder 로 취급되고, 실제 모델은 서버 상주 모델로 검증하며 임의 fallback 모델을 로드하지 않음 |
 | `judge.sampleRate` | `1.0` | judge 호출 비율 (0..1) — 로컬 backend는 비용 0이므로 전수 평가 기본 |
 | `judge.onlyWhenDisagreement` | `false` | `true`면 결정론 clear pass는 judge skip |
 | `judge.fallbackToMlx` | `true` | `backend:"foundationModels"` 일 때 FM 경로가 없으면 MLX 로 재시도 |
@@ -1183,3 +1183,56 @@ axes 이름은 rubric 별로 다르다 (general / conversation / planning / rese
 ### OTel / 외부 표준화 정책
 
 이 schema 는 **OTel 호환이 목표가 아니다.** judge axes / vibe / composite_score 는 OpenTelemetry GenAI semantic conventions 에 1급 시민으로 매핑되지 않는다. lifecycle 정렬은 별도의 internal envelope (`shared/src/telemetry-envelope.ts`) 가 담당한다 — 자세한 근거: [otel-standardization-study.md](otel-standardization-study.md).
+
+
+## MLX 운영 안전성 (2026-09-11)
+
+`/v1/models`는 MLX-VLM에서 **다운로드 목록**이다. 첫 항목은 현재 상주 모델이 아니다.
+운영 서버에 다른 모델을 요청하면 이전 생성 스레드의 종료와 GPU 메모리 해제가 끝나기
+전에 교체 모델을 로드할 수 있다. 0.6.15의 10초 join 제한, HTTP 취소 뒤 계속되는
+non-stream 추론, 살아 있는 오류 프로세스를 재시작하지 않는 supervisor가 사고를 확대했다.
+
+AgentDeck의 Node·Swift MLX judge, classifier, summarizer, 모델 탐색은 다음 정책을 공유한다.
+
+- `/health.loaded_model`을 사용하고 명시된 pin과 다르면 추론 없이 거부한다. pin은
+  운영 중 모델 교체 권한이 아니다. 해당 기능이 없는 서버는 모델 목록이 단 하나일 때만
+  호환 경로를 허용한다. 서버가 실제 상주 상태를 제공하지 않으면 singleton도 최초 로드를
+  유발할 수 있으므로, 운영자는 모델을 미리 로드하고 서버 측 정책도 적용해야 한다.
+- 매 요청 전에 `/metrics`의 진행 중 요청·큐·마지막 OOM을 확인한다. `healthy` 문자열만으로
+  GPU 상태가 복구됐다고 판단하지 않는다. metrics 미지원(404/405)은 구형 서버 호환 경로다.
+- 같은 프로세스의 동일 endpoint에 대한 추론은 응답 본문 완료까지 한 건만 허용한다.
+  대기 큐는 만들지 않는다. POST 이후 timeout·전송 실패·5xx·429는 5분 동안 재시도를 막는다.
+  다른 프로그램이나 별도 daemon과의 원자적 동시 실행 제어는 서버 책임이다.
+- 모델을 추측하는 fallback을 제거한다. `apme.judge`의 legacy 설정은 backend가 MLX이거나
+  생략됐을 때만 상속한다. API·Ollama 등 다른 backend의 주소와 모델을 MLX에 섞지 않는다.
+- 초기 설정의 MLX 탐색도 상주 모델만 제시하고 MLX backend를 선택한다. 일반 OpenAI 호환
+  backend는 자동 선택 시 singleton만 허용한다. 명시적으로 선택한 일반 OpenAI 모델은
+  해당 서버의 정책을 따르므로 MLX 사용자는 MLX backend를 선택해야 한다.
+
+### 운영자용 서버 보호
+
+`scripts/mlx-server-guard.py`는 **검증된 mlx-vlm 0.6.15 전용** 실행 어댑터다.
+App Store 앱에 포함되거나 앱에서 실행되지 않으며 Python·MLX·supervisor를 설치하지 않는다.
+기존 서버의 Python으로 기존 서버 인자를 그대로 전달하되 `--model`과 메모리 예산을 명시한다.
+
+```sh
+AGENTDECK_MLX_MEMORY_GIB=32 /path/to/mlx/python scripts/mlx-server-guard.py \
+  --model mlx-community/gemma-4-26b-a4b-it-4bit [기존 서버 인자]
+```
+
+32GiB는 64GiB Studio에서 선택한 운영 예산이며 제품 기본값이 아니다. 각 장비에 맞춰
+모델·context·동시성을 포함한 예산을 정해야 한다. 어댑터는 모델/adapter/kind 교체를
+loader 진입 전 HTTP 409로 거부하고, allocator OOM이나 GPU high-water 예산 초과 시
+종료 코드 70으로 끝내 supervisor의 재시작을 유도한다. `set_memory_limit`는 swap 환경의
+강제 상한이 아니므로 별도 0.5초 감시를 둔다. 감시 주기 내 초과나 GPU 호출이 멈추는
+상황까지 완벽한 하드 상한을 보장하지 않는다. supervisor에는 restart throttle을 유지한다.
+버전이 달라지면 검증 없이 실행하지 않도록 차단한다. 업그레이드 시 adapter를 재검증한다.
+
+`scripts/measure-apme-classifier-backends.mjs`는 **실제 추론을 하는** 측정 도구다.
+DB read-only는 GPU 부하가 없다는 뜻이 아니다. 실험은 별도 endpoint에서 수행한다.
+`--endpoint`/`--model`을 지정할 수 있지만 운영 pin 교체는 허용하지 않으며 첫 MLX 실패에서
+중단한다. 기본값은 사용자 MLX 설정이다.
+
+회귀 검증: `pnpm build && pnpm typecheck && pnpm test`, `pnpm generate-mlx-safety --check`,
+macOS `MlxSafetyTests`와 `ApmeJudgeCrossDaemonTests`. 서버 어댑터의 교체 거부·OOM 종료·
+메모리 예산 테스트는 fake loader/allocator로 검증하며 CI에서 대형 모델을 로드하지 않는다.

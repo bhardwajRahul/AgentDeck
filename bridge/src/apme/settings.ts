@@ -114,7 +114,7 @@ export const DEFAULT_APME_CONFIG: ApmeConfig = {
   judge: {
     backend: 'mlx',
     // Legacy MLX placeholder retained so sanitizeForMlx() and older settings
-    // loaders still resolve through llm.mlx / probe / MLX_FALLBACK_MODEL.
+    // loaders still resolve through llm.mlx and verified server residency.
     model: 'qwen3-30b',
     sampleRate: 1.0,
     onlyWhenDisagreement: false,

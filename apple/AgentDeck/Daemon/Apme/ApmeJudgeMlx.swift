@@ -98,9 +98,9 @@ enum ApmeJudgeMlx {
         let endpoint = chatCompletionsEndpoint(config: config)
         guard let url = URL(string: endpoint) else { return nil }
 
-        // Auto-detect model if not explicitly configured. Matches TS runner.ts:
-        // query /v1/models then /models, pick first non-nanollava entry.
-        let model = await resolveModel(config: config, endpoint: endpoint)
+        // Resolve a pin or verify residency. The shared transport revalidates
+        // the model immediately before POST and refuses model replacement.
+        guard let model = await resolveModel(config: config, endpoint: endpoint) else { return nil }
         LastResolvedModel.set(model)
 
         func makeBody(penalty: Double?, jsonMode: Bool) -> [String: Any] {
@@ -169,7 +169,7 @@ enum ApmeJudgeMlx {
         let endpoint = chatCompletionsEndpoint(config: config)
         guard let url = URL(string: endpoint) else { return nil }
 
-        let model = await resolveModel(config: config, endpoint: endpoint)
+        guard let model = await resolveModel(config: config, endpoint: endpoint) else { return nil }
 
         let body: [String: Any] = [
             "model": model,
@@ -272,7 +272,7 @@ enum ApmeJudgeMlx {
         // ceiling would stall task closure waiting on a busy local server.
         request.timeoutInterval = timeoutInterval
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await MlxInference.shared.send(request)
             guard let http = response as? HTTPURLResponse else { return .transportFailure }
             return classify(status: http.statusCode, data: data)
         } catch {
@@ -298,44 +298,12 @@ enum ApmeJudgeMlx {
         catch { return .noVerdict }
     }
 
-    /// Query the MLX server's models endpoint. Falls back to the user's
-    /// configured model id if auto-detect fails. Skips "nanollava" variants
-    /// which some users keep loaded for vision tasks but aren't good judges.
-    private static func resolveModel(config: ApmeJudgeConfig, endpoint: String) async -> String {
-        // Priority: llm.mlx pin (shared across summarizers/judge) > apme.judge.model
-        // > auto-detect from /v1/models > apme.judge.model fallback.
-        if let pin = ApmeSettings.loadMlxConfig().model {
-            return pin
-        }
-        // Only auto-detect when the user hasn't specified a real model.
-        // The TS port uses "qwen3-30b" as the placeholder default; we match that.
-        if config.model != "default" && config.model != "qwen3-30b" {
-            return config.model
-        }
-
-        // Derive the base URL from the chat-completions endpoint.
-        let base = endpoint
-            .replacingOccurrences(of: "/v1/chat/completions", with: "")
-            .replacingOccurrences(of: "/chat/completions", with: "")
-
-        for path in ["/v1/models", "/models"] {
-            guard let url = URL(string: base + path) else { continue }
-            var req = URLRequest(url: url)
-            req.timeoutInterval = 3
-            guard let (data, response) = try? await URLSession.shared.data(for: req),
-                  let http = response as? HTTPURLResponse,
-                  http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let models = json["data"] as? [[String: Any]]
-            else { continue }
-            for m in models {
-                if let id = m["id"] as? String,
-                   !id.lowercased().contains("nanollava") {
-                    return id
-                }
-            }
-        }
-        return config.model
+    /// Explicit model is only a requested identity. send() verifies residency
+    /// again and refuses a mismatch, even when the pin is user configured.
+    private static func resolveModel(config: ApmeJudgeConfig, endpoint: String) async -> String? {
+        if let pin = ApmeSettings.loadMlxConfig().model { return pin }
+        if let pin = MlxSafetyRules.pin(config.model) { return pin }
+        return try? await MlxInference.shared.resolve(endpoint: endpoint, pin: nil)
     }
 
     /// Quick probe — true when the MLX server is reachable.
@@ -343,16 +311,8 @@ enum ApmeJudgeMlx {
     static func isReachable() async -> Bool {
         let config = ApmeSettings.load()
         let endpoint = chatCompletionsEndpoint(config: config.judge)
-        let base = endpoint
-            .replacingOccurrences(of: "/v1/chat/completions", with: "")
-            .replacingOccurrences(of: "/chat/completions", with: "")
-        guard let url = URL(string: base + "/v1/models") else { return false }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 2
-        guard let (_, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse
-        else { return false }
-        return http.statusCode == 200
+        return (try? await MlxInference.shared.resolve(endpoint: endpoint,
+            pin: ApmeSettings.loadMlxConfig().model ?? MlxSafetyRules.pin(config.judge.model))) != nil
     }
 }
 #endif

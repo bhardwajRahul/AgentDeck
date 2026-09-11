@@ -1,3 +1,4 @@
+import { withMlxResident } from './mlx-test-server.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -143,7 +144,7 @@ describe('incomplete judge response', () => {
   const serve = (content: string, finish_reason: string) =>
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason }] }))),
+      withMlxResident(vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason }] }))), 'gemma-test'),
     );
 
   it.each(['mlx', 'openai'] as const)('%s rejects a response cut mid-object', async (backend) => {
@@ -166,7 +167,7 @@ describe('incomplete judge response', () => {
   it.each(['mlx', 'openai'] as const)('%s rejects choices that is not an array', async (backend) => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ choices: { 0: { message: { content: answer } } } }))),
+      withMlxResident(vi.fn(async () => new Response(JSON.stringify({ choices: { 0: { message: { content: answer } } } }))), 'gemma-test'),
     );
     await expect(call(backend)).rejects.toThrow(/no choices/);
   });
@@ -178,7 +179,7 @@ describe.each(['mlx', 'openai'] as const)('%s shared response contract', (backen
   it.each(vectors)('$note', async (vector) => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify(vector.response))),
+      withMlxResident(vi.fn(async () => new Response(JSON.stringify(vector.response))), 'fixture-model'),
     );
     const result = callJudgeWithMeta('judge', {
       ...DEFAULT_APME_CONFIG.judge,

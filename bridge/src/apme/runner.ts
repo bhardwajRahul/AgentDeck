@@ -19,7 +19,7 @@ import { debug, log } from '../logger.js';
 import type { ApmeStore } from './store.js';
 import type { ApmeConfig, ApmeJudgeConfig, ApmeJudgeBackend } from './settings.js';
 import { loadApmeConfig, shouldJudge, judgeBackendSupported, DEFAULT_APME_CONFIG } from './settings.js';
-import { loadMlxSettings, mlxChatUrl } from '@agentdeck/shared';
+import { loadMlxSettings, mlxChatUrl, mlxBaseUrl, mlxModelPin, resolveSafeMlxModel, guardedMlxFetch } from '@agentdeck/shared';
 import { callFoundationModelsHelper, probeFoundationModelsHelper } from '../foundation-models-helper.js';
 import type { SessionSample, TrajectoryEvent } from '@agentdeck/shared';
 import { runSampleScorers } from './scorers/index.js';
@@ -1275,39 +1275,12 @@ export async function probeJudgeBackend(cfg: ApmeJudgeConfig): Promise<JudgeBack
     if (cfg.backend === 'mlx') {
       const mlx = loadMlxSettings();
       const url = cfg.endpoint ?? mlx.endpoint;
-      const base = url.replace(/\/v1\/chat\/completions$/, '').replace(/\/chat\/completions$/, '');
-      let model: string | undefined;
-      let modelsReachable = false;
-      for (const path of ['/v1/models', '/models']) {
-        const resp = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
-        if (resp?.ok) {
-          modelsReachable = true;
-          const json = await resp.json().catch(() => ({})) as { data?: Array<{ id?: string }> };
-          model = json.data?.find(m => m.id && !m.id.toLowerCase().includes('nanollava'))?.id;
-          break;
-        }
-      }
-      if (!modelsReachable) {
-        return {
-          backend: 'mlx', status: 'unavailable',
-          reason: `MLX server unreachable at ${base}. Start with \`mlx_lm.server\` or set apme.judge.endpoint.`,
-          endpoint: base, checkedAt,
-        };
-      }
-      // Pinned/configured model overrides catalog discovery — the real call uses
-      // the same fallback chain as callMlx().
-      const pickedModel = mlx.model ?? cfg.model ?? model;
-      if (!pickedModel) {
-        return {
-          backend: 'mlx', status: 'unavailable',
-          reason: `MLX server reachable at ${base} but advertises no chat-capable model (only nanollava-class found). Load a chat model with \`mlx_lm.server --model …\`.`,
-          endpoint: base, checkedAt,
-        };
-      }
+      const base = mlxBaseUrl(url);
+      const pickedModel = await resolveSafeMlxModel(base, mlx.model ?? mlxModelPin(cfg.model));
       // Cheapest possible inference probe: max_tokens=1, temperature=0. The
-      // server is shared with other local agents, so allow one normal request
-      // ahead of the ping instead of marking a healthy serial backend down.
-      const ping = await fetch(`${base}/v1/chat/completions`, {
+      // server is shared with other local agents: the gate skips a busy server
+      // instead of adding another request to its GPU queue.
+      const ping = await guardedMlxFetch(`${base}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1649,21 +1622,7 @@ async function callMlx(prompt: string, cfg: ApmeJudgeConfig): Promise<string> {
   // override only when the user explicitly set apme.judge.* in settings.json.
   const mlx = loadMlxSettings();
   const url = cfg.endpoint ?? mlxChatUrl();
-  // Pin > cfg.model > probe auto-detect > cfg.model (final fallback).
-  let model = mlx.model ?? cfg.model;
-  if (!model || model === 'qwen3-30b') {
-    try {
-      const base = (cfg.endpoint ?? mlx.endpoint).replace(/\/chat\/completions$/, '').replace(/\/v1\/chat\/completions$/, '');
-      for (const path of ['/v1/models', '/models']) {
-        const mResp = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
-        if (mResp?.ok) {
-          const mJson = await mResp.json() as { data?: Array<{ id?: string }> };
-          const first = mJson.data?.find(m => m.id && !m.id.toLowerCase().includes('nanollava'))?.id;
-          if (first) { model = first; break; }
-        }
-      }
-    } catch { /* use configured model */ }
-  }
+  const model = mlx.model ?? mlxModelPin(cfg.model);
 
   // `apme.judge.endpoint` may point at any OpenAI-shaped server, and
   // `repetition_penalty` is NOT an OpenAI-standard field. A strict server
@@ -1678,7 +1637,7 @@ async function callMlx(prompt: string, cfg: ApmeJudgeConfig): Promise<string> {
   // a price.
   const configured = cfg.repetitionPenalty ?? MLX_JUDGE_REPETITION_PENALTY;
   let penalty: number | null = configured > 1 ? configured : null;
-  const request = (userPrompt: string, jsonMode: boolean) => fetch(url, {
+  const request = (userPrompt: string, jsonMode: boolean) => guardedMlxFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1794,8 +1753,8 @@ async function resolveOpenAIModel(base: string, apiKey: string | undefined, conf
     const r = await fetch(`${base}/api/tags`, { headers, signal: AbortSignal.timeout(3000) }).catch(() => null);
     if (r?.ok) {
       const j = await r.json() as { models?: Array<{ name?: string }> };
-      const first = j.models?.find((m) => m.name)?.name;
-      if (first) return first;
+      const names = [...new Set((j.models ?? []).map(m => m.name).filter((n): n is string => !!n))];
+      if (names.length === 1) return names[0];
     }
   } catch { /* try openai path */ }
   for (const path of ['/v1/models', '/models']) {
@@ -1803,12 +1762,12 @@ async function resolveOpenAIModel(base: string, apiKey: string | undefined, conf
       const r = await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(3000) }).catch(() => null);
       if (r?.ok) {
         const j = await r.json() as { data?: Array<{ id?: string }> };
-        const first = j.data?.find((m) => m.id && !m.id.toLowerCase().includes('nanollava'))?.id;
-        if (first) return first;
+        const names = [...new Set((j.data ?? []).map(m => m.id).filter((n): n is string => !!n))];
+        if (names.length === 1 && !names[0].toLowerCase().includes('nanollava')) return names[0];
       }
     } catch { /* next */ }
   }
-  return configured || 'default';
+  throw new Error('OpenAI-compatible judge needs an explicit model or a singleton catalog');
 }
 
 /**
