@@ -407,19 +407,20 @@ struct OllamaModel: Codable, Sendable {
     let name: String
     let size: Int
     let sizeVram: Int
-    /// "chat" for generation models, "embed" for embedding models. Drives
-    /// per-category grouping in the topology rail so embedding models
-    /// (which never "sit loaded" in the generation sense — Ollama pulls
-    /// them per-request and unloads via keep_alive) don't get surfaced
-    /// as "not loaded" in UIs that only understand VRAM residency.
-    /// Defaults to "chat" for backward compatibility with state_update
-    /// events produced by pre-2026-04-21 daemons.
+    /// Optional catalog classification; independent of runtime residency.
     var kind: String? = nil
+}
+
+struct ModelResidency: Codable, Sendable, Equatable {
+    var known: Bool
+    var models: [String]
 }
 
 struct OllamaStatus: Codable, Sendable {
     let available: Bool
     let models: [OllamaModel]
+    var residency: ModelResidency? = nil
+    var installedModelsKnown: Bool? = nil
 }
 
 struct SubscriptionInfo: Codable, Sendable {
@@ -652,7 +653,7 @@ struct StateUpdateEvent: Codable, Sendable {
         case codexAccountId, codexSubscriptionActiveUntil, codexLastRefreshAt
         case antigravityStatus, gatewayAvailable, gatewayConnected, gatewayHasError
         case gatewayAuthStatus, gatewayAuthRequestId, gatewayAuthMessage, gatewayDeviceId
-        case daemonPort, mlxModelCatalog
+        case daemonPort, mlxModelCatalog, mlxResidency
         case voiceAssistantState, voiceAssistantText, voiceAssistantResponseText
     }
     var permissionMode: String?
@@ -683,6 +684,7 @@ struct StateUpdateEvent: Codable, Sendable {
     var pairingUrl: String?
     var workerSessionCount: Int?
     var ollamaStatus: OllamaStatus?
+    var mlxResidency: ModelResidency?
     var mlxModels: [String]?
     var subscriptions: [SubscriptionInfo]?
     var codexAuthMode: String?
@@ -773,6 +775,7 @@ struct UsageEvent: Codable, Sendable {
     var codexLastRefreshAt: String?
     var codexRateLimits: CodexRateLimits?
     var modelCatalog: [ModelCatalogEntry]?
+    var mlxResidency: ModelResidency?
     var mlxModels: [String]?
     var mlxModelCatalog: [String]?
     var subscriptions: [SubscriptionInfo]?

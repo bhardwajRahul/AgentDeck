@@ -1598,6 +1598,7 @@ final class DaemonServer {
     private var ulanziPluginConnectionIds = Set<UUID>()
     private var activeWSConnectionIds = Set<UUID>()
     private static let streamDeckStaleTTL: TimeInterval = 120
+    private var cachedMlxResidency: [String: Any] = ["known": false, "models": [] as [String]]
     private var cachedMlxModels: [String] = []
     private var cachedMlxModelCatalog: [String] = []
     private var cachedJudgeBackendStatus: JudgeBackendStatus?
@@ -2060,6 +2061,13 @@ final class DaemonServer {
             Task { @DaemonActor in
                 guard let self else { return }
                 var event = box.value
+                // Host probes are authoritative even when a focused session bridge
+                // runs an older version. Its model catalog cannot replace residency.
+                if ["state_update", "usage_update"].contains(event["type"] as? String ?? "") {
+                    event["mlxModels"] = self.cachedMlxModels
+                    event["mlxResidency"] = self.cachedMlxResidency
+                    event["ollamaStatus"] = self.cachedOllamaStatus
+                }
                 if (event["type"] as? String) == "state_update" {
                     // Preserve daemon-level metadata that session bridges don't have
                     if event["modelCatalog"] == nil, !self.cachedModelCatalog.isEmpty {
@@ -2081,13 +2089,15 @@ final class DaemonServer {
                         event["focusedSessionId"] = self.userFocusedSessionId == fid ? fid : ""
                     }
 
+                    event["mlxResidency"] = self.cachedMlxResidency
+                    event["mlxModels"] = self.cachedMlxModels
                     // Always override mlxModels with daemon's filtered cache — sibling bridges may
                     // run older/unfiltered code that leaks nanoLLaVA into the list, causing flicker.
                     if !self.cachedMlxModels.isEmpty {
                         event["mlxModels"] = self.cachedMlxModels
                         event["mlxModelCatalog"] = self.cachedMlxModelCatalog
                     } else {
-                        event.removeValue(forKey: "mlxModels")
+                        event["mlxModels"] = [] as [String]
                         event.removeValue(forKey: "mlxModelCatalog")
                     }
                 }
@@ -9727,7 +9737,8 @@ final class DaemonServer {
     private func mergeEngineSnapshot(into event: inout [String: Any]) {
         if !cachedModelCatalog.isEmpty { event["modelCatalog"] = cachedModelCatalog }
         if let ollama = cachedOllamaStatus { event["ollamaStatus"] = ollama }
-        if !cachedMlxModels.isEmpty { event["mlxModels"] = cachedMlxModels }
+        event["mlxModels"] = cachedMlxModels
+        event["mlxResidency"] = cachedMlxResidency
         if !cachedMlxModelCatalog.isEmpty { event["mlxModelCatalog"] = cachedMlxModelCatalog }
         event["subscriptions"] = buildSubscriptions()
         if let antigravity = cachedAntigravityStatus {
@@ -9957,14 +9968,8 @@ final class DaemonServer {
         let previous = cachedOllamaStatus as NSDictionary?
         var success = false
 
-        // `/api/tags` returns every installed model with details (family,
-        // parameter_size); `/api/ps` returns only models currently resident
-        // in VRAM. We need both: tags is the source of truth for "what's
-        // available", ps overlays runtime VRAM usage. Embedding models
-        // (bert family, bge-*/e5-*/gte-* names, etc.) never sit in VRAM
-        // between requests — surfacing them as "not loaded" is misleading,
-        // so we classify each row as "chat" vs "embed" so the UI can
-        // group them without the loaded/not-loaded framing.
+        // Catalog and residency are independent. /api/ps also includes CPU-only
+        // and embedding models; zero GPU bytes does not imply unloaded.
         async let tagsData = fetchOllamaData(path: "/api/tags")
         async let psData = fetchOllamaData(path: "/api/ps")
         let tags = (await tagsData).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
@@ -10012,6 +10017,15 @@ final class DaemonServer {
             success = true
         }
 
+        if var status = cachedOllamaStatus {
+            let rows = ps?["models"] as? [[String: Any]]
+            let names = rows?.compactMap { $0["name"] as? String }.filter { !$0.isEmpty }
+            let known = rows != nil && names?.count == rows?.count
+            status["residency"] = ["known": known, "models": known ? (names ?? []) : []]
+            status["installedModelsKnown"] = tags?["models"] is [[String: Any]]
+            cachedOllamaStatus = status
+        }
+
         if success {
             ollamaFailureCount = 0
             ollamaNextInterval = Self.probeBaseInterval
@@ -10040,7 +10054,8 @@ final class DaemonServer {
         guard let url = URL(string: "http://127.0.0.1:11434\(path)") else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
-        guard let (data, _) = try? await LocalProbeSession.shared.data(for: request) else {
+        guard let (data, response) = try? await LocalProbeSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else {
             return nil
         }
         return data
@@ -10069,6 +10084,8 @@ final class DaemonServer {
     private func probeMLX() async {
         let previous = cachedMlxModels
         let previousCatalog = cachedMlxModelCatalog
+        let previousResidency = cachedMlxResidency as NSDictionary
+        cachedMlxResidency = await probeMlxResidency()
         let base = try? MlxInference.base(ApmeSettings.loadMlxConfig().endpoint)
         let candidates = base.map { [$0 + "/v1/models", $0 + "/models"] } ?? []
         var resolved: [String] = []
@@ -10120,10 +10137,25 @@ final class DaemonServer {
             }
         }
 
-        if previous != cachedMlxModels || previousCatalog != cachedMlxModelCatalog {
+        if previous != cachedMlxModels || previousCatalog != cachedMlxModelCatalog || !previousResidency.isEqual(to: cachedMlxResidency) {
             broadcastStateUpdate()
             broadcastUsage()
         }
+    }
+
+    private func probeMlxResidency() async -> [String: Any] {
+        let unknown: [String: Any] = ["known": false, "models": [] as [String]]
+        guard let base = try? MlxInference.base(ApmeSettings.loadMlxConfig().endpoint),
+              let url = URL(string: base + "/health") else { return unknown }
+        var request = URLRequest(url: url); request.timeoutInterval = 2
+        guard let (data, response) = try? await LocalProbeSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return unknown }
+        if body["loaded_model"] is NSNull { return ["known": true, "models": [] as [String]] }
+        if let model = body["loaded_model"] as? String, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ["known": true, "models": [model]]
+        }
+        return unknown
     }
 
     private static func pickMlxModels(catalog: [String], pin: String?) -> [String] {
