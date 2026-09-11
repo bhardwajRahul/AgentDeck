@@ -221,6 +221,29 @@ final class ApmeCollector {
     }
 
     /// Main entry point — routes every hook event to the right session's run.
+    /// Retract the run a `session_start` opened for a session that turned out
+    /// not to be the user's (Codex Desktop ambient-suggestions threads: the
+    /// prompt that identifies them arrives ~90 ms after the run exists). The
+    /// run and everything under it are deleted; the caller invokes this only
+    /// for a thread identified on its FIRST prompt, so nothing recorded is
+    /// lost. Mirror of the Node hub's `releaseRun` + `store.deleteRun`.
+    @discardableResult
+    func discardRun(sessionId: String) -> Bool {
+        guard let runId = sessionToRun[sessionId] else { return false }
+        sessionToRun.removeValue(forKey: sessionId)
+        if activeHookSession == sessionId { activeHookSession = nil }
+        runTaskCount.removeValue(forKey: runId)
+        sessionToUsage.removeValue(forKey: sessionId)
+        sessionToTurn.removeValue(forKey: sessionId)
+        sessionToTask.removeValue(forKey: sessionId)
+        sessionToLastMilestone.removeValue(forKey: sessionId)
+        lastClosedTurnByRun.removeValue(forKey: runId)
+        idleGapTasks.removeValue(forKey: sessionId)?.cancel()
+        store.deleteRun(id: runId)
+        DaemonLogger.shared.debug("APME", "discardRun \(runId.prefix(8)) session=\(sessionId) (background thread)")
+        return true
+    }
+
     func handleHook(event: String, data: [String: Any]) {
         guard store.isOpen else { return }
         let isPrompt = event.lowercased() == "user_prompt_submit" || event == "UserPromptSubmit"

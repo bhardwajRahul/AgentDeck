@@ -1,0 +1,45 @@
+{
+  "$comment": "Codex Desktop ambient-suggestions prompt signatures. Replayed by bridge/src/__tests__/codex-ambient-hooks.test.ts and apple/AgentDeckTests/CodexAmbientHookRulesTests. `ambient: true` means the prompt belongs to a background thread the daemon must not record.",
+  "vectors": [
+    {
+      "name": "hyperpersonalized suggestions generator (live 2026-09-11)",
+      "prompt": "Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex in this local project. The suggestions must be grounded in",
+      "ambient": true
+    },
+    {
+      "name": "safety and compliance review of ambient suggestions (live 2026-09-11)",
+      "prompt": "You are an expert at upholding safety and compliance standards for Codex ambient suggestions.\n\nI will present a list of suggestions",
+      "ambient": true
+    },
+    {
+      "name": "leading whitespace and case do not hide the signature",
+      "prompt": "  overview\n\ngenerate 0 to 3 HyperPersonalized suggestions for what this user can do",
+      "ambient": true
+    },
+    {
+      "name": "a user prompt that mentions suggestions is not ambient",
+      "prompt": "Generate 3 suggestions for improving the README",
+      "ambient": false
+    },
+    {
+      "name": "the signature must be at the start, not quoted mid-prompt",
+      "prompt": "Why does Codex keep running 'Generate 0 to 3 hyperpersonalized suggestions' in the background?",
+      "ambient": false
+    },
+    {
+      "name": "ordinary work prompt",
+      "prompt": "AGENTS.md 및 프로젝트 메모리가 Astra 모델 사용에 적절하게 구성되어 있는지 점검하라.",
+      "ambient": false
+    },
+    {
+      "name": "codex exec image batch driven by another agent is real work",
+      "prompt": "Use your built-in image generation tool to create ONE square image and save it as ./1970s_mainframe_student.png",
+      "ambient": false
+    },
+    {
+      "name": "empty prompt",
+      "prompt": "",
+      "ambient": false
+    }
+  ]
+}

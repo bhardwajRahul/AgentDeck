@@ -251,6 +251,10 @@ struct TopologyRail: View {
         switch stateHolder.state.agentType {
         case "claude-code": return .claude
         case "openclaw":    return .openclaw
+        // The daemon hub labels its aggregate frame `daemon` while an observed
+        // session drives it (2026-09-11); the catalog it carries is still the
+        // Gateway's whenever the Gateway is connected.
+        case "daemon":      return stateHolder.state.gatewayConnected == true ? .openclaw : .unknown
         default:            return .unknown
         }
     }

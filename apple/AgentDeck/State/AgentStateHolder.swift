@@ -815,7 +815,19 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
         s.state = AgentConnectionState(rawValue: e.state) ?? s.state
         if let pm = e.permissionMode { s.permissionMode = PermissionMode(rawValue: pm) ?? s.permissionMode }
         s.agentType = e.agentType ?? s.agentType
-        if let sid = e.sessionId { s.sessionId = sid }
+        if let sid = e.sessionId {
+            // A frame that names a different session must not inherit the
+            // previous session's tool through the retain-on-absent rules
+            // below: the daemon hub stamps hook-driven frames with the hook
+            // session and Gateway-owned frames with `openclaw-gateway`, and a
+            // Gateway frame carries no Claude tool by design (2026-09-11).
+            if sid != s.sessionId {
+                s.currentTool = nil
+                s.toolInput = nil
+                s.toolProgress = nil
+            }
+            s.sessionId = sid
+        }
         if let focusedSessionId = e.focusedSessionId {
             s.focusedSessionId = focusedSessionId.isEmpty ? nil : focusedSessionId
         }

@@ -91,7 +91,8 @@ fun EinkStatusPanel(
         // OpenClaw — strict primary-only filter (matches HUD rail). If no
         // model is tagged default the row collapses; promoting a non-default
         // entry would silently override the explicit rule.
-        val openClawPrimary = if (state.gatewayConnected == true && state.agentType == "openclaw") {
+        val openClawPrimary = if (state.gatewayConnected == true &&
+            (state.agentType == "openclaw" || state.agentType == "daemon")) {
             state.modelCatalog.orEmpty()
                 .firstOrNull { it.available && it.role == "default" }
                 ?.let { abbreviateModelName(it.name) }

@@ -916,6 +916,32 @@ final class ApmeStore: @unchecked Sendable {
         sqlite3_step(stmt)
     }
 
+    /// Drop a run and everything under it. Used to retract a run that was
+    /// opened for a thread later identified as background noise (Codex
+    /// Desktop ambient-suggestions), so no row of it reaches the dashboard.
+    /// The child tables declare ON DELETE CASCADE, but foreign keys are only
+    /// enforced when the connection opted in — delete explicitly, mirroring
+    /// `deleteRun` in bridge/src/apme/store.ts.
+    func deleteRun(id: String) {
+        guard let db else { return }
+        for sql in [
+            "DELETE FROM steps WHERE run_id = ?",
+            "DELETE FROM turns WHERE run_id = ?",
+            "DELETE FROM tasks WHERE run_id = ?",
+            "DELETE FROM sample_events WHERE run_id = ?",
+            "DELETE FROM evals WHERE run_id = ?",
+            "DELETE FROM artifacts WHERE run_id = ?",
+            "DELETE FROM vibe_feedback WHERE run_id = ?",
+            "DELETE FROM runs WHERE id = ?",
+        ] {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+            bindText(stmt, 1, id)
+            sqlite3_step(stmt)
+            sqlite3_finalize(stmt)
+        }
+    }
+
     func insertEvalForTask(_ eval: ApmeEval, taskId: String) {
         guard let db else { return }
         var stmt: OpaquePointer?

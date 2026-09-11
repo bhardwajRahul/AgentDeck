@@ -319,6 +319,59 @@ enum CodexHookIdentity {
     }
 }
 
+/// Codex Desktop's ambient-suggestions threads are not the user's work.
+///
+/// When the desktop app refreshes `~/.codex/ambient-suggestions/<hash>/
+/// ambient-suggestions.json` it runs two internal prompts on throw-away
+/// threads — no rollout, no row in Codex's own `threads` table, hook `cwd` `/`
+/// — and the user-global lifecycle hooks still fire for them. The prompt text
+/// is the only durable signature (`cwd: "/"` alone also matches a user who
+/// opened Codex at the root). Mirror of bridge/src/codex-ambient-hooks.ts;
+/// both suites replay shared/codex-ambient-vectors.json.
+enum CodexAmbientHookRules {
+    static let promptSignatures: [NSRegularExpression] = [
+        "^\\s*Overview\\s+Generate 0 to 3 hyperpersonalized suggestions\\b",
+        "^\\s*You are an expert at upholding safety and compliance standards for Codex ambient suggestions\\b",
+    ].map { try! NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+
+    /// Prompt text as Codex hooks carry it: `prompt`, some builds
+    /// `user_prompt`, else `message.content` (mirror of Node `codexHookPromptText`).
+    static func promptText(_ json: [String: Any]) -> String {
+        if let s = json["prompt"] as? String { return s }
+        if let s = json["user_prompt"] as? String { return s }
+        if let m = json["message"] as? [String: Any], let s = m["content"] as? String { return s }
+        return ""
+    }
+
+    static func isAmbientPrompt(_ prompt: Any?) -> Bool {
+        guard let text = prompt as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let range = NSRange(text.startIndex..., in: text)
+        return promptSignatures.contains { $0.firstMatch(in: text, options: [], range: range) != nil }
+    }
+}
+
+/// Thread ids identified as ambient-suggestions threads. Every later hook on
+/// such an id (tool/stop hooks carry no prompt) is background too; an id that
+/// falls silent for `ttl` is forgotten.
+struct CodexAmbientThreads {
+    static let ttl: TimeInterval = 30 * 60
+    private var lastSeenAt: [String: Date] = [:]
+
+    mutating func isAmbient(_ sessionId: String, now: Date = Date()) -> Bool {
+        lastSeenAt = lastSeenAt.filter { now.timeIntervalSince($0.value) <= Self.ttl }
+        guard lastSeenAt[sessionId] != nil else { return false }
+        lastSeenAt[sessionId] = now
+        return true
+    }
+
+    mutating func mark(_ sessionId: String, now: Date = Date()) {
+        lastSeenAt[sessionId] = now
+    }
+
+    var count: Int { lastSeenAt.count }
+}
+
 enum CodexRolloutResponseReader {
     private static let maxDayDirs = 30
     private static let tailBytes = 128 * 1024
@@ -1045,7 +1098,15 @@ final class DaemonServer {
     // Gateway session state — updated ONLY from OpenClaw adapter events.
     // Never written by Claude Code hook events so the two don't cross-contaminate.
     // The shared `stateMachine` tracks Claude Code / hook-driven sessions only.
-    private var gatewaySessionState: String = "idle"
+    private var gatewaySessionState: String = "idle" {
+        // A change here is the Gateway acting: it becomes the hub frame's
+        // driver (mirror of the Node hub's `noteGateway`). Disconnect resets
+        // the value AND clears the driver right after (see onConnectionChanged).
+        didSet { if oldValue != gatewaySessionState { hubDriver = .gateway } }
+    }
+    /// Who last moved the hub's global frame — see `hubFrameAgentType`.
+    private enum HubStateDriver { case none, hook, gateway }
+    private var hubDriver: HubStateDriver = .none
     private var gatewayCurrentTool: String? = nil
     private var gatewayModelName: String? = nil
     /// Wire form of the exec approval the Gateway is blocked on, mirrored here
@@ -1468,6 +1529,8 @@ final class DaemonServer {
     /// timeline entries + primary-creature state to the right session
     /// when multiple claude sessions are running concurrently.
     private var currentHookSessionId: String?
+    /// Codex Desktop ambient-suggestions thread ids — see CodexAmbientHookRules.
+    private var codexAmbientThreads = CodexAmbientThreads()
     /// Session explicitly focused by the user. Kept separate from
     /// `currentHookSessionId` so a new hook from another session does not
     /// move the dashboard's visual selection halo.
@@ -2370,8 +2433,7 @@ final class DaemonServer {
 
         // Seed initial state so serial heartbeat has data from the start
         // (without this, lastStateEvent is nil until first WS client or hook event)
-        let gwAlive = cachedGatewayConnected
-        lastStateEvent = buildFullStateEvent(agentType: gwAlive ? "openclaw" : "daemon")
+        lastStateEvent = buildFullStateEvent(agentType: hubFrameAgentType())
         DaemonLogger.shared.info("startDeviceModules: seed state done")
 
         // Wire serial broadcast hook
@@ -4115,8 +4177,7 @@ final class DaemonServer {
                 return
             }
 
-            let gwAlive = self.cachedGatewayConnected
-            let stateEvent = self.buildFullStateEvent(agentType: gwAlive ? "openclaw" : "daemon")
+            let stateEvent = self.buildFullStateEvent(agentType: self.hubFrameAgentType())
             self.lastStateEvent = stateEvent
             if surfaceAllows(stateEvent), let data = esp32Shaped(stateEvent) { conn.send(data) }
 
@@ -4848,6 +4909,24 @@ final class DaemonServer {
         session.port == Int(port) || session.pid == 0
     }
 
+    /// Undo the session row and APME run a background Codex thread's
+    /// `codex_session_start` created before its prompt identified it.
+    private func retractCodexAmbientThread(sessionId sid: String, json: [String: Any]) {
+        DaemonLogger.shared.info("Codex ambient-suggestions thread \(sid.prefix(14)): background prompt, its hooks are not recorded")
+        if pushedSessionsById.removeValue(forKey: sid) != nil {
+            cachedSessions.removeAll { $0.id == sid }
+            lastHookAtByPushedSession.removeValue(forKey: sid)
+            broadcastSessionsList()
+        }
+        if currentHookSessionId == sid { currentHookSessionId = nil; if hubDriver == .hook { hubDriver = .none } }
+        // The collector keys Codex runs by the enriched payload's session id;
+        // try the hook's key and the bare id so neither form leaves a run behind.
+        let bare = (json["session_id"] as? String) ?? ""
+        for key in Set([sid, bare]) where !key.isEmpty {
+            apmeCollector?.discardRun(sessionId: key)
+        }
+    }
+
     private func handleSwitchAgent(_ target: String) {
         if target == "openclaw", cachedGatewayConnected {
             let event = buildFullStateEvent(agentType: "openclaw")
@@ -5235,6 +5314,21 @@ final class DaemonServer {
         // never alter or request approval through the parent session.
         if await handleSubagentTimelineHook(event: event, json: json, sessionId: sessionId) {
             return
+        }
+
+        // Codex Desktop ambient-suggestions threads fire the user-global hooks
+        // for prompts the user never typed. Drop them before session, state,
+        // timeline and APME bookkeeping see them, and retract what the thread's
+        // `codex_session_start` (~90 ms earlier, not yet identifiable) created.
+        if isCodexEvent, let sid = sessionId {
+            let now = Date()
+            if codexAmbientThreads.isAmbient(sid, now: now) { return }
+            if event == "codex_user_prompt_submit",
+               CodexAmbientHookRules.isAmbientPrompt(CodexAmbientHookRules.promptText(json)) {
+                codexAmbientThreads.mark(sid, now: now)
+                retractCodexAmbientThread(sessionId: sid, json: json)
+                return
+            }
         }
 
         // Resurrection: Claude Code only fires `session_start` once per
@@ -5767,6 +5861,7 @@ final class DaemonServer {
         if let sessionId {
             lastHookAtByPushedSession[sessionId] = Date()
             currentHookSessionId = sessionId
+            hubDriver = .hook
             if let proj = pushedSessionsById[sessionId]?.projectName, !proj.isEmpty {
                 stateMachine.projectName = proj
             }
@@ -5774,7 +5869,7 @@ final class DaemonServer {
         if event == "session_end", let sessionId {
             lastHookAtByPushedSession.removeValue(forKey: sessionId)
             codexProcessingTouchedAtBySession.removeValue(forKey: sessionId)
-            if currentHookSessionId == sessionId { currentHookSessionId = nil }
+            if currentHookSessionId == sessionId { currentHookSessionId = nil; if hubDriver == .hook { hubDriver = .none } }
             // Every child the session had ends with it — a lost SubagentStop
             // must not pin "+N" on a row that no longer exists. Children are
             // keyed by the BARE session uuid; codex/opencode rows carry a
@@ -6268,7 +6363,7 @@ final class DaemonServer {
             claudeTranscriptPathBySession.removeValue(forKey: sid)
             openCodeTurnAnchors.clear(sid: sid)
             openCodeLastPromptTopicBySession.removeValue(forKey: sid)
-            if currentHookSessionId == sid { currentHookSessionId = nil }
+            if currentHookSessionId == sid { currentHookSessionId = nil; if hubDriver == .hook { hubDriver = .none } }
             if userFocusedSessionId == sid { userFocusedSessionId = nil }
             if isPostTerminal {
                 DaemonLogger.shared.debug("Hook", "Evicted finished codex session \(sid) (post-terminal \(Int(Self.codexPostTerminalTTL))s)")
@@ -7871,8 +7966,7 @@ final class DaemonServer {
 
     private func handleStateChanged() {
         let currentState = stateMachine.state
-        let gwAlive = cachedGatewayConnected
-        let event = buildFullStateEvent(agentType: gwAlive ? "openclaw" : "daemon")
+        let event = buildFullStateEvent(agentType: hubFrameAgentType())
         lastStateEvent = event
         broadcastRaw(event)
         broadcastSessionsList()
@@ -7961,6 +8055,7 @@ final class DaemonServer {
                         self?.cachedGatewayAuthRequestId = nil
                         self?.cachedGatewayAuthMessage = nil
                         DaemonLogger.shared.info("OpenClaw Gateway connected")
+                        self?.hubDriver = .gateway
                         if self?.stateMachine.state == .disconnected {
                             _ = self?.stateMachine.transition(trigger: "session_start", source: .hook)
                         }
@@ -7985,6 +8080,7 @@ final class DaemonServer {
                         await self?.logStream.stop()
                         _ = self?.stateMachine.transition(trigger: "session_end", source: .hook)
                         self?.gatewaySessionState = "idle"
+                        if self?.hubDriver == .gateway { self?.hubDriver = .none }
                         self?.gatewayCurrentTool = nil
                         // Pending approvals are Gateway-process state: a
                         // reconnect issues new ids, so a retained prompt would
@@ -8041,6 +8137,7 @@ final class DaemonServer {
         cachedGatewayAuthRequestId = nil
         cachedGatewayAuthMessage = nil
         gatewaySessionState = "idle"
+        if hubDriver == .gateway { hubDriver = .none }
         gatewayCurrentTool = nil
         gatewayPendingApproval = nil
         // Note: gatewayModelName is intentionally preserved across brief disconnects
@@ -9087,8 +9184,7 @@ final class DaemonServer {
         lastStateBroadcastAt = Date()
         pendingStateBroadcastTask?.cancel()
         pendingStateBroadcastTask = nil
-        let gwAlive = cachedGatewayConnected
-        let event = buildFullStateEvent(agentType: gwAlive ? "openclaw" : "daemon")
+        let event = buildFullStateEvent(agentType: hubFrameAgentType())
         lastStateEvent = event
         serialEventSnapshot.setStateEvent(event)
         broadcastRaw(event)
@@ -9351,6 +9447,21 @@ final class DaemonServer {
 
     // MARK: - Event Builders
 
+    /// Who the hub's global `state_update` is about. The global state machine
+    /// is moved by observed-session hooks; labelling that frame `openclaw`
+    /// whenever the Gateway was merely alive made every surface read
+    /// "OpenClaw · processing · <a Claude session's tool>" while the Gateway
+    /// sat idle (2026-09-11). A hook-driven frame is the aggregate `daemon`;
+    /// `openclaw` is reserved for frames no hook session owns. Both are
+    /// aggregate types on every consumer, so creatures still come from
+    /// `sessions_list`. Mirror of Node `resolveHubFrameIdentity`.
+    private func hubFrameAgentType() -> String {
+        switch hubDriver {
+        case .hook: return "daemon"
+        case .gateway, .none: return cachedGatewayConnected ? "openclaw" : "daemon"
+        }
+    }
+
     private func buildFullStateEvent(agentType: String) -> [String: Any] {
         var e: [String: Any] = [
             "type": "state_update",
@@ -9376,13 +9487,31 @@ final class DaemonServer {
         if stateMachine.navigable { e["navigable"] = true }
         e["cursorIndex"] = stateMachine.cursorIndex
         if let sp = stateMachine.suggestedPrompt { e["suggestedPrompt"] = sp }
+        if agentType == "openclaw" {
+            // Gateway-owned frame: the Gateway's OWN activity, never the
+            // hook-driven machine's turn (mirror of Node `shapeHubFrame`).
+            e["state"] = gatewaySessionState
+            e["sessionId"] = "openclaw-gateway"
+            e["projectName"] = "OpenClaw"
+            // The machine's turn fields are never the Gateway's — its prompt
+            // lives in `gatewayPendingApproval` and rides the sessions_list
+            // row, not this frame. Drop them unconditionally and name the
+            // Gateway's own tool explicitly (an absent key is retained by the
+            // Apple holder, which would keep a Claude tool under this label).
+            for key in ["currentTool", "toolInput", "toolProgress", "options", "question",
+                        "promptType", "navigable", "cursorIndex", "suggestedPrompt"] {
+                e.removeValue(forKey: key)
+            }
+            if let tool = gatewayCurrentTool, !tool.isEmpty { e["currentTool"] = tool }
+        }
         // Per-session awaiting overlay. The aggregate state machine can't
         // attribute a pushed (PTY-managed) session's awaiting state to a specific
         // session, so when the FOCUSED session carries an awaiting state in
         // pushedSessionsById, surface its state/question/promptType here so the
         // encoder/HUD reflect it. Options arrive via the focus relay's real
         // state_update for that session.
-        if let fid = userFocusedSessionId, let entry = pushedSessionsById[fid],
+        if agentType != "openclaw",
+           let fid = userFocusedSessionId, let entry = pushedSessionsById[fid],
            let st = entry.state, st.hasPrefix("awaiting") {
             e["state"] = st
             if let q = entry.question { e["question"] = q }

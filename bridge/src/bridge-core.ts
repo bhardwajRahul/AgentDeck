@@ -895,12 +895,14 @@ export class BridgeCore {
       agentCapabilities?: AgentCapabilities;
       isAlive: boolean;
       extraEvents?: BridgeEvent[];
+      /** A caller-built first frame (the daemon hub stamps its own identity). */
+      stateEvent?: BridgeEvent;
     },
   ): void {
     const snapshot = this.stateMachine.getSnapshot();
 
     // State update (with capabilities for initial connect)
-    const stateEvent = this.buildStateEvent({
+    const stateEvent = opts.stateEvent ?? this.buildStateEvent({
       agentType: opts.agentType,
       agentCapabilities: opts.agentCapabilities,
       snapshot,
