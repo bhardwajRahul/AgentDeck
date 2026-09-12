@@ -57,4 +57,12 @@ Aquarium-tide design system. Spec: [DESIGN.md](../../DESIGN.md). Source of truth
 
 ## Migration
 
-**Migration**: existing UI uses pre-design-system palettes (`StateColors.Hex.*`, `AgentDeckColors.*`). New code reaches for `DesignTokens.*`; migration is incremental, not a sweep. Run `bash design/lint.sh` for the violation count baseline
+**Migration**: existing UI uses pre-design-system palettes (`StateColors.Hex.*`, `AgentDeckColors.*`). New code reaches for `DesignTokens.*`; migration is incremental, not a sweep. Read the current count from `docs/design-lint-baseline.md`, and measure with `bash design/lint.sh --json` in a clean checkout — see below.
+
+## The lint count is only meaningful in a clean checkout
+
+**`design/lint.sh` walks the filesystem, not the git index, and its prune list does not cover every gitignored build output — so a built working checkout over-reports and its total cannot be compared against the baseline.** Measured 2026-09-12 at `13a8f53d`: the working checkout reported **658 violations across 6 rules**, a fresh `git worktree` of the same commit reported **89** — 208 files in lint scope versus 93. The extra files are build artifacts such as `plugin-ulanzi/com.ulanzi.ulanzistudio.agentdeck.ulanziPlugin/plugin/app.js`, which CI never sees because `.github/workflows/design-system.yml` runs `pnpm install` and never `pnpm build`.
+
+The gate is `current ≤ Total: **N violations**` parsed from [docs/design-lint-baseline.md](../../docs/design-lint-baseline.md), where `current` comes from `bash design/lint.sh --json`. To decide whether a branch regresses, measure the branch **and its merge base** in clean worktrees, or diff the `--json` `records` by `(file, line, rule)` and inspect only the new ones. A bare run in a built checkout answers a different question and will send you chasing violations that are not in the repository.
+
+R7 accepts only the radius scale `{0, 4, 8, 10, 12, 14, 16, 18, 999}`; `border-radius: 50%` is counted as `50` and therefore violates — spell a circle `999px`.
