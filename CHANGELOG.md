@@ -45,6 +45,51 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
+## 2026-09-13 — npm 1.3.2
+
+Three fixes from an adversarial review of the 1.3.0 delta, merged minutes after
+1.3.1 was tagged and therefore not in it. Nothing else moves: Apple, Android,
+Stream Deck, Ulanzi and ESP32 stay at their current versions.
+
+### The daemon supervisor's probes could answer "dead" without having looked
+
+`supervisorJobRunning`'s own contract is that `undefined` means "the supervisor
+did not answer", which is not "it died" — the caller keeps waiting, bounded by
+its ceiling. All three probes had a way to break it. `schtasks` localizes its
+status **values**, not only its headers, so `/^Status:\s+Running/` failed to
+match a running job on a non-English Windows and answered false: that made
+`convergeInstalledSupervision` stop a healthy supervised daemon to "hand it
+over", and collapsed `waitForRestartedDaemon`'s 180 s ceiling to its 20 s floor
+for a false "daemon did not come back". The launchd `catch` returned false for
+any `execFileSync` failure, a 5 s timeout under restart load included; only a
+command that ran and exited non-zero carries a numeric `status`. systemd read
+anything but `active` as dead, `activating` — restart backoff, seconds before
+the daemon returns — included.
+
+`supervisorPosture` answered `[]` when it could not read the unit, which reads
+as "the unit bakes the default posture". A Windows scheduled task has no unit
+file at all (the XML is deleted after `schtasks /Create`), so every `daemon
+restart` on a `--local` machine compared its inherited `--local` against a
+fabricated default, printed a claim about the task that was not true, and forked
+an unsupervised daemon. It now answers `undefined`, which `routeDaemonLifecycle`
+already treats as "no comparison to make".
+
+### Closing one OpenClaw approval stopped showing the other
+
+An exec approval and a plugin approval can be pending at once, and the deck
+shows one at a time. Every close path emitted `spinner_start`/`idle`
+unconditionally, and the daemon maps those straight onto the Gateway row's
+state, so the row left `awaiting_permission` while a live approval was still
+waiting: no surface rendered PERM, the user saw an idle deck, and the agent
+stayed blocked. The survivor is now re-broadcast instead, which restores the
+state and swaps the rendered question in one step. Two more in the same area: a
+second plugin approval silently discarded the first, leaving it pending on the
+Gateway with its timeline row stuck; and a failing `exec.approval.list` skipped
+the plugin catch-up entirely because the two shared one `await` chain.
+
+The Swift daemon had the same bug and also dropped the survivor from the row.
+That fix is on `master` and ships with the next Apple build.
+
 ## 2026-09-12 — npm 1.3.1
 
 ### The OpenClaw health check answered wrong in both directions, and ran far too often
