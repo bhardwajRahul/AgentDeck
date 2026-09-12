@@ -29,6 +29,15 @@ describe('PtyManager.spawn launch contract', () => {
   const realShell = process.env.SHELL;
   const realComspec = process.env.COMSPEC;
 
+  /**
+   * POSIX cases use 'linux', never 'darwin'. `spawn()` calls
+   * `repairInstalledNodePtySpawnHelper()` before the mocked dynamic import, and
+   * that repair runs for real on a 'darwin' platform value — resolving the
+   * installed node-pty and chmod-ing its spawn-helper, which under pnpm's
+   * hardlinked store reaches the shared copy. The contract under test is
+   * POSIX-vs-win32 (`isWin` is `platform === 'win32'`), so 'linux' exercises
+   * the identical branch and keeps the test hermetic.
+   */
   function setPlatform(value: string): void {
     Object.defineProperty(process, 'platform', { value, configurable: true });
   }
@@ -53,7 +62,7 @@ describe('PtyManager.spawn launch contract', () => {
   }
 
   it('runs the command through a LOGIN shell on POSIX', async () => {
-    setPlatform('darwin');
+    setPlatform('linux');
     process.env.SHELL = '/bin/zsh';
 
     await new PtyManager().spawn('claude');
@@ -96,7 +105,7 @@ describe('PtyManager.spawn launch contract', () => {
   });
 
   it('hands the command to the shell verbatim — no escaping, no re-quoting', async () => {
-    setPlatform('darwin');
+    setPlatform('linux');
     process.env.SHELL = '/bin/zsh';
     // A representative user `-c`: quoting, expansion and an operator. The
     // shell is supposed to interpret all of it; AgentDeck must not pre-chew it.

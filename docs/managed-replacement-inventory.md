@@ -23,7 +23,7 @@ would have to reproduce.
 | `AGENTDECK_COMMANDER_ARGS` | `applyGlobalEnvArgs`, `cli.ts:705` | Tokenized, spliced into argv at index 3 — immediately after the subcommand. Keyed on `argv[2]` being one of `claude`/`codex`/`opencode`/`monitor`; any other command is a true no-op even when a positional *value* equals a session word. |
 | `AGENTDECK_CLAUDE_ARGS` / `AGENTDECK_CODEX_ARGS` / `AGENTDECK_OPENCODE_ARGS` | `weaveAgentCommand`, `cli.ts:741` | Raw string append to the `-c` command (`` `${command} ${extra}`.trim() ``). Weaves onto a user `-c` rather than replacing it. |
 | `--no-env-args` | `cli.ts:870`, consumed at `:879` via `opts.envArgs !== false` | Disables **both** layers for the invocation. The commander half is decided pre-parse on raw argv (`cli.ts:729`); the per-agent half in the action. |
-| `--weight <n>` | `cli.ts:871` | Not an agent argument, but rides the same env-splice layer — `AGENTDECK_COMMANDER_ARGS="--weight 5"` is a tested path (`cli.test.ts:342`). |
+| `--weight <n>` | `cli.ts:871` | Not an agent argument, but rides the same env-splice layer — `AGENTDECK_COMMANDER_ARGS="--weight 5"` is a tested path (`cli.test.ts:380`). |
 
 ### 1.2 The load-bearing fact: the command string is shell-interpreted
 
@@ -52,20 +52,20 @@ env layers have deliberately different power, and the rule file says so.
 
 The gate wording implies an AgentDeck-owned resume builder. There is none. A repository
 grep for `--resume` finds only: the user's own `-c "claude --resume X"` in docs and tests
-(`docs/cli.md:73,90`, `cli.test.ts:200,262`), and Kiro's unrelated `--resume-id` parsing
+(`docs/cli.md:73,90`, `cli.test.ts:200,260`), and Kiro's unrelated `--resume-id` parsing
 in `passive-observer.ts:1020,1085`.
 
 So the contract is narrower and easier than the gate suggests: **resume is user-supplied
 text, and AgentDeck's only obligation is that the env append does not clobber it.** That
-obligation is covered (`cli.test.ts:262`).
+obligation is covered (`cli.test.ts:260`).
 
 ### 1.4 Existing regression coverage
 
-`bridge/src/__tests__/cli.test.ts:165-450` already pins: splice position, the `argv[2]`
+`bridge/src/__tests__/cli.test.ts:165-488` already pins: splice position, the `argv[2]`
 gate, non-session no-op, empty/unset var, the typed hatch, the **env-smuggled
 `--no-env-args`** strip (`:243`), per-agent selection by agent type, whitespace-only
-values, last-write scalar override through a real commander parse (`:322`), and both-layer
-disable through `parseAsync` (`:429`).
+values, last-write scalar override through a real commander parse (`:360`), and both-layer
+disable through `parseAsync` (`:467`).
 
 The gate's own ask — *"add regression fixtures from representative
 configurations"* — was missing the contract's load-bearing half. Added in this branch:
@@ -123,13 +123,25 @@ APME correctness."*
 | `tool_action` | *not forwarded* | `PreToolUse` | hook-owned |
 | `effort_level` | *not forwarded* | — | unused |
 
-Note the five unforwarded events still reach `StateMachine.handleParserEvent` in the
-**session-bridge** path (`index.ts:665`), where `spinner_start` transitions to `PROCESSING`
-with source `'pty'` and `idle` to `IDLE` (`state-machine.ts:312-364`). That is terminal
-parsing authoring lifecycle, and it is exactly what principle 2 of #273 forbids restoring.
-It is confined to the managed path; the daemon's other caller of `handleParserEvent`
-(`daemon-server.ts:4966`) is the **OpenClaw Gateway** adapter, whose `'parser'` source is
-Gateway events, not a terminal.
+The five unforwarded events do not reach the state machine at all, and the boundary is
+enforced twice rather than by convention. Both PTY adapters refuse to forward them, each
+with the reason in a comment (`claude-code.ts:33`, `codex-cli.ts:26`), and the receiving
+end filters independently: terminal events arrive at `handleTerminalUiEvent`
+(`index.ts:669`), which drops anything outside `TERMINAL_UI_EVENTS`
+(`state-machine.ts:56-67`) — a set that excludes `spinner_start`, `spinner_stop`, `idle`
+and `tool_action`.
+
+So **principle 2 of #273 is not violated anywhere today**: no terminal parse authors
+lifecycle, in the managed path or outside it. That is worth stating positively, because a
+replacement design does not have to budget for undoing one.
+
+The neighbouring `case 'parser'` (`index.ts:661-666`) is easy to misread as the terminal
+route. It is not: `source: 'parser'` is emitted only by the **structured** adapters —
+OpenCode SSE and the OpenClaw Gateway — which normalize native event streams into the same
+vocabulary. A consequence worth knowing before reading the state machine: those adapters'
+`spinner_start` still transitions with the literal source label `'pty'`
+(`state-machine.ts:327`), which is a stale name for a non-terminal producer, not evidence
+of terminal parsing.
 
 ### 2.2 Command semantics: managed vs observed
 
@@ -138,7 +150,8 @@ comment, and the code confirms it:
 
 | Deck command | Managed PTY | Observed |
 |---|---|---|
-| `interrupt` / `escape` | `\x03` written to the PTY (`pty-manager.ts:204`) — immediate | `requestStop(uuid)` → soft stop, denied at the **next tool call**. Pure text generation runs to completion. |
+| `interrupt` | `\x03` written to the PTY (`pty-manager.ts:204`) — immediate | `requestStop(uuid)` → soft stop, denied at the **next tool call**. Pure text generation runs to completion. |
+| `escape` | a *different* key — `\x1b` (`pty-adapter.ts:127`), dismiss/cancel, not interrupt | collapsed onto the same `requestStop` as `interrupt` (`daemon-server.ts:5464`), so ESC has **no** observed equivalent at all — a larger divergence than the interrupt row |
 | `send_prompt` | typed into the PTY | queued, delivered by the `Stop` hook as `{decision:'block'}` |
 | `respond` / `select_option` | key injection into the owned PTY | held gate if the daemon owns it; otherwise key injection into the user's terminal via the host ladder (§2.4) |
 | `switch_mode` (Shift+Tab) | `\x1b[Z` + 100 ms debounce (`claude-code.ts:81`) | **absent** — not handled anywhere in `handleObservedClaudeCommand`; only `session-focus-relay.ts:48` lists it, and that relays to a managed session |
@@ -149,8 +162,10 @@ no API, and no injection path for it.
 It is **not** a dead control on observed rows today, because no observed-facing surface
 offers one:
 
-- The live session deck (`buildSessionDeck`, `d200h-layout.ts:874`) emits only `escape`,
-  `interrupt`, `permission_decision`, `send_prompt` and `session_command` — no mode command.
+- The live session deck (`buildSessionDeck`, `d200h-layout.ts:874`) emits seven command
+  types — `escape`, `interrupt`, `permission_decision`, `send_prompt`, `session_command`,
+  and the observed answer path's `select_option` / `respond` (`:1141`, `:1146`). No mode
+  command is among them.
 - The MODE tile that does emit `{ type: 'mode_toggle' }` (`d200h-layout.ts:651,669`) lives
   in `computeLayout`, the legacy single-page direct-HID grid. `D200HLayoutModel.swift:55-58`
   records that path as superseded by the session-centric deck, and the direct-HID drivers
@@ -158,10 +173,11 @@ offers one:
 - The remaining mode button (`index.ts:1231`, gated on state at `:1230`) is built inside
   `startSession` — the session-bridge path, so its session is managed by construction.
 
-The Swift daemon still carries a `mode_toggle` handler (`DaemonServer.swift:4847`) that
-routes `switchMode` through the focus relay. No live layout emits that command, so the
-handler is unreachable in practice — worth knowing before someone reads it as evidence
-that observed mode switching works.
+Two dead mirrors survive and both read like evidence that observed mode switching works.
+The Swift daemon carries a `mode_toggle` handler (`DaemonServer.swift:4847`) routing
+`switchMode` through the focus relay, which no live layout emits; and Android's
+`BridgeConnection.sendSwitchMode()` (`BridgeConnection.kt:216`) has no callers anywhere in
+the Android tree.
 
 The consequence for #273 is sharper than "partial": today `switch_mode` is reachable
 **only** from a managed session's own deck, so removing the managed path removes the
@@ -268,7 +284,13 @@ Consequence for §1.2: the login flag is load-bearing, not decorative. A replace
 execs the agent binary directly gets the daemon's `PATH`, not the user's — which is exactly
 how a version-managed agent binary goes missing.
 
-**Not covered by either measurement:** Windows. `cmd.exe /d /s /c` has no `exec`, so the
+**Not covered:** any shell but zsh and bash. `PtyManager` uses whatever `$SHELL` names, and
+a shell without the final-command exec optimization (or a command shape that defeats it)
+leaves the spawned pid as the shell — exactly the case §2.6 concludes attribution no longer
+has to handle. The conclusion is safe for the two shells measured and should be re-measured
+before being relied on for others.
+
+**Also not covered:** Windows. `cmd.exe /d /s /c` has no `exec`, so the
 interpreter stays as the agent's parent and the pid the daemon spawned is *not* the agent
 pid. Any attribution design has to carry the ancestry walk for Windows even though POSIX
 does not need it. This desk cannot measure that.
