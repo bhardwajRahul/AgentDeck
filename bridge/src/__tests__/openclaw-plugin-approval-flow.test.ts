@@ -249,6 +249,86 @@ describe('exec and plugin approvals coexist without dropping either', () => {
     expect(adapter.getPendingApproval()?.id).toBe(EXEC_REQUESTED.id);
   });
 
+  // Review round (2026-09-12). The assertion above is on the ROW's fields, and
+  // it passed while the deck showed nothing: resolving emitted spinner_start,
+  // the daemon maps that onto gatewaySessionState, the row left
+  // awaiting_permission, sessionTier stopped returning 'attention', and no
+  // surface rendered PERM for the survivor. Assert the STATE the survivor
+  // needs, not only that it is still in the slot.
+  it('resolving the shown one keeps the row in awaiting_permission for the survivor', () => {
+    const { adapter, gw, parser } = harness();
+    gw('plugin.approval.requested', PLUGIN_REQUESTED);
+    gw('exec.approval.requested', { ...EXEC_REQUESTED, createdAtMs: 1_786_940_900_000 });
+    parser.length = 0;
+
+    gw('plugin.approval.resolved', { id: PLUGIN_REQUESTED.id, decision: 'allow-once' });
+
+    const events = parser.map((p) => p.event);
+    expect(events).toContain('permission_prompt');
+    // An allow would otherwise emit spinner_start → 'processing', which is
+    // exactly what drops the row out of attention while a prompt is live.
+    expect(events).not.toContain('spinner_start');
+    expect(events).not.toContain('idle');
+    // The re-broadcast carries the SURVIVOR's question, not the resolved one's.
+    const shown = parser.find((p) => p.event === 'permission_prompt');
+    expect(String(shown?.data?.question ?? '')).toContain(EXEC_REQUESTED.request.command);
+  });
+
+  it('an expiring approval does not idle the row while the other kind is live', () => {
+    const { adapter, gw, parser } = harness();
+    gw('plugin.approval.requested', PLUGIN_REQUESTED);
+    gw('exec.approval.requested', { ...EXEC_REQUESTED, createdAtMs: 1_786_940_900_000 });
+    parser.length = 0;
+
+    (adapter as unknown as { abandonPendingPluginApproval(id: string, why: string): void })
+      .abandonPendingPluginApproval(PLUGIN_REQUESTED.id as string, 'Expired');
+
+    expect(parser.map((p) => p.event)).not.toContain('idle');
+    expect(parser.map((p) => p.event)).toContain('permission_prompt');
+    expect(adapter.getPendingApproval()?.id).toBe(EXEC_REQUESTED.id);
+  });
+
+  it('with nothing left pending, a resolution still settles the activity state', () => {
+    const { gw, parser } = harness();
+    gw('plugin.approval.requested', PLUGIN_REQUESTED);
+    parser.length = 0;
+    gw('plugin.approval.resolved', { id: PLUGIN_REQUESTED.id, decision: 'allow-once' });
+    expect(parser.map((p) => p.event)).toContain('spinner_start');
+  });
+
+  it('a second plugin approval closes the one it supersedes instead of dropping it', () => {
+    const { adapter, gw, rows } = harness();
+    gw('plugin.approval.requested', PLUGIN_REQUESTED);
+    rows.length = 0;
+
+    const SECOND = { ...PLUGIN_REQUESTED, id: 'plugin-approval-2', createdAtMs: 1_786_940_800_000 };
+    gw('plugin.approval.requested', SECOND);
+
+    // Plugin approvals come from independent plugins and cron jobs, so two can
+    // genuinely overlap. The displaced one used to vanish with its tool_request
+    // row stuck at pending and no way to answer it from any surface.
+    const closed = rows.find((r) => r.approvalId === PLUGIN_REQUESTED.id);
+    expect(closed?.status).toBe('abandoned');
+    expect(String(closed?.raw ?? '')).toContain('Superseded');
+    expect(adapter.getPendingApproval()?.id).toBe(SECOND.id);
+  });
+
+  it('a failing exec catch-up does not skip the plugin catch-up', async () => {
+    const { adapter, rpcs } = harness();
+    (adapter as unknown as { rpcCall(m: string, p: Record<string, unknown>): Promise<unknown> })
+      .rpcCall = (method, params) => {
+        rpcs.push({ method, params });
+        // An older Gateway without the method, an error frame, an RPC timeout.
+        if (method === 'exec.approval.list') return Promise.reject(new Error('no such method'));
+        return Promise.resolve({ approvals: [PLUGIN_REQUESTED] });
+      };
+
+    await (adapter as unknown as { adoptPendingApprovals(): Promise<void> }).adoptPendingApprovals();
+
+    expect(rpcs.map((r) => r.method)).toContain('plugin.approval.list');
+    expect(adapter.getPendingApproval()?.id).toBe(PLUGIN_REQUESTED.id);
+  });
+
   it('a press routes to the ACTIVE prompt\'s own resolve method, never the other kind\'s', () => {
     const { adapter, gw, rpcs } = harness();
     gw('plugin.approval.requested', PLUGIN_REQUESTED); // active (older)

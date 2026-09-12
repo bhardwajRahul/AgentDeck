@@ -625,6 +625,19 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
    * once the held one is answered.
    */
   private async adoptPendingApprovals(): Promise<void> {
+    // Two INDEPENDENT catch-ups. They used to share one `await` chain, so an
+    // `exec.approval.list` rejection — an RPC timeout, an error frame, an older
+    // Gateway without the method — skipped the plugin half entirely and left
+    // the adapter blocked on an approval that exists on exactly one side: the
+    // precise failure this function was written to prevent. The caller's single
+    // `.catch()` only debug-logs, so it was invisible with debug off.
+    await this.adoptPendingExecApproval()
+      .catch((e) => debug('adapter:openclaw', `exec approval catch-up failed: ${String(e)}`));
+    await this.adoptPendingPluginApprovalOnConnect()
+      .catch((e) => debug('adapter:openclaw', `plugin approval catch-up failed: ${String(e)}`));
+  }
+
+  private async adoptPendingExecApproval(): Promise<void> {
     const pending = approvalListRows(await this.rpcCall('exec.approval.list', {}));
     if (pending && pending.length > 0) {
       const oldest = [...pending].sort(
@@ -644,7 +657,9 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
         this.rebroadcastActivePrompt();
       }
     }
+  }
 
+  private async adoptPendingPluginApprovalOnConnect(): Promise<void> {
     const pendingPlugin = approvalListRows(await this.rpcCall('plugin.approval.list', {}));
     if (pendingPlugin && pendingPlugin.length > 0) {
       const oldest = [...pendingPlugin].sort(
@@ -766,7 +781,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       // prompt failed to reach a human in time. `raw` names which of the four.
       approvalId, status: 'abandoned',
     });
-    this.emitAdapterEvent({ source: 'parser', event: 'idle' });
+    this.settleApprovalActivity(false);
   }
 
   /** Called from the turn-end paths (`final` / `aborted` / `error`). */
@@ -863,7 +878,22 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
   // expiry, a `plugin.approval.resolved`/`removed` event, or a reconcile miss.
 
   private setPendingPluginApproval(prompt: OpenClawPluginApprovalPrompt): void {
+    // Unlike exec approvals — serialized by the single chat turn that blocks on
+    // them — plugin approvals come from independent plugins and cron jobs and
+    // can genuinely overlap. `adoptPendingApprovals` only runs at handshake and
+    // the reconcile timer follows the NEW id, so a silently dropped predecessor
+    // stays pending on the Gateway, unanswerable from any surface, with its
+    // `tool_request` row stuck at pending forever. Close its row the way every
+    // other path does before taking the slot.
+    const superseded = this.pendingPluginApproval;
     this.clearPendingPluginApproval();
+    if (superseded && superseded.id !== prompt.id) {
+      this.emitTimelineEntry({
+        ts: Date.now(), type: 'tool_resolved',
+        raw: 'Not approved (plugin) · Superseded by a newer plugin approval',
+        approvalId: superseded.id, status: 'abandoned',
+      });
+    }
     this.pendingPluginApproval = prompt.sessionKey || !this.currentSessionKey
       ? prompt
       : { ...prompt, sessionKey: this.currentSessionKey };
@@ -921,7 +951,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
       ts: Date.now(), type: 'tool_resolved', raw: `Not approved (plugin) · ${reason}`,
       approvalId, status: 'abandoned',
     });
-    this.emitAdapterEvent({ source: 'parser', event: 'idle' });
+    this.settleApprovalActivity(false);
   }
 
   private resolvePluginApproval(
@@ -967,6 +997,36 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
 
   /** Re-emit whichever prompt is currently active (exec or plugin). Used after
    *  adopting a catch-up prompt on connect and after a dropped resolve. */
+  /**
+   * The activity state a CLOSING approval leaves behind.
+   *
+   * An approval closing does not mean the Gateway stopped waiting. The two
+   * queues are independent — an exec approval and a plugin approval can be
+   * pending at once — and the deck shows one question at a time, so closing
+   * the shown one can leave a live, answerable prompt behind. Emitting
+   * `spinner_start`/`idle` there flips the Gateway row out of
+   * `awaiting_permission` (`daemon-server.ts` maps these straight onto
+   * `gatewaySessionState`), so `sessionTier` stops returning `attention` and
+   * no surface renders PERM — while `getPendingApproval()` keeps handing the
+   * row a question and options nobody will show. The user sees an idle deck
+   * and the agent stays blocked.
+   *
+   * Re-broadcasting the survivor is what `activePendingApproval`'s doc means
+   * by "surfaces automatically": it restores the state AND swaps the rendered
+   * question in one step.
+   *
+   * This also settles a resolution for an approval we do not track: our own
+   * prompt is still pending, so it is re-shown rather than having its state
+   * stolen by someone else's resolution.
+   */
+  private settleApprovalActivity(allowed: boolean): void {
+    if (this.activePendingApproval()) {
+      this.rebroadcastActivePrompt();
+      return;
+    }
+    this.emitAdapterEvent({ source: 'parser', event: allowed ? 'spinner_start' : 'idle' });
+  }
+
   private rebroadcastActivePrompt(): void {
     const active = this.activePendingApproval();
     if (!active) return;
@@ -1909,7 +1969,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
 
         // Denial does not resume the turn — the tool call fails and the agent
         // either recovers or ends. Only an allow means work continues.
-        this.emitAdapterEvent({ source: 'parser', event: allowed ? 'spinner_start' : 'idle' });
+        this.settleApprovalActivity(allowed);
         break;
       }
 
@@ -1968,7 +2028,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
             status: allowed ? 'approved' : 'denied',
           });
         }
-        this.emitAdapterEvent({ source: 'parser', event: allowed ? 'spinner_start' : 'idle' });
+        this.settleApprovalActivity(allowed);
         break;
       }
 
