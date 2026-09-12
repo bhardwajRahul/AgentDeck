@@ -67,11 +67,23 @@ gate, non-session no-op, empty/unset var, the typed hatch, the **env-smuggled
 values, last-write scalar override through a real commander parse (`:322`), and both-layer
 disable through `parseAsync` (`:429`).
 
-Not covered, and these are the fixtures the gate asks for:
+The gate's own ask — *"add regression fixtures from representative
+configurations"* — was missing the contract's load-bearing half. Added in this branch:
 
-- Windows `cmd.exe` quoting of a woven append (no `win32` case exists for the weave).
-- A `-c` string containing shell metacharacters surviving the append unchanged.
-- Login-shell environment inheritance — currently untested at any level.
+- `bridge/src/__tests__/pty-manager-launch-contract.test.ts` — POSIX login shell
+  (`-l -c`) and its `/bin/bash` fallback, win32 `cmd.exe /d /s /c` and its `COMSPEC`
+  fallback, and the command string reaching the shell verbatim. It mocks `node-pty` and
+  drives the real `spawn()`, so it covers the combinator, not a pure helper that a later
+  edit to `spawn()` could bypass while staying green.
+- `cli.test.ts` weave cases — user quoting, `&&`, a Windows path, and a quoted env value
+  appended raw rather than tokenized.
+
+Each was mutation-checked rather than trusted for passing: dropping `-l`, JSON-escaping
+the command, and quoting the woven value each turn the new cases red.
+
+Still untested, and not reachable from a unit test: that the login shell's **environment**
+actually reaches the agent. The tests pin that `-l` is passed, not what sourcing the
+profile produces. Closing that needs a real spawn in a controlled profile.
 
 ### 1.5 Replacement assessment
 
