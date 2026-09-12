@@ -133,9 +133,28 @@ comment, and the code confirms it:
 | `switch_mode` (Shift+Tab) | `\x1b[Z` + 100 ms debounce (`claude-code.ts:81`) | **absent** — not handled anywhere in `handleObservedClaudeCommand`; only `session-focus-relay.ts:48` lists it, and that relays to a managed session |
 
 `switch_mode` is the cleanest managed-only capability in the repository: there is no hook,
-no API, and no injection path for it. The deck already gates the button on state
-(`index.ts:1230`), but not on managed-vs-observed. **Unmeasured:** what the mode button
-does today on an observed row.
+no API, and no injection path for it.
+
+It is **not** a dead control on observed rows today, because no observed-facing surface
+offers one:
+
+- The live session deck (`buildSessionDeck`, `d200h-layout.ts:874`) emits only `escape`,
+  `interrupt`, `permission_decision`, `send_prompt` and `session_command` — no mode command.
+- The MODE tile that does emit `{ type: 'mode_toggle' }` (`d200h-layout.ts:651,669`) lives
+  in `computeLayout`, the legacy single-page direct-HID grid. `D200HLayoutModel.swift:55-58`
+  records that path as superseded by the session-centric deck, and the direct-HID drivers
+  are gone.
+- The remaining mode button (`index.ts:1231`, gated on state at `:1230`) is built inside
+  `startSession` — the session-bridge path, so its session is managed by construction.
+
+The Swift daemon still carries a `mode_toggle` handler (`DaemonServer.swift:4847`) that
+routes `switchMode` through the focus relay. No live layout emits that command, so the
+handler is unreachable in practice — worth knowing before someone reads it as evidence
+that observed mode switching works.
+
+The consequence for #273 is sharper than "partial": today `switch_mode` is reachable
+**only** from a managed session's own deck, so removing the managed path removes the
+capability outright rather than degrading it.
 
 ### 2.3 The telemetry row in #273 is too pessimistic
 
@@ -192,6 +211,5 @@ state which platforms it claims it on.
 
 - Whether a handed-off (non-owned) shell process can be hook-attributed to the observed
   session it becomes (§1.5).
-- What the deck's mode button does on an observed row today (§2.2).
 - Whether `diff_prompt` has any hook-reachable equivalent, or is structurally terminal-only.
 - Everything in the remote-attach and session-ordering gates.
