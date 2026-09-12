@@ -713,13 +713,23 @@ export class BridgeCore {
     this.addInterval(setInterval(() => { poll().catch(() => {}); }, intervalMs));
   }
 
-  startGatewayHealthCheck(intervalMs = 30_000, delayMs = 5000): void {
+  /**
+   * `openclaw doctor` costs 8-9 s per run and opens its own Gateway connection,
+   * so the old 30 s cadence left the CLI running ~30% of the time and made this
+   * one check 99.5% of all Gateway RPC traffic (measured 2026-09-12: 9,958
+   * `channels.status` calls over four days, each on a fresh connection).
+   * OpenClaw's own health monitor runs on 300 s; match it.
+   */
+  startGatewayHealthCheck(intervalMs = 300_000, delayMs = 5000): void {
     const check = () => {
       if (!this.cachedGatewayAvailable) return;
-      checkGatewayHealth().then((hasError) => {
-        const changed = hasError !== this.cachedGatewayHasError;
-        this.cachedGatewayHasError = hasError;
+      checkGatewayHealth().then((verdict) => {
+        // "I could not look" is neither healthy nor broken — retain.
+        if (!verdict.known) return;
+        const changed = verdict.hasError !== this.cachedGatewayHasError;
+        this.cachedGatewayHasError = verdict.hasError;
         if (changed) {
+          debug('BridgeCore', `gatewayHasError -> ${verdict.hasError} (${verdict.reason}${verdict.detail ? `: ${verdict.detail}` : ''})`);
           this.stateMachine.emit('state_changed', this.stateMachine.getSnapshot());
         }
       }).catch(() => {});
