@@ -108,7 +108,7 @@ APME correctness."*
 |---|---|---|---|
 | `permission_prompt` | `terminal_ui` | Held `PreToolUse` gate (`observed-steering.ts`) | Partial — different semantics, see §2.2 |
 | `option_prompt` | `terminal_ui` | AskUserQuestion gate + terminal injection | Partial |
-| `diff_prompt` | `terminal_ui` | none found | **Managed-only** |
+| `diff_prompt` | `terminal_ui` | the underlying decision yes, the diff no — §2.5 | Partial |
 | `status_line` | `terminal_ui` → `usageTracker.setDuration/setOutputTokens` (`state-machine.ts:381`) | tokens yes (§2.3), duration no | Partial |
 | `project_name` | `terminal_ui` | bridge-resolved, git-aware; parser scrape is the fallback (`claude-code.ts:98`) | Covered |
 | `model_info` | `terminal_ui` | transcript `message.model` (`passive-observer.ts:324`) | Covered |
@@ -205,6 +205,50 @@ subprocess."*
 This is a platform axis #273's table does not carry. A replacement claiming parity has to
 state which platforms it claims it on.
 
+### 2.5 `diff_prompt` is unrendered, not unreachable
+
+The edit-approval prompt looked structurally terminal-only. It is not.
+
+`Write`, `Edit`, `MultiEdit` and `NotebookEdit` are all in the prompting set
+(`shared/src/claude-permission-rules.ts:66`), so an edit fires `PreToolUse` and is eligible
+for the held device gate like any other tool. The **decision** an observed user would make
+at the diff prompt is therefore already reachable daemon-first.
+
+What is lost is the diff itself, and the loss happens on our side of the hook, not at it.
+`daemon-server.ts:3677` has the full `toolInput` in hand — for an edit that includes
+`old_string` and `new_string` — and passes it to `buildGateQuestion`, which
+(`observed-steering.ts:76`) reduces it to `Allow Edit: <file_path>`. Only that one-line
+string reaches the overlay; the overlay keeps `question` and `options`
+(`awaiting-overlay.ts:29-60`), never the tool input.
+
+So the accurate statement for #273 is: **the diff data arrives at the daemon and is
+discarded before anything could render it.** Closing this gap is a rendering decision, not
+a protocol or hook limitation. The third terminal affordance — "(V)iew diff" as a
+navigable option next to Apply/Deny — has no equivalent, since the deck's gate is
+allow/deny.
+
+### 2.6 Hook attribution of a handed-off process is mechanically available
+
+§1.5's replacement candidate — AgentDeck composes and hands off the command but does not
+own the PTY — depends on the daemon being able to tell that the observed session which
+appears is the one it launched. The machinery for that already exists:
+
+- Every Claude hook posts `X-AgentDeck-Pid: $PPID`, folded into the payload as
+  `agentdeck_pid` (`daemon-server.ts:2969-2977`) — described there as *"the only
+  consent-free session→process link"*.
+- `coordination.registerPid` (`coordination-evidence.ts:264`) already handles a wrapper
+  sitting between the hook shell and the agent: it walks up to four levels of `ppid` until
+  it finds an agent process (`isAgentProcessCommand`, `:153`), so a shell in the middle
+  does not break the link.
+- `passiveSessionObserver.processes()` supplies the pid/ppid table both directions.
+
+**Not measured, and the real risk:** whether the ancestry survives. `$SHELL -l -c "claude"`
+may `exec` the agent — in which case the pid the daemon spawned *is* the agent pid and the
+link is trivial — or may fork and exit, re-parenting the agent away from the daemon's
+child. Which happens depends on the shell and the command shape, and it decides whether
+attribution needs the ancestry walk at all. This one needs a runtime measurement, not a
+reading.
+
 ---
 
 ## 3. Corrections this measurement suggests for #273
@@ -218,10 +262,12 @@ state which platforms it claims it on.
    `suggested_prompt`, `cursor_update` are the real remainder (§2.1).
 4. "Resume-command composition" is not an AgentDeck feature and needs no replacement
    design — only the no-clobber guarantee it already has (§1.3).
+5. `diff_prompt` should not read as managed-only: the decision is already hook-reachable
+   and the diff data reaches the daemon before being discarded (§2.5).
 
 ## 4. Still unmeasured
 
-- Whether a handed-off (non-owned) shell process can be hook-attributed to the observed
-  session it becomes (§1.5).
-- Whether `diff_prompt` has any hook-reachable equivalent, or is structurally terminal-only.
+- Whether `$SHELL -l -c "<agent>"` execs or forks, which decides whether a handed-off
+  process keeps an ancestry link to the daemon's child (§2.6). Runtime measurement.
+- Whether the login shell's environment actually reaches the agent (§1.4). Runtime.
 - Everything in the remote-attach and session-ordering gates.
