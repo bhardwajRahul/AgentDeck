@@ -20,6 +20,17 @@ validators: [pnpm test]
 
 **비용 정책**: 기본 judge 체인은 **로컬 MLX 서버 → 온디바이스 Apple Intelligence Foundation Models** 다. 둘 다 무료·로컬이고, 순서는 **실측한 판정 품질 순서**다 — 아래 [기본 judge 백엔드](#기본-judge-백엔드는-왜-mlx-foundation-models-순서인가) 참고. 유료 백엔드(`api`, OpenRouter 계열 `openai`)는 사용자가 명시할 때만 선택된다. 모든 run 을 평가해도 비용이 0 이 되도록 설계.
 
+APME 는 데몬 안에서만 도는 모듈이 아니라 **볼 수 있는 표면**이다. Activity 탭은 에이전트별
+누적 작업 시간과 태스크 수를, Work 판은 태스크 하나하나의 판정·점수·턴 수를 보여준다.
+
+<p align="center">
+  <img src="media/apme-activity.png" width="880" alt="APME Activity tab — per-agent totals for claude-code, codex-cli, openclaw and kiro-cli, with a table of tasks by agent, project, time and duration">
+</p>
+
+<p align="center">
+  <img src="media/apme-work.png" width="880" alt="APME Work board — tasks with verdict, score, agent, project and turn count, filtered by attention, judged, reported, in-progress and orphaned">
+</p>
+
 ### 기본 judge 백엔드는 왜 MLX → Foundation Models 순서인가
 
 2026-08-22 실측(`OpenClaw/model-eval`, `judging` 분류 6 시나리오 × 3 반복, 결과는 <https://eval.foundby.kr>):
