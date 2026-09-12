@@ -8,6 +8,19 @@
 > and `1.0.2` (2026-07-28).
 > This file stays the source of the listing copy and asset inventory for future revisions.
 
+## 1.3.0 submission (2026-09-12, pending review)
+
+Submitted the official artifact from GitHub Actions run `34679062629`.
+Maker Console verified version `1.3.0.0`, SDK 3, DRM enabled, macOS 26+ and
+Windows 10+, then displayed `Pending review · 1.3`. Automatically publish after
+approval is **off**. No processed preview is available in the pending row yet;
+the DRM encoder loop remains required before public release. The description
+below was saved in General before submitting this version.
+
+```
+AgentDeck 1.3.0 improves session and agent identity across the dashboard, adds OpenClaw plugin approval requests alongside tool approvals, and makes collaboration and connection recovery more consistent. Usage windows now reflect only the quota data actually reported by each provider. Bundled profiles cover Stream Deck, Mini, XL, +, and + XL. Requires the free AgentDeck daemon on the same computer.
+```
+
 ## 1.2.0 submission (2026-09-02, uploaded · approved 2026-09-02T09:31Z · **published 2026-09-03**)
 
 Released from Maker Console → Versions → `Release` on 2026-09-03 KST; the row reads *Published* and the product-page payload stamps `publish_date: 2026-09-02T21:39:41Z`. The DRM encoder loop below was skipped for this release on the owner's call.
@@ -70,20 +83,22 @@ Windows 11.
 ```
 AgentDeck turns Stream Deck and Stream Deck + into a live control surface for AI coding agents.
 
-Session keys show Claude Code, Codex, OpenCode, and OpenClaw sessions at a glance — which one is running, which one is waiting on you, what tool it just called. Press a key to focus a session, pick a prompt option, toggle its mode, or stop it. Dials cover Claude and Codex usage with reset countdowns, system volume, and a launcher for your agent apps.
+Session keys show Claude Code, Codex, OpenCode, OpenClaw, Kiro, and Antigravity activity: who is working, who needs your attention, and the latest tool or prompt. Select a session, answer supported approval requests, change its mode, or stop it.
 
-Profiles for Stream Deck, Stream Deck Mini, and Stream Deck + are bundled and install automatically.
+Usage dials follow the windows Claude and Codex actually report, with reset countdowns. The other dials control system volume and launch your agent apps. Session keys and usage work on macOS and Windows; browser-tab focusing is available on macOS.
+
+Profiles for Stream Deck, Stream Deck Mini, Stream Deck XL, Stream Deck +, and Stream Deck + XL are bundled and install automatically. The + XL uses four assigned dials; its two extra dials remain unassigned.
 
 Getting set up
-AgentDeck is a thin client — it needs the free AgentDeck daemon running on the same machine. On Mac, get it from the free AgentDeck app on the Mac App Store (no terminal needed). On macOS or Windows, install the CLI from a terminal:
+AgentDeck is a thin client and needs the free AgentDeck daemon on the same computer. On macOS, use the free AgentDeck app from the Mac App Store. On macOS or Windows, you can instead run:
 
-    npx @agentdeck/setup
+npx @agentdeck/setup
 
-Either way, start Claude Code, Codex, or OpenCode as you normally would and your sessions appear on the keys.
+Enable the integrations you use, then launch your coding agents normally. Some observed sessions provide monitoring only; controls appear when the integration supports them.
 
-The plugin does not embed a daemon, collect analytics, or modify your shell configuration.
+The plugin bundles no daemon and collects no analytics.
 
-AgentDeck is an independent project and is not affiliated with or endorsed by Elgato, Anthropic, OpenAI, or any other third party mentioned. All trademarks belong to their owners.
+AgentDeck is independent and is not affiliated with or endorsed by Elgato, Anthropic, OpenAI, or other third parties mentioned. All trademarks belong to their owners.
 ```
 
 ## Release notes

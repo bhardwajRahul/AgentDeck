@@ -159,6 +159,11 @@ test passes on a small fixture whatever the plan.
 Worth noting how it reached a daemon that had not changed: the index arrived
 through the shared database file, from a CLI dry-run that ran the schema.
 
+The npm release soak also found full-table scans in the 30-second evaluation
+tick's closed-run and pending-turn queues. Two additional indexes keep queue
+selection and ordering away from historical prompt/response payloads. Query-plan
+tests cover the actual store methods and preserve their filtering and ordering.
+
 ### `agentdeck apme prune` reclaims evaluation-store disk space
 
 Step and tool payloads were measured at 71% of a 2.33 GB `apme.sqlite` on one

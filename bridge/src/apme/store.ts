@@ -880,6 +880,12 @@ export class ApmeStore {
       // list both look up by task_id.
       'CREATE INDEX IF NOT EXISTS idx_evals_task ON evals(task_id)',
       'CREATE INDEX IF NOT EXISTS idx_tasks_started ON tasks(started_at)',
+      // The 30s background tick must not scan prompt/response-bearing rows.
+      // The release soak measured 4.4s for the closed-run queue and 2.1s for
+      // the outcome queue on 3,351 runs. Keep ordering and predicates in the
+      // index, including the empty-response exclusion for pending outcomes.
+      'CREATE INDEX IF NOT EXISTS idx_runs_closed_queue ON runs(ended_at DESC, task_category, id, project_path) WHERE ended_at IS NOT NULL',
+      "CREATE INDEX IF NOT EXISTS idx_turns_pending_outcome ON turns(started_at DESC, id, run_id) WHERE response IS NOT NULL AND response != '' AND outcome IS NULL",
     ]) {
       try { this.db.exec(sql); } catch { /* ignore */ }
     }
