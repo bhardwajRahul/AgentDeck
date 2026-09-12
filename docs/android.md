@@ -18,6 +18,10 @@ Detailed reference for the AgentDeck Android app — build, device support, and 
 
 ---
 
+<p align="center">
+  <img src="media/android-tablet-ui.png" width="880" alt="AgentDeck on a 10-inch Android tablet — session roster, habitat, provider rail with Claude and Codex usage, timeline and chat pane">
+</p>
+
 ## Quick Start (Google Play or GitHub APK)
 
 AgentDeck for Android is a **companion dashboard**, not the daemon itself. It

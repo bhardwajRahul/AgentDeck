@@ -126,6 +126,19 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
     /// card's integration gaps, for one) hides itself in this mode, so a
     /// launch recording shows the product instead of the operator's setup.
     var isCaptureFeedPinned: Bool { hasLaunchArgumentBridgePin }
+
+    /// The pinned feed's port, for the same reason the pin outranks
+    /// `setPreferredLocalBridge`: anything that reaches for the LOCAL daemon
+    /// while a capture feed is pinned reads this machine's real work and puts
+    /// it on camera. The Collaboration panel fetches its task history over
+    /// HTTP rather than from the feed, so without this it queried the
+    /// developer daemon on :9120 while every other pixel came from the mock.
+    var captureFeedPort: Int? {
+        guard hasLaunchArgumentBridgePin,
+              let raw = preferredLocalBridgeUrl,
+              let port = URLComponents(string: raw)?.port else { return nil }
+        return port
+    }
     #endif
 
     /// Bridges that failed to connect — skip them until browseResults refresh

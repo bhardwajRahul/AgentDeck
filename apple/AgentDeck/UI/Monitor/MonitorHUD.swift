@@ -261,11 +261,23 @@ struct MonitorHUD: View {
         #endif
     }
 
+    #if os(macOS)
+    /// A pinned capture feed answers for itself; the local daemon must not be
+    /// asked, or a capture shows this machine's real sessions in one panel and
+    /// synthetic ones everywhere else.
+    private var collaborationPort: Int {
+        #if DEBUG
+        if let pinned = stateHolder.captureFeedPort { return pinned }
+        #endif
+        return Int(daemonService.port)
+    }
+    #endif
+
     @ViewBuilder
     private func dashboardRightRail(maxHeight: CGFloat) -> some View {
         #if os(macOS)
         if collaborationEnabled {
-            CollaborationPanel(maxHeight: maxHeight, port: Int(daemonService.port))
+            CollaborationPanel(maxHeight: maxHeight, port: collaborationPort)
         } else {
             TopologyRail(maxHeight: maxHeight)
         }

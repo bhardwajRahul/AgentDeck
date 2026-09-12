@@ -6,15 +6,16 @@ Upload-ready App Previews are in `previews/<platform>/`. The videos use only act
 
 | Platform | Time | Visual |
 |---|---:|---|
-| macOS | 0–5.5s | Hardware-optional Device Preview with Stream Deck+ selected |
-| macOS | 5.5–11s | On-device Foundation Models judge configuration and ready state |
-| macOS | 11–16.5s | Opt-in Claude/Codex integrations and connected account status |
+| macOS | 0–2.5s | Cold open — a connected daemon with no sessions yet |
+| macOS | 2.5–11s | Claude then Codex appear; the Codex weekly gauge lights up |
+| macOS | 11–20s | OpenCode joins, Claude enters the amber attention state, then clears |
+| macOS | 20–28s | All three complete and the creatures settle to the floor |
 | iPhone | 0–8s | Three sample agents in processing/idle states; animated creatures and timeline |
 | iPhone | 8–15.5s | Claude attention state with a display-only “respond in terminal” prompt |
 | iPad | 0–8.8s | Full dashboard, topology, animated aquarium, timeline, and detail pane |
 | iPad | 8.8–17.2s | Focused attention state while the remaining agents stay visible |
 
-The mobile source recordings were captured from iOS 18.6 Simulators using the Debug-only `-AgentDeckScreenshotURL` path and `scripts/appstore-screenshot-mock.mjs`. The mock is not included in Release/App Store builds. The macOS preview is assembled from the three upload-ready, privacy-reviewed screenshots because the live developer dashboard contains real local session and hardware state.
+All three platforms record the live dashboard against the deterministic feed in `scripts/appstore-demo-orchestrator.mjs`, reached through the Debug-only `-AgentDeckScreenshotURL` argument; the mobile takes run on iOS Simulators. Neither the orchestrator nor `scripts/appstore-screenshot-mock.mjs` ships in a Release/App Store build. Every session name, project, task line and device row in the footage comes from that feed, so no real local session or hardware state is on screen — the earlier note here describing the macOS preview as a slideshow of three screenshots described an approach that was replaced and was left behind by the change.
 
 ## Capture rules
 

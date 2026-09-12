@@ -45,7 +45,61 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
-## Unreleased
+## 2026-09-12 — ESP32 1.2.3
+
+The TRMNL 7.5-inch firmware now reports its canonical `trmnl_75` board identity,
+and release assets use that name. The daemons retain the legacy `inkdeck` alias
+for existing firmware. Display behavior and protocol compatibility are unchanged.
+
+## 2026-09-12 — npm 1.3.0, Apple 1.3.0, Android 1.3.0, Stream Deck 1.3.0, Ulanzi 1.3.0
+
+### The daemon handover stops wedging the macOS app
+
+Whenever the CLI daemon evicted the in-process Swift daemon, the macOS app could
+be left with neither a daemon nor a client — permanently. Reproduced on
+2026-09-07, 09-09 and 09-10, and caught in the wedged state the last time, so
+this is a line and not a theory: `connectToExternalDaemon` had one failure exit
+with no rescheduled `start()` while every other exit had one, and that same exit
+set `port = 0`, which neutered the health check's own guard. The code that gives
+up and the code that clears state shared a failure mode. The port is now
+resolved known › registry › canonical port (zero is not an answer on any input),
+the dead-end branch schedules a retry anyway because it is the branch that wedged
+the app for 23 hours, and the four Node sites that evict a Swift daemon go
+through one path that prefers `/stand-down` over `/shutdown` — a stand-down names
+the port the app must become a client of. A handover stop names it too; a plain
+`daemon stop` deliberately keeps `/shutdown`, because there "become a client" is
+a lie and the app would re-promote after its yield window.
+
+The app could also hold a listener it had no business holding: it sat in client
+mode with three connections to the hub while owning `*:9121` and answering
+nothing on it. A patient health probe had suspended while `start()` completed a
+bind, and on waking it dropped a server it had not created by assigning `nil` —
+but a started `NWListener` is retained until it is cancelled and holds the server
+weakly, so the orphan outlived its owner, kept a session-bridge port for the life
+of the process, and sent every connection it accepted to a nil receiver.
+Ownership transitions are now epoch-guarded at all four exits.
+
+### `agentdeck daemon restart` reports what actually came up
+
+On any machine with daemon autostart installed, the supervisor's respawn
+routinely wins the port back before the restart command's own child does. The
+command was checking for the process id it had forked, so it printed a failure
+over a daemon that was serving correctly — and the natural retry then stopped a
+healthy daemon. It now verifies the daemon that answered: that one is running,
+that it is not the one just stopped, and that it is serving the build on disk.
+
+### Every surface could be told the wrong agent was working
+
+The hub's global `state_update` was labelled `openclaw` whenever the Gateway
+adapter was alive, while the global state machine underneath it is moved by every
+observed Claude hook. With the Gateway idle, surfaces showed "OpenClaw ·
+processing · Bash `cd …`" carrying a Claude session's command, and it healed
+itself whenever the other sessions went quiet — which is what made it read as
+intermittent. The frame is now stamped by whoever moved it: a hook session
+produces an aggregate `daemon` frame with that session's id and project, the
+Gateway produces an `openclaw` frame with its own state, model and tool, and
+nobody-yet keeps `openclaw` while the link is alive. Consumers that gated the
+OpenClaw model catalog on the old label accept both.
 
 ### Collaboration: readable history and reliable relation identity
 
@@ -75,6 +129,48 @@ pass, and `agentdeck apme judge-health` reports whether the work that closed
 actually received a verdict, rather than leaving that to be inferred from an
 empty scorecard.
 
+### A wake is a clock jump, not a late timer
+
+Under load the five-second wake tick landed more than fifteen seconds late
+routinely, and the detector read every such gap as a system wake: 123 firings on
+2026-09-10 against zero sleep events in `pmset`'s log, one every one to four
+minutes at the peak. Each firing ran the full device-recovery storm — mDNS
+republish, pairing re-arm on every board, BLE workers restarted, usage refetch —
+which starved the next tick, so the detector fed itself, and left `/health`
+unanswered long enough for the macOS app to promote to a fallback port and stand
+down three times in five minutes. Across a real suspend the wall clock jumps
+while the monotonic clock does not; under load both advance together, and that
+difference is now what a wake is read from. Windows' monotonic clock counts
+through sleep, so there the gap rule stays, documented as the weaker instrument.
+
+### The Work board no longer stalls the daemon for two minutes
+
+An index added for the prune command became the best index SQLite could see for
+the Work board's per-task tool count, so the planner walked every `kind='tool'`
+row once per task — roughly 200 million row visits over multi-kilobyte payloads,
+137,802 ms for one page on a live store, on a page the macOS app polls every
+fifteen seconds. The database driver is synchronous on the daemon's main thread,
+so for that whole time there was no event loop: `/health` went unanswered, the
+macOS app promoted and stood down three times in five minutes, and the OpenClaw
+link dropped on a ping timeout. A covering index brings the same page to 257 ms.
+The regression test pins the query plan rather than a timing, because a timing
+test passes on a small fixture whatever the plan.
+
+Worth noting how it reached a daemon that had not changed: the index arrived
+through the shared database file, from a CLI dry-run that ran the schema.
+
+### `agentdeck apme prune` reclaims evaluation-store disk space
+
+Step and tool payloads were measured at 71% of a 2.33 GB `apme.sqlite` on one
+desk, with no retention path and no way to reclaim the bytes.
+`agentdeck apme prune [--older-than 30] [--apply] [--vacuum]` replaces payloads
+older than the cutoff with a small marker instead of deleting rows, so every
+reader keeps working. Runs, tasks, turns and evaluations are kept forever, rows
+whose age is unknown are never candidates, and only tool events are pruned — the
+other kinds hold small, load-bearing text. It is a dry run by default; `--apply`
+runs in one transaction; `--vacuum` reclaims disk only when there is room to do
+it safely. Nothing prunes in the background.
+
 ### Evaluation: the same settings file now produces the same verdict
 
 Either daemon may hold the port, and both read one `settings.json`, so a
@@ -91,7 +187,27 @@ fallback's rate unmeasurable on that daemon at all.
 The local judge also stops writing off a server capability on ambiguous
 evidence: when a request succeeded after both a field was dropped **and** the
 prompt was shortened, neither is now blamed, because the shortened prompt
-explains the success by itself.
+explains the success by itself. The judge ladder retries per request and keeps
+no memory of what an endpoint refused last time.
+
+The task classifier runs one preference order on both daemons — `mlx`, then
+Apple's on-device models, then the deterministic rules — and never reaches for a
+paid backend. That order is deliberately not presented as a ranking: the
+measurement that suggested otherwise ran 40 tasks against a server that had a
+27B model loaded under a 15-second budget, which measures that afternoon's load
+rather than the backends, so the order chosen is the one that changes the fewest
+existing results while letting a Mac with no MLX server still get an LLM answer.
+
+### The local judge scores only a model that is actually resident
+
+A measurement script hot-swapped the operational model and drove GPU peak to
+78.55 GB while `/health` still answered healthy. Residency, server availability
+and the installed catalog are now three separate facts on the wire rather than
+one blurred one, a per-endpoint admission gate holds a GPU failure in cooldown
+instead of retrying into it, unknown stays explicitly unknown, and a legacy
+`VRAM=0` never reads as "not loaded". The policy is shared between the two
+daemons behind a byte-for-byte generator gate, with the same vectors replayed by
+both test suites.
 
 ### OpenClaw runs are only opened when there is something to record
 
@@ -103,12 +219,58 @@ discarded for want of an open turn. A run is now opened by the first event that
 can actually be recorded, which also covers the connection-wide run that was
 being opened at connect and usually stayed empty.
 
+### OpenClaw: plugin approvals reach the deck, and the model catalog survives a busy restart
+
+AgentDeck answered `exec.approval.*` — the Gateway blocking a tool-execution
+call — but never rendered `plugin.approval.*`, the parallel surface a plugin or a
+trusted agent runtime uses to ask a human something that is not a shell command.
+A pending plugin approval sat on the Gateway with no PERM on any surface. Both
+daemons now render it alongside exec approvals, from the installed OpenClaw
+package's own type declarations rather than from an inferred shape.
+
+The Node adapter also learned the model catalog only by spawning a CLI at
+connect, on a five-second budget with one retry. On 2026-09-11 a daemon restart
+landed as an Xcode build and a Gradle build started, both attempts timed out
+although the command takes about 1.6 seconds idle, and every surface ran without
+a catalog or a Gateway model name until the daemon was restarted again. The
+catalog is now read over the socket the adapter already holds — the way the macOS
+daemon has always read it — with the CLI kept as a fallback for a Gateway that
+does not advertise the method, and both adapters retry on one ladder for as long
+as the link lives.
+
+### The macOS daemon log is capped
+
+The Swift daemon's log was measured at 518 MB with no cap, 98% of it debug lines
+that were being written whether or not debug logging was enabled. The logger now
+rotates at 32 MB on its own write queue, keeping exactly one previous generation,
+and the diagnostics view reads into that generation when the live file is short
+right after a rotation.
+
 ### Usage gauges
 
 A Codex usage window the API did not report is no longer drawn as a window at
 0%, a gauge's position on the deck no longer depends on whether it happens to be
 the binding limit, and a scoped limit's name no longer collides with a
 three-digit percentage on the D200H's shared row.
+
+### Stream Deck: the OFFLINE key can say why
+
+A user saw the single word OFFLINE with no way to tell "no daemon registered
+anywhere" from "found one but its process is gone" from "a live daemon is on a
+fallback port we have not reached" — even though the plugin already held every
+fact needed to separate them. Every action's Property Inspector now carries the
+same status line: a plain-words daemon status, the resolved `daemon.json` path,
+the port, how long ago it was probed, and a Retry that round-trips. The widget
+also now uses the Property Inspector's own font instead of the webview's
+defaults, which rendered it in Times New Roman.
+
+### Android: whatever rotates draws the running glyph
+
+Two timeline mirror bugs that the TypeScript and Swift surfaces had already
+fixed. A starting task rotated the static checklist glyph instead of swapping in
+the circular arrow, and a failed turn kept spinning next to the row explaining
+the failure, because `error` was missing from Kotlin's completion list. The swap
+rule now lives in shared code and is applied at both Android render sites.
 
 ### ESP32: InkDeck is now `trmnl_75`
 
@@ -117,14 +279,17 @@ running AgentDeck firmware. `inkdeck` remains an accepted alias, because a board
 already in the field reports the name it was flashed with and must stay
 reachable by the update that renames it.
 
-### `agentdeck daemon restart` reports what actually came up
+### Installing: the CLI link is reported honestly
 
-On any machine with daemon autostart installed, the supervisor's respawn
-routinely wins the port back before the restart command's own child does. The
-command was checking for the process id it had forked, so it printed a failure
-over a daemon that was serving correctly — and the natural retry then stopped a
-healthy daemon. It now verifies the daemon that answered: that one is running,
-that it is not the one just stopped, and that it is serving the build on disk.
+`scripts/install.sh` swallowed `pnpm link --global`'s stderr, warned, and then
+printed `agentdeck CLI linked` unconditionally — so on a pnpm that rejects the
+command the installer reported a link it had not made, and the next `agentdeck`
+either failed or silently resolved to an unrelated global install. It now
+reports the real outcome, prints what pnpm actually said, and names the two
+paths that do not depend on the link (`node bridge/dist/cli.js` and
+`npx @agentdeck/setup`). The flag turns out to be undocumented and
+version-dependent rather than simply gone, which is enough to stop depending on
+it silently but not enough to name a replacement. Reported by @jurri.
 
 ## 2026-09-06 — npm 1.2.1, Apple 1.2.1, ESP32 1.2.2
 

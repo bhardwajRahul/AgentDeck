@@ -15,6 +15,7 @@
 import process from 'node:process';
 import { readFileSync } from 'node:fs';
 import { WebSocketServer } from '../bridge/node_modules/ws/wrapper.mjs';
+import { createServer } from 'node:http';
 
 const CYCLE_MS = 30_000;
 const DEFAULT_PORT = Number(process.env.AGENTDECK_DEMO_PORT || 9220);
@@ -278,6 +279,9 @@ function parseArgs(argv) {
     else if (arg === '--port') options.port = Number(rest[++index]);
     else if (arg === '--epoch-ms') options.epochMs = Number(rest[++index]);
     else if (arg === '--agent') options.agent = rest[++index];
+    // Marketing-only. See `relayedClaudeUsage` for why this is opt-in and why
+    // it must never be set for an App Store capture.
+    else if (arg === '--relay-usage') options.relayUsage = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   return options;
@@ -333,10 +337,35 @@ function timelineEntry(phase, cycleStartedAt) {
 // and relay data only the external Node daemon supplies, so `TopologyRail`
 // collapses the Claude row. Sending them here would show the App Store app
 // doing something it cannot do.
-function usageEvent(usage, cycleStartedAt) {
+/// Claude's subscription gauges, for MARKETING captures only.
+///
+/// The App Store build cannot produce these on its own: the quota lives behind
+/// Claude Code's own keychain item and reaches the app only when a Node daemon
+/// relays it (`UsageAPIClient.directOAuthUsageSupported == false`, and
+/// `TopologyRail.rateLimitChips` gates the chips on `isUsingExternalDaemon`).
+/// A preview or screenshot showing a populated Claude row therefore advertises
+/// a capability the shipped app does not have alone — which is exactly why the
+/// default feed omits these fields, and why `record-appstore-previews.sh` and
+/// `capture-appstore-screenshots.sh` never pass `--relay-usage`.
+///
+/// README, the project site and the plugin marketplaces describe the daemon
+/// product, where the relay is present and the gauges are real. Those captures
+/// opt in.
+function relayedClaudeUsage(cycleStartedAt) {
+  const isoAfter = (ms) => new Date(cycleStartedAt + ms).toISOString();
+  return {
+    fiveHourPercent: 19,
+    fiveHourResetsAt: isoAfter(1.7 * 60 * 60 * 1000),
+    sevenDayPercent: 39,
+    sevenDayResetsAt: isoAfter(4.9 * 24 * 60 * 60 * 1000),
+  };
+}
+
+function usageEvent(usage, cycleStartedAt, relayUsage = false) {
   const isoAfter = (ms) => new Date(cycleStartedAt + ms).toISOString();
   return {
     type: 'usage_update',
+    ...(relayUsage ? relayedClaudeUsage(cycleStartedAt) : {}),
     usageStale: false,
     codexPlanType: 'plus',
     codexRateLimits: {
@@ -425,7 +454,7 @@ const moduleHealth = {
   },
 };
 
-function eventsForPhase(index, cycleStartedAt, includeHistory) {
+function eventsForPhase(index, cycleStartedAt, includeHistory, relayUsage = false) {
   const phase = phases[index];
   const focusedKey = Object.keys(agents).find((key) => agents[key].id === phase.focus);
   const focused = agents[focusedKey];
@@ -473,7 +502,7 @@ function eventsForPhase(index, cycleStartedAt, includeHistory) {
   // On (re)connect replay the standing snapshot; mid-cycle only emit on the
   // phases that actually move the gauge.
   const usage = includeHistory ? usageAt(index) : phase.usage;
-  if (usage) events.push(usageEvent(usage, cycleStartedAt));
+  if (usage) events.push(usageEvent(usage, cycleStartedAt, relayUsage));
 
   if (includeHistory) {
     events.push({
@@ -489,6 +518,92 @@ function eventsForPhase(index, cycleStartedAt, includeHistory) {
   return events;
 }
 
+
+// ---------------------------------------------------------------- collaboration
+//
+// The Collaboration panel does not read the WebSocket feed: it fetches
+// `GET /apme/tasks?session=<id>&limit=1` and then `GET /apme/tasks/<taskId>`
+// from the daemon port it was told about. Without an answer the panel sits on
+// "Reading collaboration history…" forever, which is what a capture of it
+// looked like before this existed.
+//
+// The shapes are read off the client's own decoders (`CollaborationModel.swift`):
+// only `kind: "subagent"` events with a phase of started/completed become
+// branches, and only `kind: "relation"` events whose relation is one of
+// spawned/messaged/waiting_on, direction in/out, phase open/closed become
+// relation rows. The panel also refuses a daemon that ignores the session
+// filter, so the filter here is real rather than decorative.
+const COLLABORATION_TASKS = {
+  'demo-claude': {
+    id: 'task-dashboard-polish',
+    sessionId: 'demo-claude',
+    title: 'Polish the dashboard for the launch capture',
+    summary: 'Polished the dashboard and handed the token audit to two helpers',
+    endedAt: null,
+    events: [
+      { kind: 'subagent', id: 'sub-token-audit', name: 'Token audit', phase: 'completed',
+        summary: 'Checked every mirror against the design tokens', ts: 0 },
+      { kind: 'subagent', id: 'sub-layout-sweep', name: 'Layout sweep', phase: 'started',
+        summary: 'Re-measuring the session cards at narrow widths', ts: 0 },
+      { kind: 'relation', relation: 'spawned', direction: 'out', phase: 'closed',
+        relationId: 'rel-token-audit', peerSessionId: 'demo-codex', peerName: 'API Client',
+        evidence: 'task_tool', detail: 'Audit the design token mirrors', ts: 0 },
+      { kind: 'relation', relation: 'waiting_on', direction: 'out', phase: 'open',
+        relationId: 'rel-release-notes', peerSessionId: 'demo-opencode', peerName: 'Documentation',
+        evidence: 'task_tool', detail: 'Release notes for the launch', ts: 0 },
+      { kind: 'relation', relation: 'messaged', direction: 'in', phase: 'closed',
+        relationId: 'rel-handback', peerSessionId: 'demo-codex', peerName: 'API Client',
+        evidence: 'send_message', detail: 'All release checks passed', ts: 0 },
+    ],
+  },
+};
+
+function collaborationPayloadFor(sessionId, cycleStartedAt) {
+  const record = COLLABORATION_TASKS[sessionId];
+  if (!record) return null;
+  // Timestamps are relative to the running cycle so the panel's "observed"
+  // ages stay small instead of drifting to days old between captures.
+  const at = (offsetMs) => cycleStartedAt + offsetMs;
+  const events = record.events.map((event, index) => ({ ...event, ts: at(-((index + 1) * 45_000)) }));
+  return {
+    task: {
+      id: record.id,
+      sessionId: record.sessionId,
+      title: record.title,
+      summary: record.summary,
+      endedAt: record.endedAt,
+    },
+    sample: { id: record.id, sessionId: record.sessionId, endedAt: record.endedAt, events },
+  };
+}
+
+function handleCollaborationRequest(request, response, cycleStartedAtFor) {
+  const url = new URL(request.url, 'http://127.0.0.1');
+  const json = (body) => {
+    const text = JSON.stringify(body);
+    response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });
+    response.end(text);
+  };
+  const cycleStartedAt = cycleStartedAtFor();
+
+  if (url.pathname === '/apme/tasks') {
+    const session = url.searchParams.get('session') || '';
+    const payload = collaborationPayloadFor(session, cycleStartedAt);
+    json({ tasks: payload ? [payload.task] : [] });
+    return true;
+  }
+  const match = url.pathname.match(/^\/apme\/tasks\/(.+)$/);
+  if (match) {
+    const taskId = decodeURIComponent(match[1]);
+    const payload = Object.keys(COLLABORATION_TASKS)
+      .map((session) => collaborationPayloadFor(session, cycleStartedAt))
+      .find((candidate) => candidate && candidate.task.id === taskId);
+    json({ sample: payload ? payload.sample : null });
+    return true;
+  }
+  return false;
+}
+
 function send(socket, payload) {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(payload));
 }
@@ -496,9 +611,21 @@ function send(socket, payload) {
 async function serve(options) {
   const port = options.port || DEFAULT_PORT;
   const epochMs = options.epochMs || Date.now() + 1_500;
-  const wss = new WebSocketServer({ host: '127.0.0.1', port });
   let lastPhase = -1;
   let lastCycle = -1;
+  const cycleStartedAtNow = () =>
+    epochMs + Math.floor(Math.max(0, Date.now() - epochMs) / CYCLE_MS) * CYCLE_MS;
+
+  // One port answers both: the dashboard dials the WebSocket and the
+  // Collaboration panel fetches HTTP against the same daemon port it was told
+  // about in the feed.
+  const httpServer = createServer((request, response) => {
+    if (handleCollaborationRequest(request, response, cycleStartedAtNow)) return;
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end('{"error":"not found"}');
+  });
+  const wss = new WebSocketServer({ server: httpServer });
+  await new Promise((resolve) => httpServer.listen(port, '127.0.0.1', resolve));
 
   wss.on('connection', (socket) => {
     const now = Date.now();
@@ -511,7 +638,7 @@ async function serve(options) {
       status: 'connected',
       ...(phases[index].focus ? { sessionId: phases[index].focus } : {}),
     });
-    for (const event of eventsForPhase(index, cycleStartedAt, true)) send(socket, event);
+    for (const event of eventsForPhase(index, cycleStartedAt, true, options.relayUsage)) send(socket, event);
 
     socket.on('message', (data) => {
       if (data.toString().includes('ping')) send(socket, { type: 'pong' });
@@ -528,7 +655,7 @@ async function serve(options) {
     const cycleStartedAt = epochMs + cycle * CYCLE_MS;
     const isNewCycle = cycle !== lastCycle;
     for (const socket of wss.clients) {
-      for (const event of eventsForPhase(index, cycleStartedAt, isNewCycle)) send(socket, event);
+      for (const event of eventsForPhase(index, cycleStartedAt, isNewCycle, options.relayUsage)) send(socket, event);
     }
     lastPhase = index;
     lastCycle = cycle;
@@ -540,7 +667,10 @@ async function serve(options) {
 
   const shutdown = () => {
     clearInterval(timer);
-    wss.close(() => process.exit(0));
+    // The WebSocket server no longer owns the listener, so closing it alone
+    // leaves the port held and the next take fails to bind.
+    for (const socket of wss.clients) socket.terminate();
+    wss.close(() => httpServer.close(() => process.exit(0)));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

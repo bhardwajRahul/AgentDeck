@@ -12,6 +12,25 @@ Monitor and control your AI agents from iPhone, iPad, or Mac — a native SwiftU
 
 The Apple app is a SwiftUI multiplatform app that connects to the dashboard hub on iOS/iPadOS, and **on macOS ships with a standalone in-process Swift daemon** — mDNS, device modules (serial/Pixoo/Timebox/iDotMatrix), Gateway proxy, hook ingestion, and WebSocket server — so the macOS build monitors sessions without Node.js. You can still use the `agentdeck` CLI alongside it for Claude Code / Codex / OpenCode PTY sessions and CLI-only integrations; the app's daemon auto-detects and defers to a running CLI daemon on the same port.
 
+## macOS Dashboard Window
+
+One window holds the whole desk: the session roster, the habitat, the timeline, and the
+`UPSTREAM` / `DOWNSTREAM` rail that names every provider and every connected surface.
+
+<p align="center">
+  <img src="media/macos-dashboard.png" width="880" alt="AgentDeck macOS Dashboard — session roster, habitat with per-project creatures, UPSTREAM provider rail with Claude and Codex usage gauges, DOWNSTREAM surface list, and the timeline">
+</p>
+
+## Collaboration (Beta)
+
+The Collaboration panel answers who is working, who is waiting, and who is exchanging
+results — per session, from typed coordination evidence rather than from guesswork. Live
+session counts are shown separately from the task record, because they differ in scope.
+
+<p align="center">
+  <img src="media/collaboration-panel.png" width="880" alt="AgentDeck Collaboration panel — selected session with its latest task, spawned-running and jobs-waited-on counts, and the live-census caveat, beside the habitat">
+</p>
+
 ## Three-Tab Navigation
 
 | Tab | Content |
