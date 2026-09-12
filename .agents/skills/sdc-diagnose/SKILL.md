@@ -5,7 +5,7 @@ description: Diagnose AgentDeck Stream Deck/PTY option synchronization, cursor s
 
 # AgentDeck Diagnostic Skill
 
-Canonical diagnostic procedure for AgentDeck bridge synchronization issues between device displays and agent terminals (cursor desync, false idle, stale options, action dispatch races, hook ingestion gaps, state-machine regressions). This file is the single source of truth — `.claude/skills/sdc-diagnose.md` is a thin pointer to it.
+Canonical diagnostic procedure for AgentDeck bridge synchronization issues between device displays and agent terminals (cursor desync, false idle, stale options, action dispatch races, hook ingestion gaps, state-machine regressions). This file is the single source of truth — `.claude/skills/sdc-diagnose` is a tracked directory symlink to this skill.
 
 ## Step 1: Collect Diagnostic Data
 
@@ -24,7 +24,7 @@ ls -t ~/.agentdeck/journal/*.jsonl 2>/dev/null | head -1 | xargs tail -500
 tail -200 /tmp/sdc-debug.log 2>/dev/null || echo "No debug log found"
 ```
 
-If these commands fail because of sandboxing or access to user-local files, request scoped approval before relying on guesses.
+If access fails, follow `CLAUDE.md` Agent working agreements for execution-policy failures. Treat unreadable diagnostics as unknown, not proof that the bridge is stopped.
 
 ## Step 2: Analyze for Known Failure Patterns
 

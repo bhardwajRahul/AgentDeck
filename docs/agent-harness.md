@@ -7,8 +7,8 @@ locale: en
 canonical: true
 status: stable
 owner: Repository maintainers
-reviewed: 2026-09-10
-revision: 2026-09-10
+reviewed: 2026-09-11
+revision: 2026-09-11
 source_of_truth: docs/agent-harness.md
 validators: [pnpm design-system:check]
 ---
@@ -20,8 +20,8 @@ This repo is built by switching between **Claude Code, Codex, OpenCode, and occa
 
 ## Tier model (read in this order)
 
-1. **`AGENTS.md`** — the entry file every agent reads first (Codex/OpenCode/Antigravity discover it by convention; Claude Code reads `CLAUDE.md` directly). It requires `CLAUDE.md` and points back here. Kept short on purpose: Codex injects the root→cwd `AGENTS.md` chain up to a combined 32 KiB (`project_doc_max_bytes`) and silently drops whatever exceeds it.
-2. **`CLAUDE.md`** — the always-loaded **map**: monorepo layout, build/test, cross-cutting conventions, and the `paths → rule file` index. Held at roughly 30 KB (~8K tokens) so that it fits Claude Code's context budget guidance and Codex's ~10,000-token shell-output window in one read; it was 153 KB before 2026-09-10 and Codex saw only the head and tail of it.
+1. **`AGENTS.md`** — the entry file every agent reads first (Codex/OpenCode/Antigravity discover it by convention; Claude Code reads `CLAUDE.md` directly). It requires `CLAUDE.md` and points back here. Kept short on purpose: Codex injects the root→cwd `AGENTS.md` chain up to the configured `project_doc_max_bytes` (32 KiB by default). Discovery also supports global guidance, `AGENTS.override.md`, and configured fallback names; see the official sources below.
+2. **`CLAUDE.md`** — the shared **map** (automatic in Claude Code, explicitly read by other agents): monorepo layout, build/test, cross-cutting conventions, and the `paths → rule file` index. Reduced from 153 KB to roughly 30 KB on 2026-09-10. Keep it focused on routing and cross-cutting agreements. Tool output budgets vary by harness and invocation; inspect truncation markers and reread missing sections rather than treating a byte count as a fixed token limit.
 3. **`.claude/rules/<domain>.md`** — the **SSOT for domain invariants** (APME, OpenClaw, hooks/PERM, usage, ESP32 flash, daemon lifecycle, Swift daemon, wire/devices, managed sessions, design system, App Store/release). Each file carries a `paths:` frontmatter; Claude Code loads it when a matching file is touched, every other agent reads it on demand before editing in that area. Tracked in git (the ignore file lists `.claude/*` and re-includes `.claude/rules/`). Rule bodies are moved verbatim, never paraphrased.
 4. **`DEVELOPMENT_LOG.md`** — searchable recent history, and a **generated file**: every entry is one file in `docs/devlog/entries/YYYY-MM-DD-<slug>.md`, and `scripts/devlog-build.mjs` (`pnpm devlog:build`) renders the active log (current + previous month), one `docs/devlog/YYYY-MM.md` per older month, and the index; `pnpm devlog:check` fails CI when an aggregate is stale or an entry malformed. Per-entry files exist because every session used to prepend to the same lines of one file (2026-09-10 measurement: 73 writes, 35 reads, most reads conflict-marker checks). Never read it in full; check the top, then `rg` for keywords/filenames, and grep one archived month at a time.
 
@@ -30,7 +30,7 @@ This repo is built by switching between **Claude Code, Codex, OpenCode, and occa
 | Agent | Enters repo via | Instruction files it reads | Skill/workflow auto-discovery | Known limits in the harness |
 |---|---|---|---|---|
 | **Claude Code** | native `claude` (`agentdeck claude` is legacy compatibility) | `CLAUDE.md` (every session); `.claude/rules/*.md` by `paths:`; nested `esp32/CLAUDE.md` on demand | `.claude/skills/<name>` → symlink to `.agents/skills/<name>` | Skill dirs must stay symlinks, never copies |
-| **Codex** (`gpt-6-astra`) | native `codex` (`agentdeck codex` is legacy compatibility) | `AGENTS.md` chain (root→cwd, 32 KiB combined) → `cat CLAUDE.md` → matching `.claude/rules/*.md` by hand; `esp32/AGENTS.md` only when cwd is under `esp32/` | `.agents/skills/` (repo-scoped) + `.agents/workflows/` | No path-scoped instruction files (`.codex/rules` is exec policy). Shell output reaches the model as head+tail of ~10,000 tokens, so a file over ~40 KB must be read in chunks. Astra pauses on conflicting guidance — keep `AGENTS.md` a pointer, never a second copy |
+| **Codex** (`gpt-6-astra`) | native `codex` (`agentdeck codex` is legacy compatibility) | `AGENTS.md`/override chain (root→cwd, configurable 32 KiB default) → `cat CLAUDE.md` → matching `.claude/rules/*.md` by hand; `esp32/AGENTS.md` only when cwd is under `esp32/` | `.agents/skills/` (repo-scoped); skills route to `.agents/workflows/` | No automatic `.claude/rules` glob loading (`.codex/rules` is exec policy). Check actual output truncation. Astra can pause on unclear or conflicting guidance — use canonical rules and current task authorization |
 | **OpenCode** | native `opencode` (`agentdeck opencode` is legacy compatibility) | `AGENTS.md` → `CLAUDE.md` | No repo hook/skill auto-discovery | Fully supported as a product session type through the observer plugin; when authoring this repo, point it explicitly at `.agents/workflows/<name>.md` |
 | **Antigravity** | manual editing, or native Antigravity CLI/app | `AGENTS.md` → `CLAUDE.md` | Instruction files only; no repo hook/skill auto-discovery | Current product session visibility is CLI-daemon passive discovery only; the App Store app shows usage/credit status, not coding-session observation |
 
@@ -57,17 +57,19 @@ Canonical skills live under **`.agents/skills/<name>/SKILL.md`** (agent-agnostic
 - `sdc-diagnose` — Stream Deck/PTY sync, cursor, hook-ingestion, and state-machine diagnostics
 - `session-end` — cross-agent handoff (below)
 - `agentdeck-workflows` — index/router into `.agents/workflows/`
+- `esp32-heap-discipline` — firmware allocation decisions and board memory constraints
 
 ## Handoff between agents
 
 Before `/clear`, `/new`, switching tasks, or handing work to a different agent, run the **`session-end`** skill (`.agents/skills/session-end/SKILL.md`). It writes a concise handoff (goal, current outcome, changed files, verification, blockers, next action) and updates durable docs only when warranted — separating temporary handoff notes from `CLAUDE.md` / `DEVELOPMENT_LOG.md` / `AGENTS.md`.
 
-## Before you commit (any agent)
+## Memory and verification
 
-```bash
-pnpm build && pnpm typecheck && pnpm test
-pnpm generate-protocol            # must be a no-op (CI fails on drift)
-bash design/lint.sh               # design-rule baseline
-python3 design/verify-tokens-sync.py   # token mirror drift
-```
-CI (`.github/workflows/`) re-runs these regardless of which agent authored the change.
+[CLAUDE.md — Agent working agreements](../CLAUDE.md#agent-working-agreements) owns instruction priority, authorization, memory freshness, and shared-worktree rules. Agent-local memories are optional retrieval aids; essential project rules must remain discoverable from a fresh clone. Store current rules once, link memories to the owner, and label past release or approval conditions as dated evidence.
+
+[CLAUDE.md — Verification scope](../CLAUDE.md#verification-scope) defines local checks by change type. CI and release workflows retain their own gates.
+
+## Official Codex and Astra guidance
+
+- [Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md): global/project discovery, overrides, fallback filenames, and configurable size limits.
+- [GPT-6 Astra guidance](https://developers.openai.com/api/docs/guides/latest-model): clarify instruction priority and task authorization; calibrate verification to the change. Model behavior is guidance, not a guarantee that every conflict causes a pause.

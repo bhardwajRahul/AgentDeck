@@ -4,7 +4,7 @@ Stream Deck+ controller for AI coding agents — a bidirectional local control s
 
 ## How this file is organised
 
-This file is loaded into every session, so it holds only the **map**: what lives where, how to build, the
+Claude Code loads this file automatically; other agents read it through `AGENTS.md`. It holds the **map**: what lives where, how to build, the
 cross-cutting conventions, and an index of the domain rule files. **The rule bodies live in `.claude/rules/*.md`
 (tracked in git).** Each rule file declares `paths:` globs; Claude Code loads it automatically when a file
 matching those globs is touched. Codex, OpenCode and Antigravity read the same files on demand — `AGENTS.md`
@@ -79,6 +79,8 @@ pnpm generate-terrarium-rules  # terrarium-rules.ts SSOT → Swift/Kotlin/C++ ge
 
 ## Android Build
 
+For Compose and e-ink UI changes, read [docs/android-ui.md](docs/android-ui.md) and [docs/android.md](docs/android.md).
+
 Requires JDK 17+ (`brew install openjdk@17`). Build script auto-detects Homebrew JDK.
 
 ```bash
@@ -126,6 +128,24 @@ This repo is built by switching between Claude Code, Codex, OpenCode, and Antigr
 - **Session handoff**: use the `session-end` repo skill before `/clear`, `/new`, or handing work to another session. It summarizes current state and updates durable docs only when the change is project-significant.
 - **Domain rules (SSOT)**: `.claude/rules/<domain>.md` are tracked in git and are the canonical text of every domain invariant (table above). Claude Code loads them by `paths:`; other agents read the matching file before editing in that area. Add a rule to the domain file, not to this map; a genuinely cross-cutting rule goes under Key Conventions here.
 - **Agent observation** (Codex hooks, OpenCode observer plugin, Kiro transcripts, OpenClaw Gateway): [.claude/rules/observed-sessions.md](.claude/rules/observed-sessions.md), [.claude/rules/openclaw-gateway.md](.claude/rules/openclaw-gateway.md).
+
+### Agent working agreements
+
+- **Current task instructions and authorization govern the work.** Within system and execution-policy limits, follow the user's current request over skill guidance or historical memory. Reuse authorization already established in the task. Resolve routine, reversible implementation choices and continue; ask only when missing information materially changes scope or an action needs authorization not already provided. Network, GUI, device access, or a path outside the checkout alone does not create a new approval requirement. If execution policy blocks an action, use an available permitted path or explain the exact blocker; request escalation only when the harness supports it.
+- **Required project rules live in tracked documents.** This file owns cross-cutting rules; the indexed domain files own their invariants; skills own procedures. Personal memories and devlog entries are dated evidence and search hints, not additional authorization or permanent gates. Check current source and runtime before reusing old branch, release, device, or approval state. When project documents conflict, use the owning canonical document and correct the duplicate; surface unresolved consequential conflicts instead of guessing.
+- **Use a dedicated worktree before a multi-file edit in this shared repository.** Reuse the task's isolated checkout if it already has one. Otherwise inspect `git status` and `git worktree list`, then create a task branch/worktree from the intended base without switching the shared checkout's HEAD. A single-file edit also needs isolation when another session may touch that file. Before committing, inspect the current branch and the complete staged diff. Never clean a shared tree with whole-file restore, stash, reset, or rebase to remove supposed task-owned changes; preserve other sessions' work. Remove a task worktree only after its tracked and untracked work is preserved and it has no active owner.
+- **Before commands that affect a daemon or system environment**, read [.claude/rules/daemon-lifecycle.md](.claude/rules/daemon-lifecycle.md) and use the supported `agentdeck daemon …` lifecycle commands. Port 9120 and connected hardware are shared across sessions.
+- **Keep verification proportional and report evidence.** Follow Verification scope below, distinguish source changes from installed/runtime state, and stop repeating successful checks unless a new change or unresolved failure warrants it. Report the result and remaining limitation concisely.
+
+### Verification scope
+
+| Change | Required local checks before a commit |
+|---|---|
+| Markdown, instructions, or memory only; no executable/template/schema changes | `pnpm docs:check`; `pnpm design-system:check` when cataloged docs or catalog metadata change; `pnpm devlog:build` then `pnpm devlog:check` when entries change; validate any changed skills |
+| Code, build configuration, executable templates, or schemas | `pnpm build && pnpm typecheck && pnpm test`; `pnpm generate-protocol` must leave no drift; `bash design/lint.sh`; `python3 design/verify-tokens-sync.py`; relevant native/domain checks from the indexed rules/workflows |
+| Release or deployment | The applicable release/deploy workflow and domain gates, including the Release archive check for App Store submission |
+
+Run the checks for every applicable row. A docs-only local exception does not waive CI or release gates. For code fixes, add regression coverage when it exercises meaningful changed behavior; do not add tests that only restate low-impact edits. If a required check fails, identify whether it is caused by the change or the base and report it explicitly.
 
 ### Test Infrastructure
 

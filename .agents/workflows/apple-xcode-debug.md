@@ -26,7 +26,7 @@ Use `--no-sample` when a short process sample would be too intrusive. Use `--por
 - `oslog-AgentDeck.log`
 - `process/pgrep-agentdeck.txt`
 
-If `oslog-AgentDeck.log`, `process/pgrep-agentdeck.txt`, or `process/sample-*.txt` says `Operation not permitted`, `Cannot get process list`, or similar sandbox failure, rerun the same capture command with the required local approval/escalation before making hang, threading, startup, or process-lifecycle changes.
+If `oslog-AgentDeck.log`, `process/pgrep-agentdeck.txt`, or `process/sample-*.txt` says `Operation not permitted`, `Cannot get process list`, or similar sandbox failure, follow `CLAUDE.md` Agent working agreements for execution-policy failures. Retry the capture after access is resolved; unreadable evidence cannot establish a hang, threading, startup, or process-lifecycle diagnosis.
 
 4. Correlate the evidence before editing code:
 

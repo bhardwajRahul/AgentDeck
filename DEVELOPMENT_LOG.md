@@ -49,6 +49,136 @@ exec 우선으로 → 3 red, `[Plugin]` 라벨 제거 → 1 red, Swift 기본 se
 approvals.d.ts` 의 `ApprovalResolveParamsSchema{kind}`, `SessionApprovalReplaySchema`)이 들어 있다 —
 OpenClaw 가 그쪽으로 옮기면 exec/plugin 분기가 한 표면으로 접힌다. 다음 버전 확인 항목.
 
+## 2026-09-11 — 모델 카탈로그는 게이트웨이 소켓으로, 실패는 링크가 살아 있는 한 재시도
+
+허브 프레임 수정을 배포하며 데몬을 재시작했더니 OpenClaw 행에 모델이 없고 프레임의 `modelCatalog` 가
+0이었다. 접속 시점에 어댑터가 `openclaw models list --json` 을 5초 예산으로 한 번, 10초 뒤 한 번 더
+돌리고 그 뒤로는 재접속 때까지 손을 놓는 구조였는데, 그 순간 서브에이전트 둘이 xcodebuild 와 gradle 을
+막 띄워 load 가 13~15 였다. CLI 자체는 유휴에서 1.6초, 데몬과 같은 환경으로 실행해도 1.6초 —
+문제는 명령이 아니라 **두 번의 5초 창** 이었다. 회복은 데몬을 한 번 더 재시작하는 것뿐이었다
+(보드 11대가 한 번 더 끊겼다 붙는 값).
+
+### 판별 지문
+
+행의 `modelName` 과 프레임의 `modelCatalog` 는 같은 함수(`emitModelCatalog`)에서 함께 나간다.
+재시작 직후 둘 다 없으면 CLI 호출이 실패한 것이고, 카탈로그만 없고 modelName 은 있으면 metadata
+경로 쪽 고장이다. 이번엔 전자였고, 덕분에 허브 프레임 수정(같은 커밋에 있던 metadata 핸들러 교체)이
+범인이 아님을 로그 없이도 가릴 수 있었다.
+
+### 수정
+
+Swift 어댑터는 처음부터 게이트웨이의 `models.list` RPC 로 카탈로그를 읽었다 — 이미 쥐고 있는
+소켓이라 서브프로세스도 PATH 도 부하 민감성도 없다. Node 를 그 정본에 맞췄다:
+`bridge/src/openclaw-model-catalog.ts` 가 Swift `fetchModelCatalog` 의 매핑(key/id/provider 폴백,
+tags→role, `missing`→unavailable, 명시적 `defaultModel` 만 기본값으로 인정하고 **순서로 추측하지
+않음**)을 미러하고, Node 스위트가 `tests/parity/gateway-frames/models-list-response.json` 을 재생한다
+(Swift 패리티 스위트의 `models.list` 케이스는 픽스처 README 의 후속 항목으로 남아 있다).
+CLI 는 `models.list` 가 없는 게이트웨이용 폴백으로만 남기되 예산을 15초로 늘렸다.
+
+전송을 바꾸면 두 가지가 달라진다. 라이브 게이트웨이(openclaw 2026.9.3)의 `models.list` 는 모델을
+`id` + `provider` 로 따로 보내고(`glm-5.3` + `zai`), CLI 는 합친 `key` 를 보냈다(`zai/glm-5.3`,
+로컬 모델도 `local-mlx/mlx-community/…` 처럼 id 에 슬래시가 있어도 provider 를 접두). 파서는 CLI
+형식으로 합쳐서 key 에 묶인 것이 전송 변경으로 흔들리지 않게 했고, Swift 도 같은 식으로 맞췄다 —
+Swift 는 원래 맨 `id` 를 key 로 써서 `mainSessionModelKey`(`provider/model` 형식) 표시명 조회가
+빗나가고 있었다. 그리고 RPC 는 **런타임에 허용된 카탈로그**(15개)만 주고 CLI 는 별칭까지 38개를
+줬다 — 이제 Node 도 Swift 와 같은 15개를 보인다. 데크에서 모델 전환은 `/model` 프롬프트라 key 를
+쓰지 않는다.
+
+적대적 리뷰가 새 코드에서 경쟁 하나를 찾았다: 링크가 끊기고 1초 만에 재접속하면 새 fetch 가 먼저
+성공하는데, 옛 링크에서 시작된 느린 CLI 폴백이 뒤늦게 돌아와 카탈로그를 되돌린다. 양 데몬에
+접속·단절마다 오르는 세대 토큰을 두고, fetch 가 시작한 세대와 끝난 세대가 다르면 성공이든 실패든
+버린다(Swift 는 actor 재진입이 같은 구멍을 연다). 그리고 핸드셰이크 `features.methods` 에
+`models.list` 가 없는 게이트웨이엔 RPC 를 묻지 않고 CLI 로 간다 — 모르는 메서드를 조용히 버리는
+빌드라면 재시도 틱마다 RPC 타임아웃 10초를 영원히 물 것이기 때문이다.
+
+재시도는 양 데몬이 같은 사다리를 탄다: 10초, 30초, 60초, 120초, 그 뒤 5분마다, 링크가 끊기거나
+어댑터가 멈출 때까지. 첫 실패는 접속 직후 게이트웨이가 바쁜 흔한 일이라 debug 로만, 두 번째부터는
+데몬 로그에 남긴다 — 성공할 때까지 어떤 표면에도 모델·카탈로그가 없는 상태이기 때문이다. 회복
+시에도 한 줄 남긴다.
+
+관련: [.claude/rules/openclaw-gateway.md](.claude/rules/openclaw-gateway.md),
+[2026-09-11 허브 프레임 신원](docs/devlog/entries/2026-09-11-openclaw-frame-identity-and-codex-ambient-hooks.md).
+
+## 2026-09-11 — "OpenClaw 가 남의 명령을 실행 중" 과 Codex 뒷단 스레드: 전역 프레임의 주인, 훅의 출처
+
+두 신고가 같은 아침에 들어왔다. Android 와 macOS 에서 OpenClaw 에이전트가 비정상으로 보였다가
+정상이 됐다가 다시 비정상이 된다는 것, 그리고 타임라인에 codex 가 태스크 단위가 아닌 "뒷단"
+로그를 잔뜩 남긴다는 것. 게이트웨이 로그는 깨끗했다 — `hasError` 가 참이었던 적이 한 번도 없고,
+재시작은 04:26 설정 변경 후 한 번(10초 재접속)뿐이었다. 답은 둘 다 데몬이 남의 것을 자기 이름으로
+내보내던 곳에 있었다.
+
+### 전역 `state_update` 의 주인
+
+데몬 허브에는 전역 상태머신이 하나고, 관측된 Claude 훅 전부가 그 머신을 움직인다. 그 스냅샷으로
+만든 프레임을 양 데몬은 **게이트웨이 어댑터가 살아 있으면** `agentType: openclaw` 로 찍었고,
+Node 는 `projectName` 까지 게이트웨이의 `project_info` 가 마지막으로 쓴 `OpenClaw` 를 그대로
+실었다. 새 WS 로 첫 프레임을 받아 보니 `OpenClaw · processing · Bash "cd /Users/…/AgentDeck"` —
+내 Claude 세션의 명령이었다. 같은 순간 `sessions_list` 의 OpenClaw 행은 `idle`. 7월의 수정
+(`gatewaySessionState`)은 행만 고쳤고 프레임은 그대로였다.
+
+소비자 쪽을 보면 왜 세 표면이 같은 증상을 냈는지 드러난다. Android `AgentState` 는 aggregate
+타입(`daemon`/`openclaw`) 의 이벤트면 상태를 aggregate 에 그대로 적용하고("openclaw 가 Claude 의
+PROCESSING 을 자기 것처럼"), Apple `AgentStateHolder` 는 `projectName`/`currentTool` 을 HUD 에
+올리고, ESP32 `protocol.cpp handleStateUpdate` 는 프레임을 메인 화면 `g_state` 에 복사한다.
+다른 세션들이 모두 쉬면 전역이 idle 로 내려가 "정상", 새 턴이 시작되면 다시 "비정상" — 신고된
+진동 그대로다.
+
+규칙은 **프레임은 그것을 움직인 주체가 찍는다** 로 바꿨다. 훅 세션이 움직였으면 aggregate `daemon`
++ 그 세션 id + 그 프로젝트, 게이트웨이가 움직였으면 `openclaw` + `openclaw-gateway` + 게이트웨이
+자체 스냅샷, 아직 아무도 안 움직였으면 게이트웨이 생존 여부로. `daemon` 과 `openclaw` 는 모든
+소비자에서 aggregate 타입이라 크리처는 계속 `sessions_list` 에서 오고, OpenClaw 라벨만 남의 활동에서
+떨어진다. Node `bridge/src/hub-state-identity.ts` 가 SSOT, Swift 는 `hubFrameAgentType()` 에
+같은 3분기 드라이버(`hook`/`gateway`/`none`)를 뒀다.
+
+적대적 리뷰가 첫 판을 두 군데서 열었다. 하나는 **게이트웨이 접속 프레임** — `connected` 분기와
+`switch_agent openclaw` 가 허브 빌더를 우회해 전역 머신 스냅샷을 `openclaw` 로 찍고 있었고,
+게이트웨이는 90분에 11번도 재시작하니 원래 버그가 재접속마다 되살아났을 것이다. 그래서
+게이트웨이 소유 프레임은 `state` 도 `gatewaySessionState` 로 덮고 도구·옵션 필드를 비운다
+(`shapeHubFrame`, Swift `buildFullStateEvent` 의 `openclaw` 오버레이). 다른 하나는 **모델
+카탈로그 게이트** — Apple `TopologyRail.catalogOwner` 와 Android `EnginePanel`·e-ink 패널 두 곳이
+프레임 `agentType == "openclaw"` 로 OpenClaw 카탈로그 소유를 판정해서, 허브 프레임이 `daemon` 인
+동안(관측 세션이 움직이는 내내) 카탈로그 행이 사라진다. 네 곳을 `daemon` + `gatewayConnected` 도
+받도록 고쳤다 — 이 부분은 맥 앱과 Android 를 다시 빌드해야 반영된다. 마지막으로 SessionEnd 는
+1.5초 예산이라 자주 유실되므로, 턴 워치독이 침묵 세션을 잊을 때 드라이버 소유권도 함께 놓는다
+(단 그 세션이 머신에 턴을 열어 둔 채면 — 3분 넘는 빌드나 생각은 훅이 없다 — 살아 있는 것으로 본다).
+
+2차 리뷰는 새 코드에서 셋을 더 찾았다. Apple `AgentStateHolder` 는 `currentTool` 을 키가 없으면
+retain 하므로 게이트웨이 프레임이 도구 키를 지워도 직전 Claude 도구가 OpenClaw 라벨 밑에 남는다 —
+홀더가 `sessionId` 가 바뀐 프레임에서 도구 필드를 먼저 비우도록 했고, Swift 데몬은
+`gatewayCurrentTool` 을 명시적으로 싣는다. 데크에서 OpenClaw 행을 포커스하면 전역 프레임이
+`focusedSessionId: openclaw-gateway` 로 나가 훅 구동 상태가 OpenClaw 상세로 흘러들었는데(규칙에
+적힌 기존 모양), 포커스 중엔 프레임을 게이트웨이 소유로 강제한다. Swift 의 `awaiting` 분기는
+머신의 options/question 을 남겼지만 그건 게이트웨이 것이 아니라(승인은 `gatewayPendingApproval`
+에 살고 행으로 나간다) 무조건 버린다.
+
+### Codex Desktop 의 ambient-suggestions
+
+codex 의 "뒷단" 행은 두 종류였다. 18건은 다른 Claude 세션이 `codex exec` 로 이미지를 한 장씩
+만든 진짜 실행이고(thread_source `exec`), 10건은 Codex Desktop 이
+`~/.codex/ambient-suggestions/<hash>/ambient-suggestions.json` 을 갱신하며 돌린 내부 프롬프트
+("Generate 0 to 3 hyperpersonalized suggestions…", "safety and compliance standards for Codex
+ambient suggestions…")였다. 이 스레드는 rollout 파일도, Codex 자체 `threads` 테이블 행도 없고
+훅 `cwd` 가 `/` 인데, 사용자 전역 훅은 그대로 발화한다. 데몬은 `codex-cli` / project `unknown`
+행과 `chat_start`/`chat_response`, 2초짜리 APME turn 을 매번 만들었다 — 07-06 부터 27건.
+
+훅 페이로드에 배경 표식은 없고 `cwd: "/"` 만으로는 루트에서 Codex 를 연 사용자와 구별이 안 되니,
+프롬프트 서명으로 `codex_user_prompt_submit` 에서 판정하고(`shared/codex-ambient-vectors.json`,
+양 스위트 재생) 그 id 의 이후 훅은 30분 침묵까지 전부 버린다. 프롬프트보다 ~90ms 먼저 온
+`codex_session_start` 는 이미 세션 행과 APME run 을 열어 둔 상태라(실측 delta 51–453ms, 전부
+미종료) 그 둘을 되돌린다 — 행은 잊고, 아직 빈 run 은 삭제(`store.deleteRun`, Swift 는
+`ApmeCollector.discardRun` 신설).
+
+### 남는 것
+
+기존 APME 의 ambient run 27건은 그대로 남아 있다(소급 삭제는 별도 판단). Codex Desktop 쪽에서
+ambient suggestions 를 끄는 스위치는 `config.toml` 에 없어 앱 설정에서만 가능하다. 데몬 재시작
+전에는 두 수정 모두 반영되지 않는다 — 커밋은 배포가 아니다.
+
+관련: [.claude/rules/openclaw-gateway.md](.claude/rules/openclaw-gateway.md),
+[.claude/rules/observed-sessions.md](.claude/rules/observed-sessions.md),
+[bridge/src/hub-state-identity.ts](bridge/src/hub-state-identity.ts),
+[bridge/src/codex-ambient-hooks.ts](bridge/src/codex-ambient-hooks.ts).
+
 ## 2026-09-11 — 이 호스트에선 어떤 클라이언트도 exec 승인을 못 띄운다 (#308 검증 불가의 이유)
 
 유령 PERM 수정(7c7dbe2a)의 실기 검증엔 실제 exec 승인이 하나 필요하다. 오너 허가를 받고 여섯 가지
@@ -91,6 +221,18 @@ TUI 는 Gateway 자신의 대화형 클라이언트인데 새 세션에서도 he
 
 #308 은 AgentDeck 쪽에서 더 할 것이 없다. OpenClaw 가 다시 프롬프트를 내면(다음 릴리스, 혹은
 에이전트에 명시적 `permissionMode: full`) #308 코멘트의 5단계가 그대로 검증 절차다.
+
+## 2026-09-11 — Clarify agent instructions and memory ownership
+
+### Changes
+
+Reduced [AGENTS.md](AGENTS.md) to discovery and routing. [CLAUDE.md](CLAUDE.md) now owns current-task authorization, shared-worktree isolation, memory freshness, and checks by change type. Corrected fixed output-limit claims and stale skill-pointer descriptions in [the harness map](docs/agent-harness.md) and skills. Documentation-only local checks no longer imply a full application build; code, CI, and release gates remain explicit.
+
+Agent-local memory cleanup promotes shared-tree lessons into tracked agreements and treats prior release approvals and recovery commands as historical evidence. Required project behavior no longer depends on reading a particular agent's private memory.
+
+### Verification
+
+Validated Markdown links and H1 structure, design-system catalog coverage, and the four changed skills. No application behavior or deployment changed.
 
 ## 2026-09-10 — 슬래시 스킬은 없었고 로그는 충돌 지점이었다: `.claude/skills` 심볼릭 링크 + 로그 항목별 파일화
 

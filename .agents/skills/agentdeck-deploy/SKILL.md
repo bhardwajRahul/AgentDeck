@@ -5,7 +5,7 @@ description: Build, install, launch, and configure AgentDeck on connected Androi
 
 # AgentDeck Deploy
 
-Canonical deploy procedure for AgentDeck. This file is the single source of truth — `.claude/skills/deploy.md` is a thin pointer to it. Build, install, launch, and configure AgentDeck on connected targets; keep deployment scoped to what is actually connected and skip missing devices with a clear note (never fail the whole deploy because one device is absent).
+Canonical deploy procedure for AgentDeck. This file is the single source of truth — `.claude/skills/agentdeck-deploy` is a tracked directory symlink to this skill. Build, install, launch, and configure AgentDeck on connected targets; keep deployment scoped to what is actually connected and skip missing devices with a clear note (never fail the whole deploy because one device is absent).
 
 ## Arguments / Target Names
 
@@ -93,7 +93,7 @@ echo "=== Daemon ==="
 cat ~/.agentdeck/daemon.json 2>/dev/null || echo "not running"
 ```
 
-Only deploy to devices that are actually connected. Skip missing devices with a warning, don't fail. If any preflight command fails because of sandboxing or device access, request scoped approval and retry only that command — do not guess.
+Only deploy to devices that are actually connected. Skip missing devices with a warning, don't fail. If preflight access fails, follow `CLAUDE.md` Agent working agreements for execution-policy failures; retry only the affected command after resolving access, and do not infer device absence from an unreadable probe.
 
 ### Step 1: Build (always first, unless target is bridge-only or esp32-only)
 
