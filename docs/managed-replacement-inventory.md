@@ -1,0 +1,197 @@
+# Managed-only capability inventory: launch arguments and terminal affordances
+
+Working measurement for [#273](https://github.com/puritysb/AgentDeck/issues/273), gates
+**Custom launch arguments** and **Terminal-only gaps**. Measured against `3f7dc473`.
+
+The other two gates (remote attach, session ordering) are not covered here. Both name a
+real-topology or real-user validation as their completion condition, so neither can be
+closed from a source reading.
+
+Every row below is either **measured** (a cited source line) or **open** (named as
+unmeasured). Nothing here decides a replacement design; it establishes what a replacement
+would have to reproduce.
+
+---
+
+## 1. Custom launch arguments
+
+### 1.1 The contract as implemented
+
+| Knob | Where | Exact semantics |
+|---|---|---|
+| `-c, --command <cmd>` | `bridge/src/cli.ts:859` (claude), `:905` (codex), `:964` (opencode) | Default `claude`/`codex`/`opencode`. Free-form **string**, not an argv array. `monitor` has no `-c` — it spawns no agent. |
+| `AGENTDECK_COMMANDER_ARGS` | `applyGlobalEnvArgs`, `cli.ts:705` | Tokenized, spliced into argv at index 3 — immediately after the subcommand. Keyed on `argv[2]` being one of `claude`/`codex`/`opencode`/`monitor`; any other command is a true no-op even when a positional *value* equals a session word. |
+| `AGENTDECK_CLAUDE_ARGS` / `AGENTDECK_CODEX_ARGS` / `AGENTDECK_OPENCODE_ARGS` | `weaveAgentCommand`, `cli.ts:741` | Raw string append to the `-c` command (`` `${command} ${extra}`.trim() ``). Weaves onto a user `-c` rather than replacing it. |
+| `--no-env-args` | `cli.ts:870`, consumed at `:879` via `opts.envArgs !== false` | Disables **both** layers for the invocation. The commander half is decided pre-parse on raw argv (`cli.ts:729`); the per-agent half in the action. |
+| `--weight <n>` | `cli.ts:871` | Not an agent argument, but rides the same env-splice layer — `AGENTDECK_COMMANDER_ARGS="--weight 5"` is a tested path (`cli.test.ts:342`). |
+
+### 1.2 The load-bearing fact: the command string is shell-interpreted
+
+`PtyManager.spawn` (`bridge/src/pty-manager.ts:98-103`) does not exec the command. It execs a shell:
+
+- POSIX: `(process.env.SHELL || '/bin/bash')` with `['-l', '-c', command]`
+- Windows: `(process.env.COMSPEC || 'cmd.exe')` with `['/d', '/s', '/c', command]`
+
+Three consequences a replacement inherits, none of them optional:
+
+1. **`-l` is a login shell.** The user's profile is sourced before the agent starts, so
+   `PATH`, version managers (nvm/rbenv/mise), and profile-exported credentials are in
+   scope. A daemon-first launcher that spawns the agent binary directly reproduces the
+   flags but not this environment.
+2. **Full shell grammar is in play.** The `-c` string may contain expansion, quoting,
+   pipes, `&&`. The per-agent env append is documented as riding this same path
+   deliberately (`.claude/rules/managed-sessions.md`).
+3. **Two different grammars.** `cmd.exe /d /s /c` quoting is not POSIX quoting, and the
+   same `AGENTDECK_CLAUDE_ARGS` value is appended verbatim on both.
+
+By contrast `AGENTDECK_COMMANDER_ARGS` is tokenized in pure JS by `tokenizeArgString`
+(`cli.ts:668`) — quote grouping only, **no** expansion, globbing, or escapes. So the two
+env layers have deliberately different power, and the rule file says so.
+
+### 1.3 What "resume-command composition" turned out to be
+
+The gate wording implies an AgentDeck-owned resume builder. There is none. A repository
+grep for `--resume` finds only: the user's own `-c "claude --resume X"` in docs and tests
+(`docs/cli.md:73,90`, `cli.test.ts:200,262`), and Kiro's unrelated `--resume-id` parsing
+in `passive-observer.ts:1020,1085`.
+
+So the contract is narrower and easier than the gate suggests: **resume is user-supplied
+text, and AgentDeck's only obligation is that the env append does not clobber it.** That
+obligation is covered (`cli.test.ts:262`).
+
+### 1.4 Existing regression coverage
+
+`bridge/src/__tests__/cli.test.ts:165-450` already pins: splice position, the `argv[2]`
+gate, non-session no-op, empty/unset var, the typed hatch, the **env-smuggled
+`--no-env-args`** strip (`:243`), per-agent selection by agent type, whitespace-only
+values, last-write scalar override through a real commander parse (`:322`), and both-layer
+disable through `parseAsync` (`:429`).
+
+Not covered, and these are the fixtures the gate asks for:
+
+- Windows `cmd.exe` quoting of a woven append (no `win32` case exists for the weave).
+- A `-c` string containing shell metacharacters surviving the append unchanged.
+- Login-shell environment inheritance — currently untested at any level.
+
+### 1.5 Replacement assessment
+
+| Candidate | Verdict |
+|---|---|
+| Agent-native config (`~/.claude/settings.json` etc.) | Cannot express per-invocation values, and the vars exist precisely to vary per terminal tab. Fails scalar override. |
+| Argument profiles in `daemon.json` | Expressible, but moves the value out of the shell profile, which is where a per-machine `PATH`-dependent value naturally lives. |
+| Lightweight non-PTY launch path (`spawn` the same shell, no PTY ownership) | The only candidate that preserves §1.2 in full. AgentDeck would still compose and hand off the command string, but would not own the terminal. **Unmeasured:** whether a handed-off shell process can be hook-attributed to the resulting observed session. |
+
+---
+
+## 2. Terminal-only affordances
+
+### 2.1 Everything `OutputParser` produces, and where it goes
+
+Seventeen distinct events (`bridge/src/output-parser.ts`). The Claude adapter forwards
+twelve (`adapters/claude-code.ts:32-70`) under a comment that states the boundary
+directly: *"Never add turn lifecycle or tool events here: hooks own state, timeline, and
+APME correctness."*
+
+| Parser event | Forwarded as | Observed (hook) equivalent | Verdict |
+|---|---|---|---|
+| `permission_prompt` | `terminal_ui` | Held `PreToolUse` gate (`observed-steering.ts`) | Partial — different semantics, see §2.2 |
+| `option_prompt` | `terminal_ui` | AskUserQuestion gate + terminal injection | Partial |
+| `diff_prompt` | `terminal_ui` | none found | **Managed-only** |
+| `status_line` | `terminal_ui` → `usageTracker.setDuration/setOutputTokens` (`state-machine.ts:381`) | tokens yes (§2.3), duration no | Partial |
+| `project_name` | `terminal_ui` | bridge-resolved, git-aware; parser scrape is the fallback (`claude-code.ts:98`) | Covered |
+| `model_info` | `terminal_ui` | transcript `message.model` (`passive-observer.ts:324`) | Covered |
+| `mode_change` | `terminal_ui` | none found | **Managed-only** |
+| `suggested_prompt` | `terminal_ui` | none found | **Managed-only** |
+| `remote_url` | `terminal_ui` | none found | Managed-only (low value) |
+| `cursor_update` | `metadata` | none — no cursor exists to track | **Managed-only by construction** |
+| `usage_info` | `metadata` | daemon usage/quota clients (`usage-*.ts`) | Covered by a better source |
+| `user_prompt` | `metadata` | `UserPromptSubmit` hook / transcript | Covered |
+| `spinner_start` | *not forwarded* | hooks | lifecycle — hook-owned |
+| `spinner_stop` | *not forwarded* | hooks | lifecycle — hook-owned |
+| `idle` | *not forwarded* | hooks | lifecycle — hook-owned |
+| `tool_action` | *not forwarded* | `PreToolUse` | hook-owned |
+| `effort_level` | *not forwarded* | — | unused |
+
+Note the five unforwarded events still reach `StateMachine.handleParserEvent` in the
+**session-bridge** path (`index.ts:665`), where `spinner_start` transitions to `PROCESSING`
+with source `'pty'` and `idle` to `IDLE` (`state-machine.ts:312-364`). That is terminal
+parsing authoring lifecycle, and it is exactly what principle 2 of #273 forbids restoring.
+It is confined to the managed path; the daemon's other caller of `handleParserEvent`
+(`daemon-server.ts:4966`) is the **OpenClaw Gateway** adapter, whose `'parser'` source is
+Gateway events, not a terminal.
+
+### 2.2 Command semantics: managed vs observed
+
+`handleObservedClaudeCommand` (`daemon-server.ts:5462`) states the divergence in its own
+comment, and the code confirms it:
+
+| Deck command | Managed PTY | Observed |
+|---|---|---|
+| `interrupt` / `escape` | `\x03` written to the PTY (`pty-manager.ts:204`) — immediate | `requestStop(uuid)` → soft stop, denied at the **next tool call**. Pure text generation runs to completion. |
+| `send_prompt` | typed into the PTY | queued, delivered by the `Stop` hook as `{decision:'block'}` |
+| `respond` / `select_option` | key injection into the owned PTY | held gate if the daemon owns it; otherwise key injection into the user's terminal via the host ladder (§2.4) |
+| `switch_mode` (Shift+Tab) | `\x1b[Z` + 100 ms debounce (`claude-code.ts:81`) | **absent** — not handled anywhere in `handleObservedClaudeCommand`; only `session-focus-relay.ts:48` lists it, and that relays to a managed session |
+
+`switch_mode` is the cleanest managed-only capability in the repository: there is no hook,
+no API, and no injection path for it. The deck already gates the button on state
+(`index.ts:1230`), but not on managed-vs-observed. **Unmeasured:** what the mode button
+does today on an observed row.
+
+### 2.3 The telemetry row in #273 is too pessimistic
+
+#273's table records *"Terminal status-line token/cost telemetry — None"* for the
+daemon-first replacement. Measured, that is wrong for tokens:
+
+`passive-observer.ts:328-333` accumulates `input_tokens + output_tokens +
+cache_read_input_tokens + cache_creation_input_tokens` from the transcript and derives
+`contextPercent` (`:379-381`); both reach the wire (`protocol.ts:504`) and are rendered
+(`shared/src/d200h-layout.ts:691`). Codex has the parallel path (`:485-536`).
+
+What is genuinely terminal-only:
+
+- **Turn duration** — `usageTracker.setDuration` has exactly one feed, the `status_line`
+  parse (`state-machine.ts:386`).
+- **The live status-line readout itself**, as text.
+
+And `usage_info` (quota percent, `costSpent`/`costLimit`, reset time — `output-parser.ts:830-864`)
+is a scrape of Claude's `/usage` output. The daemon already has first-class clients for
+that data, so this is a duplicate source rather than a unique capability.
+
+This row should be corrected in the issue before anyone designs against it.
+
+### 2.4 Observed injection is real, but platform-bounded
+
+`injectObservedSelection` (`observed-inject.ts:373`) is a four-rung ladder: tmux
+`send-keys` → iTerm2 → Terminal.app tab select + JXA key post → app-hosted (labelled
+button, then key post, then raise). `injectObservedText` (`:436`) does the same for a
+dictated line, terminal hosts only, by explicit design.
+
+Rungs 2-4 are `osascript` (`:341`, `:352`) — **macOS only**. Rung 1 needs `tmux`. So on
+Windows and on Linux without tmux, an observed session has no injection path at all, and
+the file says so in its header: *"Node-daemon only by design: every rung needs a
+subprocess."*
+
+This is a platform axis #273's table does not carry. A replacement claiming parity has to
+state which platforms it claims it on.
+
+---
+
+## 3. Corrections this measurement suggests for #273
+
+1. Telemetry row: tokens and context percent **are** available daemon-first; scope the row
+   to turn duration and the status-line text (§2.3).
+2. Add a platform axis to the terminal-affordance rows — observed injection is macOS or
+   tmux (§2.4).
+3. Split the "terminal UI observation" row: `project_name`, `model_info`, `user_prompt`,
+   `usage_info` are already covered or better-sourced; `diff_prompt`, `mode_change`,
+   `suggested_prompt`, `cursor_update` are the real remainder (§2.1).
+4. "Resume-command composition" is not an AgentDeck feature and needs no replacement
+   design — only the no-clobber guarantee it already has (§1.3).
+
+## 4. Still unmeasured
+
+- Whether a handed-off (non-owned) shell process can be hook-attributed to the observed
+  session it becomes (§1.5).
+- What the deck's mode button does on an observed row today (§2.2).
+- Whether `diff_prompt` has any hook-reachable equivalent, or is structurally terminal-only.
+- Everything in the remote-attach and session-ordering gates.
