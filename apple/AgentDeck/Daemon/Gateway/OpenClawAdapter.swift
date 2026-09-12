@@ -262,6 +262,24 @@ actor OpenClawAdapter {
         case plugin(OpenClawPluginApprovalPrompt)
     }
 
+    /// The prompt still waiting after the one being closed, in the shape the
+    /// daemon already renders (`gateway_approval`'s `prompt`).
+    ///
+    /// The two approval queues are independent and the deck shows one question
+    /// at a time, so closing the shown one can leave a live, answerable prompt
+    /// behind. Without this, `gateway_approval_resolved` / `_abandoned` set the
+    /// row to processing/idle AND cleared `gatewayPendingApproval`, so the
+    /// survivor lost both its state and its row — the user saw an idle deck
+    /// while the Gateway stayed blocked. Mirrors Node's
+    /// `settleApprovalActivity`.
+    private func survivingApprovalPrompt() -> [String: Any]? {
+        switch activeApproval() {
+        case .exec(let prompt): return Self.promptDict(prompt)
+        case .plugin(let prompt): return Self.pluginPromptDict(prompt)
+        case nil: return nil
+        }
+    }
+
     private func activeApproval() -> ActiveApproval? {
         if let exec = pendingApproval, let plugin = pendingPluginApproval {
             return exec.requestedAtMs <= plugin.requestedAtMs ? .exec(exec) : .plugin(plugin)
@@ -628,7 +646,9 @@ actor OpenClawAdapter {
             } else {
                 setPendingApproval(nil)
             }
-            self._onEvent?(["type": "gateway_approval_resolved", "payload": payload])
+            var resolved: [String: Any] = ["type": "gateway_approval_resolved", "payload": payload]
+            if let survivor = survivingApprovalPrompt() { resolved["survivor"] = survivor }
+            self._onEvent?(resolved)
         case ADGatewayEventName.pluginApprovalRequested.rawValue:
             // Same three-event surface as exec, mirrored field-for-field — the
             // Gateway nests everything under `request` here too
@@ -652,7 +672,9 @@ actor OpenClawAdapter {
             } else {
                 setPendingPluginApproval(nil)
             }
-            self._onEvent?(["type": "gateway_approval_resolved", "payload": payload])
+            var resolved: [String: Any] = ["type": "gateway_approval_resolved", "payload": payload]
+            if let survivor = survivingApprovalPrompt() { resolved["survivor"] = survivor }
+            self._onEvent?(resolved)
         case ADGatewayEventName.pluginApprovalRemoved.rawValue:
             // NOT declared in any `.d.ts` the installed package ships — real
             // wire protocol confirmed only at the embedded/TUI-local approval
@@ -1186,11 +1208,13 @@ actor OpenClawAdapter {
         setPendingApproval(nil)
         DaemonLogger.shared.info(
             "OpenClaw: pending approval \(prompt.id) abandoned — \(reason)")
-        _onEvent?([
+        var abandoned: [String: Any] = [
             "type": "gateway_approval_abandoned",
             "id": prompt.id,
             "reason": reason,
-        ])
+        ]
+        if let survivor = survivingApprovalPrompt() { abandoned["survivor"] = survivor }
+        _onEvent?(abandoned)
     }
 
     /// Ask the Gateway whether the displayed approval still exists.
@@ -1264,11 +1288,13 @@ actor OpenClawAdapter {
         setPendingPluginApproval(nil)
         DaemonLogger.shared.info(
             "OpenClaw: pending plugin approval \(prompt.id) abandoned — \(reason)")
-        _onEvent?([
+        var abandoned: [String: Any] = [
             "type": "gateway_approval_abandoned",
             "id": prompt.id,
             "reason": reason,
-        ])
+        ]
+        if let survivor = survivingApprovalPrompt() { abandoned["survivor"] = survivor }
+        _onEvent?(abandoned)
     }
 
     /// Ask the Gateway whether the displayed plugin approval still exists.

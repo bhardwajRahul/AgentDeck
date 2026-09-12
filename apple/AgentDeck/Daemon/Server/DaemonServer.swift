@@ -8230,9 +8230,16 @@ final class DaemonServer {
             // `exec.approval.resolved` for those, and this daemon caches the
             // prompt (the Node one reads it live off the adapter), so without
             // this case the row keeps offering a PERM nobody can answer.
-            // `idle`, never `processing`: nothing was allowed to run.
-            gatewaySessionState = "idle"
-            gatewayPendingApproval = nil
+            // `idle`, never `processing`: nothing was allowed to run — unless
+            // the other queue still holds one, in which case the row must stay
+            // in attention and show it (`survivor`).
+            if let survivor = event["survivor"] as? [String: Any] {
+                gatewaySessionState = "awaiting_permission"
+                gatewayPendingApproval = survivor
+            } else {
+                gatewaySessionState = "idle"
+                gatewayPendingApproval = nil
+            }
             gatewayCurrentTool = nil
             broadcastStateUpdate()
             broadcastSessionsList()
@@ -8243,8 +8250,17 @@ final class DaemonServer {
             // allow-always / deny — testing for the string "deny" was right by
             // accident, but testing for allow (as the Node side did) was not.
             let allowed = ExecApprovalDecision(rawValue: decision ?? "")?.allowsExecution ?? false
-            gatewaySessionState = allowed ? "processing" : "idle"
-            gatewayPendingApproval = nil
+            // A resolution closes ONE queue. If the other still holds an
+            // approval the adapter passes it as `survivor`, and the row has to
+            // stay in attention showing it rather than reporting the turn
+            // resumed — see `survivingApprovalPrompt`.
+            if let survivor = event["survivor"] as? [String: Any] {
+                gatewaySessionState = "awaiting_permission"
+                gatewayPendingApproval = survivor
+            } else {
+                gatewaySessionState = allowed ? "processing" : "idle"
+                gatewayPendingApproval = nil
+            }
             gatewayCurrentTool = nil
             broadcastStateUpdate()
             broadcastSessionsList()
