@@ -64,7 +64,8 @@ start_feed_at() {
   node "$ROOT/scripts/appstore-demo-orchestrator.mjs" serve \
     --port "$PORT" --epoch-ms "$epoch_ms" \
     > "${TMPDIR:-/tmp}/agentdeck-launch-demo/server.log" 2>&1 &
-  echo $! > "${TMPDIR:-/tmp}/agentdeck-launch-demo/server.pid"
+  CAPTURE_FEED_PID=$!
+  echo "$CAPTURE_FEED_PID" > "${TMPDIR:-/tmp}/agentdeck-launch-demo/server.pid"
   sleep 0.6
 }
 
@@ -103,9 +104,6 @@ encode() {
 # too, so a Korean system produced a Korean word in an otherwise English
 # capture, which is the opposite of the locale-independent raw capture this
 # harness promises.
-reset_capture_defaults() {
-  defaults write "$BUNDLE_ID" dashboardCollaborationEnabled -bool false 2>/dev/null || true
-}
 
 # `screencapture -D` records the display as composited, so ANY window above the
 # dashboard lands inside the crop rect — a floating window from another app put
@@ -113,6 +111,15 @@ reset_capture_defaults() {
 # never the problem; z-order was. Hide every other regular app for the duration
 # and put them back afterwards.
 HIDDEN_APPS=""
+CAPTURE_FEED_PID=""
+cleanup_capture() {
+  restore_hidden_apps
+  if [ -n "$CAPTURE_FEED_PID" ]; then
+    kill "$CAPTURE_FEED_PID" 2>/dev/null || true
+    wait "$CAPTURE_FEED_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_capture EXIT
 isolate_dashboard() {
   HIDDEN_APPS="$(osascript -e 'tell application "System Events" to get name of (every process whose visible is true and background only is false and name is not "AgentDeck")' 2>/dev/null || true)"
   osascript -e 'tell application "System Events" to set visible of (every process whose name is not "AgentDeck" and background only is false) to false' >/dev/null 2>&1 || true
@@ -161,8 +168,7 @@ record_macos() {
   local epoch; epoch=$(( $(now_ms) + (LEAD_SECONDS * 1000) ))
   start_feed_at "$epoch"
 
-  reset_capture_defaults
-  open -n "$MACOS_APP" --args -AgentDeckScreenshotURL "$WS" -AppleLanguages '("en")'
+  open -n "$MACOS_APP" --args -AgentDeckScreenshotURL "$WS" -dashboardCollaborationEnabled NO -AppleLanguages '("en")'
   sleep 6
 
   isolate_dashboard
@@ -210,11 +216,13 @@ print('crop=%d:%d:%d:%d' % (size($MAC_WIN_W*sx), size($MAC_WIN_H*sy), off($MAC_C
 record_ios() {
   local device="$1" outdir="$2" scale="$3"
   local udid
+  udid="${AGENTDECK_CAPTURE_IOS_UDID:-}"
+  if [ -z "$udid" ]; then
   udid="$(xcrun simctl list devices available | grep -F "$device (" | head -1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')"
+  fi
   [[ -n "$udid" ]] || { echo "simulator not found: $device" >&2; exit 1; }
 
   xcrun simctl boot "$udid" 2>/dev/null || true
-  open -a Simulator
   sleep 6
   xcrun simctl install "$udid" "$IOS_APP"
   xcrun simctl terminate "$udid" "$BUNDLE_ID" 2>/dev/null || true

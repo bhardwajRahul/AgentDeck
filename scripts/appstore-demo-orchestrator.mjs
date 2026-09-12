@@ -563,7 +563,7 @@ function collaborationPayloadFor(sessionId, cycleStartedAt) {
   if (!record) return null;
   // Timestamps are relative to the running cycle so the panel's "observed"
   // ages stay small instead of drifting to days old between captures.
-  const at = (offsetMs) => (cycleStartedAt + offsetMs) / 1000;
+  const at = (offsetMs) => cycleStartedAt + offsetMs;
   const events = record.events.map((event, index) => ({ ...event, ts: at(-((index + 1) * 45_000)) }));
   return {
     task: {
@@ -669,6 +669,7 @@ async function serve(options) {
     clearInterval(timer);
     // The WebSocket server no longer owns the listener, so closing it alone
     // leaves the port held and the next take fails to bind.
+    for (const socket of wss.clients) socket.terminate();
     wss.close(() => httpServer.close(() => process.exit(0)));
   };
   process.on('SIGINT', shutdown);

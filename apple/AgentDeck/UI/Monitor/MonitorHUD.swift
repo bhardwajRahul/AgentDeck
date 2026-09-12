@@ -261,6 +261,7 @@ struct MonitorHUD: View {
         #endif
     }
 
+    #if os(macOS)
     /// A pinned capture feed answers for itself; the local daemon must not be
     /// asked, or a capture shows this machine's real sessions in one panel and
     /// synthetic ones everywhere else.
@@ -270,6 +271,7 @@ struct MonitorHUD: View {
         #endif
         return Int(daemonService.port)
     }
+    #endif
 
     @ViewBuilder
     private func dashboardRightRail(maxHeight: CGFloat) -> some View {

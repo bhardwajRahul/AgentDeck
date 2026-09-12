@@ -57,7 +57,8 @@ start_feed_at() {
   node "$ROOT/scripts/appstore-demo-orchestrator.mjs" serve \
     --port "$PORT" --epoch-ms "$epoch_ms" --relay-usage \
     > "${TMPDIR:-/tmp}/agentdeck-launch-demo/server.log" 2>&1 &
-  echo $! > "${TMPDIR:-/tmp}/agentdeck-launch-demo/server.pid"
+  CAPTURE_FEED_PID=$!
+  echo "$CAPTURE_FEED_PID" > "${TMPDIR:-/tmp}/agentdeck-launch-demo/server.pid"
   sleep 0.6
 }
 
@@ -71,6 +72,15 @@ time.sleep(max(0, target - time.time()))
 }
 
 HIDDEN_APPS=""
+CAPTURE_FEED_PID=""
+cleanup_capture() {
+  restore_hidden_apps
+  if [ -n "$CAPTURE_FEED_PID" ]; then
+    kill "$CAPTURE_FEED_PID" 2>/dev/null || true
+    wait "$CAPTURE_FEED_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_capture EXIT
 isolate_dashboard() {
   HIDDEN_APPS="$(osascript -e 'tell application "System Events" to get name of (every process whose visible is true and background only is false and name is not "AgentDeck")' 2>/dev/null || true)"
   osascript -e 'tell application "System Events" to set visible of (every process whose name is not "AgentDeck" and background only is false) to false' >/dev/null 2>&1 || true
@@ -119,8 +129,7 @@ capture() {
   local epoch; epoch=$(( $(now_ms) + (LEAD_SECONDS * 1000) ))
   start_feed_at "$epoch"
 
-  defaults write "$BUNDLE_ID" dashboardCollaborationEnabled -bool "$collaboration" 2>/dev/null || true
-  open -n "$MACOS_APP" --args -AgentDeckScreenshotURL "$WS" -AppleLanguages '("en")'
+  open -n "$MACOS_APP" --args -AgentDeckScreenshotURL "$WS" -dashboardCollaborationEnabled "$collaboration" -AppleLanguages '("en")'
   sleep 6
   isolate_dashboard
   force_window_geometry "$MAC_WIN_W" "$MAC_WIN_H" "$MAC_WIN_X" "$MAC_WIN_Y"
@@ -140,7 +149,6 @@ capture macos-dashboard false
 capture collaboration-panel true
 
 stop_feed
-defaults write "$BUNDLE_ID" dashboardCollaborationEnabled -bool false 2>/dev/null || true
 osascript -e 'quit app "AgentDeck"' >/dev/null 2>&1 || true
 
 echo

@@ -45,7 +45,13 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
-## Unreleased
+## 2026-09-12 — ESP32 1.2.3
+
+The TRMNL 7.5-inch firmware now reports its canonical `trmnl_75` board identity,
+and release assets use that name. The daemons retain the legacy `inkdeck` alias
+for existing firmware. Display behavior and protocol compatibility are unchanged.
+
+## 2026-09-12 — npm 1.3.0, Apple 1.3.0, Android 1.3.0, Stream Deck 1.3.0, Ulanzi 1.3.0
 
 ### The daemon handover stops wedging the macOS app
 
