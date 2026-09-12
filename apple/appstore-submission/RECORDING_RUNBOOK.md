@@ -85,6 +85,19 @@ rect then framed desktop instead of dashboard. A run that cannot reach the
 geometry fails loudly, because a capture whose frame does not match the crop is
 worse than no capture.
 
+**`screencapture -V` does not record at the backing resolution.** A still grab
+of this 5120x2880 panel comes out at 5120x2880; a video of the same display
+comes out at 4096x2304. The window-to-frame ratio is therefore the recorder's
+own, not the 2 a Retina display implies, and a hardcoded doubling framed 80%
+dashboard and 20% wallpaper while every geometry assertion passed — the numbers
+all agreed with each other and disagreed with the file. The macOS crop is now
+measured from the raw's real dimensions against the display's logical size
+after each recording, and printed, so a wrong frame is visible in the log rather
+than only in the pixels. `AGENTDECK_CAPTURE_DISPLAY`, `AGENTDECK_CAPTURE_WIN_X`
+and `AGENTDECK_CAPTURE_CROP_X` move a take to another screen — the window
+position is a global coordinate while the crop offset is display-local, so a
+secondary-screen capture needs both.
+
 **Stills survive a busy desk; video does not.** Each screenshot beat is an
 instantaneous grab, so a moment of quiet is enough. A preview needs ~48 seconds
 of uninterrupted, unobstructed screen, and another session launching a window

@@ -33,8 +33,17 @@ BUNDLE_ID="bound.serendipity.agent.deck"
 # macOS window geometry: 16:9 in logical points, doubled on a 2x display.
 # Height is bounded by the menu bar and Dock, so this is the largest 16:9
 # window that fits without the Dock clipping it.
-MAC_WIN_W=1856; MAC_WIN_H=1044; MAC_WIN_X=0; MAC_WIN_Y=30
-MAC_DISPLAY=1
+MAC_WIN_W=1856; MAC_WIN_H=1044; MAC_WIN_X=${AGENTDECK_CAPTURE_WIN_X:-0}; MAC_WIN_Y=${AGENTDECK_CAPTURE_WIN_Y:-30}
+# Display and window origin are overridable: `screencapture -D` indexes the
+# displays and the window origin is a GLOBAL coordinate, so on a multi-display
+# desk the dashboard can be recorded on whichever screen is free of other
+# windows. Defaults keep the single-display behaviour.
+MAC_DISPLAY=${AGENTDECK_CAPTURE_DISPLAY:-1}
+# The window POSITION is global across all displays; the crop offset is
+# display-local. They coincide only on the display whose origin is (0,0), so a
+# capture on a secondary screen needs both.
+MAC_CROP_X=${AGENTDECK_CAPTURE_CROP_X:-$MAC_WIN_X}; MAC_CROP_Y=${AGENTDECK_CAPTURE_CROP_Y:-$MAC_WIN_Y}
+
 
 usage() { echo "Usage: bash scripts/record-appstore-previews.sh {macos|iphone|ipad}" >&2; exit 2; }
 [[ "$PLATFORM" =~ ^(macos|iphone|ipad)$ ]] || usage
@@ -170,8 +179,30 @@ record_macos() {
   # below is refined by inspecting the first frame.
   local offset; offset=$(python3 -c "print(max(0,($epoch-$t0)/1000-0.9))")
   echo "$offset" > "$WORK/macos-offset"
+
+  # `screencapture -V` does NOT record at the backing resolution. On this desk a
+  # 5120x2880 panel whose still grabs come out at 5120x2880 records video at
+  # 4096x2304, so the window-to-frame ratio is 1.6, not the 2 a Retina display
+  # implies — and a hardcoded doubling framed 80% dashboard, 20% wallpaper while
+  # every geometry check passed. Derive the crop from what the recorder actually
+  # produced against the display's LOGICAL size, and round to even numbers for
+  # yuv420p.
+  local raw_w raw_h logical_w logical_h crop
+  raw_w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$RAW")"
+  raw_h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$RAW")"
+  logical_w="$(osascript -e 'tell application "Finder" to get item 3 of (get bounds of window of desktop)' 2>/dev/null)"
+  logical_h="$(osascript -e 'tell application "Finder" to get item 4 of (get bounds of window of desktop)' 2>/dev/null)"
+  crop="$(python3 -c "
+raw_w, raw_h = $raw_w, $raw_h
+lw, lh = $logical_w, $logical_h
+sx, sy = raw_w / lw, raw_h / lh
+size = lambda v: max(2, int(round(v)) & ~1)
+off = lambda v: max(0, int(round(v)) & ~1)
+print('crop=%d:%d:%d:%d' % (size($MAC_WIN_W*sx), size($MAC_WIN_H*sy), off($MAC_CROP_X*sx), off($MAC_CROP_Y*sy)))
+")"
+  echo "raw ${raw_w}x${raw_h} · logical ${logical_w}x${logical_h} · $crop"
   encode "$RAW" "$offset" \
-    "crop=$((MAC_WIN_W*2)):$((MAC_WIN_H*2)):$((MAC_WIN_X*2)):$((MAC_WIN_Y*2)),scale=1920:1080:flags=lanczos" \
+    "$crop,scale=1920:1080:flags=lanczos" \
     "$ROOT/apple/appstore-submission/previews/macOS/agentdeck-preview.mp4"
 }
 

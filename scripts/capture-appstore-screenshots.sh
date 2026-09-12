@@ -42,8 +42,17 @@ BEAT_TIMES=(9.5 14.5 18.8 27.5)
 BEAT_NAMES=(01-fleet 02-all-sessions 03-attention 04-complete)
 
 # 16:10 window so the macOS capture is exactly 2880x1800 physical.
-MAC_WIN_W=1440; MAC_WIN_H=900; MAC_WIN_X=0; MAC_WIN_Y=30
-MAC_DISPLAY=1
+MAC_WIN_W=1440; MAC_WIN_H=900; MAC_WIN_X=${AGENTDECK_CAPTURE_WIN_X:-0}; MAC_WIN_Y=${AGENTDECK_CAPTURE_WIN_Y:-30}
+# Display and window origin are overridable: `screencapture -D` indexes the
+# displays and the window origin is a GLOBAL coordinate, so on a multi-display
+# desk the dashboard can be recorded on whichever screen is free of other
+# windows. Defaults keep the single-display behaviour.
+MAC_DISPLAY=${AGENTDECK_CAPTURE_DISPLAY:-1}
+# The window POSITION is global across all displays; the crop offset is
+# display-local. They coincide only on the display whose origin is (0,0), so a
+# capture on a secondary screen needs both.
+MAC_CROP_X=${AGENTDECK_CAPTURE_CROP_X:-$MAC_WIN_X}; MAC_CROP_Y=${AGENTDECK_CAPTURE_CROP_Y:-$MAC_WIN_Y}
+
 
 usage() { echo "Usage: bash scripts/capture-appstore-screenshots.sh {macos|iphone|ipad}" >&2; exit 2; }
 [[ "$PLATFORM" =~ ^(macos|iphone|ipad)$ ]] || usage
@@ -161,7 +170,7 @@ capture_macos() {
     screencapture -D"$MAC_DISPLAY" -x "$tmp"
     # Crop the window out of the full-display grab, in physical pixels.
     ffmpeg -y -v error -i "$tmp" \
-      -vf "crop=$((MAC_WIN_W*2)):$((MAC_WIN_H*2)):$((MAC_WIN_X*2)):$((MAC_WIN_Y*2))" \
+      -vf "crop=$((MAC_WIN_W*2)):$((MAC_WIN_H*2)):$((MAC_CROP_X*2)):$((MAC_CROP_Y*2))" \
       -pix_fmt rgb24 "$SHOTS/macOS/${BEAT_NAMES[$i]}.png"
     flatten "$SHOTS/macOS/${BEAT_NAMES[$i]}.png"
     echo "captured macOS/${BEAT_NAMES[$i]}.png"
