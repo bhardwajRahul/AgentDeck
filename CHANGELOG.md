@@ -45,6 +45,30 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
+## 2026-09-12 — npm 1.3.1
+
+### The OpenClaw health check answered wrong in both directions, and ran far too often
+
+`checkGatewayHealth` is the only input that turns the OpenClaw row red from the
+Node daemon, and it returned a bare boolean tilted both ways at once. `ENOENT`
+— no `openclaw` on `PATH` — resolved **false**, so a surface whose process never
+inherited the CLI's directory reported a Gateway it had not once contacted as
+healthy. A timeout resolved **true**, so a doctor run that was merely slow was
+reported as a failing Gateway. Both are "I could not look", and both now return
+`known: false`, leaving the caller on its previous value exactly as
+`resolveGatewayHealth` already did for the health-frame path. Only a run that
+completed sets `hasError`, from its exit code, and the transition is logged so a
+row that goes red leaves a trace.
+
+The cadence was the other half of it. Measured against a live Gateway on
+2026-09-12, `openclaw doctor` takes 8-9 s; on a 30 s interval that left the CLI
+running about 30% of the time, and every run opened its own Gateway connection.
+Over four days that one check accounted for 9,958 `channels.status` calls on
+9,958 distinct connections — **99.5% of all Gateway RPC traffic** — at a mean of
+441 ms and p99 740 ms, against 50-200 ms for calls that share a socket. The
+default cadence is now 300 s, matching OpenClaw's own health monitor, and the
+timeout moves from 15 s to 30 s so the measured 8-9 s command has real headroom.
+
 ## 2026-09-12 — ESP32 1.2.3
 
 The TRMNL 7.5-inch firmware now reports its canonical `trmnl_75` board identity,
