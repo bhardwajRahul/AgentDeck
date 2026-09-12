@@ -57,6 +57,31 @@ gate because the Swift daemon reads `~/.codex` directly. A preview showing a
 populated Claude quota row would depict a capability the shipped app does not
 have without the separately-installed Node daemon.
 
+## Marketing captures are a different path on purpose
+
+`scripts/capture-marketing-screenshots.sh` writes `docs/media/` for the README
+and the project site. It runs the same deterministic feed but passes
+`--relay-usage`, which adds Claude's subscription gauges — legitimate there,
+because those surfaces describe the daemon product where a Node daemon relays
+that quota, and forbidden here, because the sandboxed App Store build cannot
+produce them alone (`UsageAPIClient.directOAuthUsageSupported == false`). The
+App Store scripts never pass the flag and the marketing script never writes
+into `apple/appstore-submission/`; keep it that way.
+
+It exists because the screenshots it replaced were real captures of a
+developer's desk — real project names, real task text in the operator's own
+language — in an English-language README. The Collaboration panel is the one
+surface that does not read the feed: it fetches its task history over HTTP, so
+the orchestrator answers `/apme/tasks` on the same port, and a pinned capture
+feed now also supplies the port the panel asks (`AgentStateHolder.captureFeedPort`).
+Without that the panel queried the developer daemon on :9120 and put this
+machine's real sessions into an otherwise synthetic frame.
+
+Two things it does not cover yet: the APME boards (`apme-activity.png`,
+`apme-work.png`) read a much wider API surface than the two endpoints stubbed
+here, and the menu bar popup's activity summary reads the same one, so both are
+still real captures of a real desk.
+
 ## What a capture must not inherit
 
 A capture takes whatever the machine is in the mood for unless the harness pins
