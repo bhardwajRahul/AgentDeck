@@ -81,9 +81,8 @@ configurations"* — was missing the contract's load-bearing half. Added in this
 Each was mutation-checked rather than trusted for passing: dropping `-l`, JSON-escaping
 the command, and quoting the woven value each turn the new cases red.
 
-Still untested, and not reachable from a unit test: that the login shell's **environment**
-actually reaches the agent. The tests pin that `-l` is passed, not what sourcing the
-profile produces. Closing that needs a real spawn in a controlled profile.
+The tests pin that `-l` is passed, not what sourcing the profile produces — that needs a
+real spawn, so it was measured directly instead (§2.7).
 
 ### 1.5 Replacement assessment
 
@@ -242,12 +241,37 @@ appears is the one it launched. The machinery for that already exists:
   does not break the link.
 - `passiveSessionObserver.processes()` supplies the pid/ppid table both directions.
 
-**Not measured, and the real risk:** whether the ancestry survives. `$SHELL -l -c "claude"`
-may `exec` the agent — in which case the pid the daemon spawned *is* the agent pid and the
-link is trivial — or may fork and exit, re-parenting the agent away from the daemon's
-child. Which happens depends on the shell and the command shape, and it decides whether
-attribution needs the ancestry walk at all. This one needs a runtime measurement, not a
-reading.
+The risk was that the ancestry might not survive — a shell that forks and exits re-parents
+the agent away from the daemon's child. Measured (§2.7): it does not fork. The pid the
+daemon spawns *becomes* the agent, so attribution does not even need the walk.
+
+### 2.7 Two runtime measurements
+
+Both were open questions a source reading could not close. Measured on this desk,
+macOS 25.6, `/bin/zsh` as `$SHELL`, reproducing `PtyManager`'s exact invocation shape.
+
+**The shell execs the command; it does not fork.** Spawning `$SHELL -l -c "sleep 30"` and
+then reading `ps -Ao pid=,ppid=,comm=`, the pid handed back by `spawn()` was itself
+`sleep`, with no children — under zsh and bash, and under a compound `cd /tmp && sleep 30`
+as well (the final command is exec'd either way).
+
+Consequence for §2.6: a daemon that hands off `$SHELL -l -c "<agent>"` keeps the agent as
+its **own direct child**, with the pid it already holds. Attribution needs no ancestry walk
+and no new consent surface; `registerPid`'s wrapper walk is a safety net, not the mechanism.
+
+**`-l` genuinely rewrites the environment.** Handing the shell a deliberately minimal
+`PATH=/usr/bin:/bin`, the login shell reported a profile-built `PATH`
+(`/usr/local/bin:/System/Cryptexes/…` and the rest), while the same shell with `-c` and no
+`-l` reported the minimal value back unchanged.
+
+Consequence for §1.2: the login flag is load-bearing, not decorative. A replacement that
+execs the agent binary directly gets the daemon's `PATH`, not the user's — which is exactly
+how a version-managed agent binary goes missing.
+
+**Not covered by either measurement:** Windows. `cmd.exe /d /s /c` has no `exec`, so the
+interpreter stays as the agent's parent and the pid the daemon spawned is *not* the agent
+pid. Any attribution design has to carry the ancestry walk for Windows even though POSIX
+does not need it. This desk cannot measure that.
 
 ---
 
@@ -267,7 +291,6 @@ reading.
 
 ## 4. Still unmeasured
 
-- Whether `$SHELL -l -c "<agent>"` execs or forks, which decides whether a handed-off
-  process keeps an ancestry link to the daemon's child (§2.6). Runtime measurement.
-- Whether the login shell's environment actually reaches the agent (§1.4). Runtime.
+- The Windows half of §2.7: `cmd.exe /d /s /c` cannot exec, so the spawned pid is the
+  interpreter, not the agent. Needs a Windows desk.
 - Everything in the remote-attach and session-ordering gates.
