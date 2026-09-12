@@ -321,10 +321,9 @@ struct TopologyRail: View {
     }
 
     private var mlxRow: some View {
-        guard !stateHolder.state.mlxModels.isEmpty else { return AnyView(EmptyView()) }
-        let selected = stateHolder.state.mlxModels.joined(separator: ", ")
-        let extraCount = max(0, stateHolder.state.mlxModelCatalog.count - stateHolder.state.mlxModels.count)
-        let subtitle = extraCount > 0 ? "\(selected) · +\(extraCount) available" : selected
+        let residency = stateHolder.state.mlxResidency
+        guard !stateHolder.state.mlxModels.isEmpty || residency?.known == true else { return AnyView(EmptyView()) }
+        let subtitle = LocalModelPresentation.mlx(models: stateHolder.state.mlxModels, residency: residency)
         return AnyView(
             ProviderRow(
                 name: "MLX",
@@ -339,30 +338,7 @@ struct TopologyRail: View {
     private var ollamaRow: some View {
         guard let ollama = stateHolder.state.ollamaStatus else { return AnyView(EmptyView()) }
         let status: LEDStatus = ollama.available ? .ok : .dim
-        // Split installed models into chat vs embed. Embedding models
-        // (bge-*, nomic-embed, bert family, …) never sit resident between
-        // requests — Ollama pulls them per-call and unloads via keep_alive.
-        // Framing them with a loaded/unloaded badge is misleading, so we
-        // group them separately with the "always on-demand" semantics.
-        let chat = ollama.models.filter { ($0.kind ?? "chat") != "embed" }
-        let embed = ollama.models.filter { ($0.kind ?? "chat") == "embed" }
-
-        let subtitle: String? = {
-            guard ollama.available else { return "stopped" }
-            if chat.isEmpty && embed.isEmpty { return "installed, no models" }
-
-            var lines: [String] = []
-            if !chat.isEmpty {
-                let names = chat.map { m in
-                    m.sizeVram > 0 ? "\(m.name) (loaded)" : m.name
-                }.joined(separator: ", ")
-                lines.append("Chat: \(names)")
-            }
-            if !embed.isEmpty {
-                lines.append("Embed: \(embed.map(\.name).joined(separator: ", "))")
-            }
-            return lines.joined(separator: "\n")
-        }()
+        let subtitle = LocalModelPresentation.ollama(ollama)
 
         return AnyView(
             ProviderRow(

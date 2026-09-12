@@ -8,6 +8,17 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class ProtocolTest {
 
+    @Test
+    fun `released model fields decode when additive residency metadata is present`() {
+        // Production Protocol.kt is unchanged; released readers ignore the additions.
+        val json = """{"type":"state_update","state":"idle","mlxModels":["gemma"],"mlxResidency":{"known":true,"models":["gemma"]},"ollamaStatus":{"available":true,"models":[{"name":"gemma","size":42,"sizeVram":0}],"installedModelsKnown":true,"residency":{"known":true,"models":[]}}}"""
+        val event = parseBridgeMessage(json) as BridgeEvent.State
+        assertEquals(listOf("gemma"), event.data.mlxModels)
+        assertEquals(true, event.data.ollamaStatus?.available)
+        assertEquals("gemma", event.data.ollamaStatus?.models?.first()?.name)
+        assertEquals(0L, event.data.ollamaStatus?.models?.first()?.sizeVram)
+    }
+
     // --- parseBridgeMessage: state_update ---
 
     @Test

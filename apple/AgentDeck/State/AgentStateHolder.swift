@@ -867,6 +867,9 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
         s.pairingUrl = e.pairingUrl ?? s.pairingUrl
         s.workerSessionCount = e.workerSessionCount ?? s.workerSessionCount
         if let os = e.ollamaStatus { s.ollamaStatus = os }
+        // A legacy model snapshot invalidates earlier verification. A quota-only
+        // frame with no model fields retains it. Never merge known=true across producers.
+        if e.mlxModels != nil || e.mlxResidency != nil { s.mlxResidency = e.mlxResidency }
         s.mlxModels = e.mlxModels ?? s.mlxModels
         if let subscriptions = e.subscriptions {
             s.subscriptions = subscriptions
@@ -1034,6 +1037,9 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
         s.codexLastRefreshAt = e.codexLastRefreshAt ?? s.codexLastRefreshAt
         s.codexRateLimits = e.codexRateLimits ?? s.codexRateLimits
         s.modelCatalog = e.modelCatalog ?? s.modelCatalog
+        // A legacy model snapshot invalidates earlier verification. A quota-only
+        // frame with no model fields retains it. Never merge known=true across producers.
+        if e.mlxModels != nil || e.mlxResidency != nil { s.mlxResidency = e.mlxResidency }
         s.mlxModels = e.mlxModels ?? s.mlxModels
         s.mlxModelCatalog = e.mlxModelCatalog ?? s.mlxModelCatalog
         if let subscriptions = e.subscriptions {
@@ -1162,6 +1168,11 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
         timelineVersion += 1
         // Preserve lastKnownState for offline display
         state.bridgeConnected = false
+        state.mlxResidency = nil
+        if var ollama = state.ollamaStatus {
+            ollama.residency = ModelResidency(known: false, models: [])
+            state.ollamaStatus = ollama
+        }
         state.state = .disconnected
         state.sessionId = nil
         state.focusedSessionId = nil

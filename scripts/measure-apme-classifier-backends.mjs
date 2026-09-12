@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-// Offline measurement harness for issue #299's classifier item.
+// Live inference measurement harness for issue #299's classifier item.
 //
 // Reads REAL task prompts + signals out of the maintainer's own
 // `~/.agentdeck/apme.sqlite` (opened `readonly: true, fileMustExist: true` —
 // better-sqlite3 refuses a write statement against that handle, and this
 // script issues none) and asks each available local classification backend
 // for a category with the SAME short prompt the production classifier uses
-// (`shared/src/apme-classifier-rules.ts`): rules, MLX (if `/v1/models`
-// answers), and Apple Foundation Models (via the bundled Node helper,
+// (`shared/src/apme-classifier-rules.ts`): rules, MLX (resident verified), and Apple Foundation Models (via the bundled Node helper,
 // `bridge/src/foundation-models-helper.ts`). It never writes to the DB and
 // never mutates `runs`/`tasks`/`turns`.
 //
+// Inference consumes GPU memory. Use a dedicated endpoint for experiments;
+// this harness refuses model replacement and stops at the first MLX failure.
 // This is a manual diagnostic, not a CI gate — the sample depends on
 // whatever real history exists on the machine running it, and the DB path
 // only reliably exists on a maintainer's own Mac. Run it by hand:
@@ -124,27 +125,21 @@ function sampleRows(db, limit) {
 
 // ─── MLX backend ─────────────────────────────────────────────────────────────
 
-const MLX_BASE = 'http://127.0.0.1:8800';
+const { loadMlxSettings, mlxBaseUrl, resolveSafeMlxModel, guardedMlxFetch } =
+  await import(path.join(projectDir, 'shared', 'dist', 'index.js'));
+const mlxSettings = loadMlxSettings();
+const MLX_BASE = mlxBaseUrl(args.endpoint ?? mlxSettings.endpoint);
+const requestedModel = args.model ?? mlxSettings.model;
 
 async function resolveMlxModel() {
-  for (const p of ['/v1/models', '/models']) {
-    try {
-      const resp = await fetch(`${MLX_BASE}${p}`, { signal: AbortSignal.timeout(2000) });
-      if (!resp.ok) continue;
-      const json = await resp.json();
-      const first = json.data?.find((m) => m.id && !m.id.toLowerCase().includes('nanollava'))?.id;
-      if (first) return first;
-    } catch {
-      /* try next */
-    }
-  }
-  return null;
+  // Read-only preflight. Never pick a download or switch an operating server.
+  return resolveSafeMlxModel(MLX_BASE, requestedModel);
 }
 
 async function classifyWithMlx(model, userMsg) {
   const start = performance.now();
   try {
-    const resp = await fetch(`${MLX_BASE}/chat/completions`, {
+    const resp = await guardedMlxFetch(`${MLX_BASE}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -225,6 +220,7 @@ async function main() {
   for (const row of sampled) {
     const userMsg = userMessageFor(row.taskPrompt, row.signals);
     const mlx = mlxAvailable ? await classifyWithMlx(mlxModel, userMsg) : { ok: false, error: 'mlx not reachable', latencyMs: 0 };
+    if (mlxAvailable && !mlx.ok) throw new Error(`MLX measurement stopped after failed inference: ${mlx.error}`);
     const fm = fmProbe.available ? await classifyWithFoundationModels(userMsg) : { ok: false, error: fmProbe.reason ?? 'unavailable', latencyMs: 0 };
     results.push({ id: row.id, ruleCategory: row.ruleCategory, mlx, fm });
     process.stdout.write('.');

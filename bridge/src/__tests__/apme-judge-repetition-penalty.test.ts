@@ -1,3 +1,4 @@
+import { withMlxResident } from './mlx-test-server.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callJudgeWithMeta, MLX_JUDGE_REPETITION_PENALTY } from '../apme/runner.js';
 import { DEFAULT_APME_CONFIG, loadApmeConfig } from '../apme/settings.js';
@@ -25,7 +26,7 @@ describe('MLX judge repetition penalty', () => {
   // see MLX_JUDGE_REPETITION_PENALTY.
   it('sends the measured default when the user set nothing', async () => {
     const f = vi.fn(async () => ok());
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     await callJudgeWithMeta('judge', mlxCfg());
     // The LITERAL, not the constant compared with itself — that form stayed
     // green when the constant was changed to 1.4, leaving the one number this
@@ -37,7 +38,7 @@ describe('MLX judge repetition penalty', () => {
 
   it('honours an explicit value', async () => {
     const f = vi.fn(async () => ok());
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     await callJudgeWithMeta('judge', mlxCfg({ repetitionPenalty: 1.2 }));
     expect(sentBody(f).repetition_penalty).toBe(1.2);
   });
@@ -47,7 +48,7 @@ describe('MLX judge repetition penalty', () => {
   // the retry probe, so "disabling" it would have had a price.
   it('omits the field entirely when set to 1', async () => {
     const f = vi.fn(async () => ok());
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     await callJudgeWithMeta('judge', mlxCfg({ repetitionPenalty: 1 }));
     expect(sentBody(f)).not.toHaveProperty('repetition_penalty');
   });
@@ -122,7 +123,7 @@ describe('the retry ladder allows every diagnosis', () => {
       }
       return ok();
     });
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     // A prompt long enough to trip the stub's overflow branch — with a short
     // one the third diagnosis is never reached and the test passes vacuously.
     const longPrompt = 'z'.repeat(20_000);
@@ -148,7 +149,7 @@ describe('the retry ladder allows every diagnosis', () => {
       // target ABOVE this prompt's length — so compaction is a no-op.
       return new Response('Request needs 9000 context tokens (8000 prompt + 800 max generation), but MAX_KV_SIZE is 40960', { status: 400 });
     });
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     await expect(callJudgeWithMeta('short', mlxCfg({
       endpoint: 'http://127.0.0.1:9990/v1/chat/completions',
       repetitionPenalty: 1,
@@ -167,14 +168,14 @@ describe('openai-compatible leg is deliberately excluded', () => {
 
   it('never sends the penalty, not even the default', async () => {
     const f = vi.fn(async () => ok());
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     await callJudgeWithMeta('judge', openAiCfg());
     expect(sentBody(f)).not.toHaveProperty('repetition_penalty');
   });
 
   it('does not send it even when the user set one explicitly', async () => {
     const f = vi.fn(async () => ok());
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     await callJudgeWithMeta('judge', openAiCfg({ repetitionPenalty: 1.3 }));
     expect(sentBody(f)).not.toHaveProperty('repetition_penalty');
     // …and the rest of the request is untouched by that decision.
@@ -193,7 +194,7 @@ describe('a server that refuses repetition_penalty', () => {
       if ('repetition_penalty' in body) return new Response('unknown field', { status: 400 });
       return ok();
     });
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     const { text } = await callJudgeWithMeta('judge', mlxCfg({ endpoint: 'http://127.0.0.1:9999/v1/chat/completions' }));
     expect(text).toContain('overall');
     expect(seen).toHaveLength(2);
@@ -214,7 +215,7 @@ describe('a server that refuses repetition_penalty', () => {
       if ('repetition_penalty' in body) return new Response('unknown field', { status: 400 });
       return ok();
     });
-    vi.stubGlobal('fetch', f);
+    vi.stubGlobal('fetch', withMlxResident(f as typeof fetch, 'gemma-test'));
     const cfg = mlxCfg({ endpoint: 'http://127.0.0.1:9998/v1/chat/completions' });
     await callJudgeWithMeta('judge', cfg);
     // First call: two requests (probe, then the field dropped).

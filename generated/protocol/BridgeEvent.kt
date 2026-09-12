@@ -111,6 +111,7 @@ data class BridgeEvent (
      */
     val mlxModels: List<String>? = null,
 
+    val mlxResidency: ModelResidency? = null,
     val modelCatalog: List<ModelCatalogEntry>? = null,
     val modelName: String? = null,
 
@@ -877,6 +878,16 @@ enum class GatewayAuthStatus(val value: String) {
     }
 }
 
+/**
+ * A completed residency observation. Unknown is explicit; [] with known=true means none.
+ *
+ * Optional additive metadata; old producers cannot prove non-residency.
+ */
+data class ModelResidency (
+    val known: Boolean,
+    val models: List<String>
+)
+
 data class ModelCatalogEntry (
     val available: Boolean,
     val key: String,
@@ -889,7 +900,13 @@ data class ModelCatalogEntry (
  */
 data class OllamaStatus (
     val available: Boolean,
-    val models: List<OllamaModel>
+    val installedModelsKnown: Boolean? = null,
+    val models: List<OllamaModel>,
+
+    /**
+     * Optional additive metadata; old producers cannot prove non-residency.
+     */
+    val residency: ModelResidency? = null
 )
 
 data class OllamaModel (

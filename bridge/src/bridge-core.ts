@@ -17,7 +17,7 @@ import {
   codexRateLimitsWithLiveRefresh,
   getLiveCodexRateLimits,
 } from './codex-rate-limits-live.js';
-import { fetchMlxModels } from './mlx-probe.js';
+import { fetchMlxModels, fetchMlxResidency } from './mlx-probe.js';
 import { buildDisplayStateEvent } from './display-dim.js';
 import { foldCodexSessionsForDisplay, loadMlxSettings, sortSessions } from '@agentdeck/shared';
 import { probeGateway, checkGatewayHealth } from './gateway-probe.js';
@@ -194,6 +194,7 @@ export class BridgeCore {
   apiUsagePreAdjusted = false;
   cachedOllamaStatus: OllamaStatus | null = null;
   cachedMlxModels: string[] | null = null;
+  cachedMlxResidency = { known: false, models: [] as string[] };
   cachedAntigravityStatus = readAntigravityLocalStatus() ?? null;
   cachedGatewayAvailable = false;
   cachedGatewayConnected = false;
@@ -436,7 +437,8 @@ export class BridgeCore {
       remoteUrl: snapshot.remoteUrl ?? undefined,
       pairingUrl: this.wsUrl,
       ollamaStatus: this.cachedOllamaStatus ?? undefined,
-      mlxModels: this.cachedMlxModels ?? undefined,
+      mlxModels: this.cachedMlxModels ?? [],
+      mlxResidency: this.cachedMlxResidency,
       subscriptions: subscriptions ?? undefined,
       antigravityStatus: this.cachedAntigravityStatus ?? undefined,
       gatewayAvailable: this.cachedGatewayAvailable,
@@ -528,6 +530,8 @@ export class BridgeCore {
       // suppress the live query that carries the only usable number.
       codexRateLimits,
     );
+    event.mlxModels = this.cachedMlxModels ?? [];
+    event.mlxResidency = this.cachedMlxResidency;
     this.lastBuiltCodexRateLimits = event.codexRateLimits ?? null;
     // "Is this block backed by a live answer", not "did the live answer win the
     // pick" — when the two agree on family the picker keeps the fresher rollout,
@@ -644,7 +648,7 @@ export class BridgeCore {
 
     const probe = (): void => {
       const pin = loadMlxSettings().model;
-      fetchMlxModels(pin).then((models) => {
+      Promise.all([fetchMlxModels(pin), fetchMlxResidency()]).then(([models, residency]) => {
         const success = Array.isArray(models) && models.length > 0;
         if (success) {
           failureCount = 0;
@@ -654,7 +658,8 @@ export class BridgeCore {
           const wait = Math.min(intervalMs * 2 ** failureCount, MAX_INTERVAL);
           nextFireAt = Date.now() + wait;
         }
-        const changed = JSON.stringify(this.cachedMlxModels) !== JSON.stringify(models);
+        const changed = JSON.stringify(this.cachedMlxModels) !== JSON.stringify(models) || JSON.stringify(this.cachedMlxResidency) !== JSON.stringify(residency);
+        this.cachedMlxResidency = residency;
         this.cachedMlxModels = models;
         if (changed) this.stateMachine.emit('state_changed', this.stateMachine.getSnapshot());
       }).catch(() => {

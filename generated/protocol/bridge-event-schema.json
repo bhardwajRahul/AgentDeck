@@ -946,6 +946,26 @@
       ],
       "type": "object"
     },
+    "ModelResidency": {
+      "additionalProperties": false,
+      "description": "A completed residency observation. Unknown is explicit; [] with known=true means none.",
+      "properties": {
+        "known": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "known",
+        "models"
+      ],
+      "type": "object"
+    },
     "OcSessionStatus": {
       "additionalProperties": {},
       "properties": {
@@ -993,11 +1013,18 @@
         "available": {
           "type": "boolean"
         },
+        "installedModelsKnown": {
+          "type": "boolean"
+        },
         "models": {
           "items": {
             "$ref": "#/definitions/OllamaModel"
           },
           "type": "array"
+        },
+        "residency": {
+          "$ref": "#/definitions/ModelResidency",
+          "description": "Optional additive metadata; old producers cannot prove non-residency."
         }
       },
       "required": [
@@ -1453,6 +1480,9 @@
           },
           "type": "array"
         },
+        "mlxResidency": {
+          "$ref": "#/definitions/ModelResidency"
+        },
         "modelCatalog": {
           "items": {
             "$ref": "#/definitions/ModelCatalogEntry"
@@ -1867,6 +1897,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "mlxResidency": {
+          "$ref": "#/definitions/ModelResidency"
         },
         "modelCatalog": {
           "items": {

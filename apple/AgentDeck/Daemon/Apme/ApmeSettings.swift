@@ -100,7 +100,7 @@ struct ApmeConfig: Codable {
 struct LlmMlxConfig: Codable {
     /// Base URL (no /chat/completions suffix). Default: 127.0.0.1:8800.
     var endpoint: String = "http://127.0.0.1:8800"
-    /// Pinned model id. `nil` means auto-detect from `/v1/models`.
+    /// Pinned model id. `nil` means use the verified resident model.
     var model: String?
 }
 
@@ -255,12 +255,14 @@ enum ApmeSettings {
             return c.value
         }
         var cfg = LlmMlxConfig()
+        var explicitEndpoint = false
         if let data = readSettingsDataBounded(),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
 
             if let llmMlx = (json["llm"] as? [String: Any])?["mlx"] as? [String: Any] {
                 if let ep = llmMlx["endpoint"] as? String, !ep.isEmpty {
                     cfg.endpoint = stripChatSuffix(ep)
+                    explicitEndpoint = true
                 }
                 if let m = llmMlx["model"] as? String, !isPlaceholderModel(m) {
                     cfg.model = m.trimmingCharacters(in: .whitespaces)
@@ -268,12 +270,13 @@ enum ApmeSettings {
             }
 
             // Legacy fallback: apme.judge.{endpoint,model}
-            if cfg.model == nil || cfg.endpoint == "http://127.0.0.1:8800" {
-                if let judge = (json["apme"] as? [String: Any])?["judge"] as? [String: Any] {
+            if cfg.model == nil || !explicitEndpoint {
+                if let judge = (json["apme"] as? [String: Any])?["judge"] as? [String: Any],
+                   judge["backend"] == nil || judge["backend"] as? String == "mlx" {
                     if cfg.model == nil, let m = judge["model"] as? String, !isPlaceholderModel(m) {
                         cfg.model = m.trimmingCharacters(in: .whitespaces)
                     }
-                    if cfg.endpoint == "http://127.0.0.1:8800",
+                    if !explicitEndpoint,
                        let ep = judge["endpoint"] as? String, !ep.isEmpty {
                         cfg.endpoint = stripChatSuffix(ep)
                     }

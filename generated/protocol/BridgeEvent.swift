@@ -52,6 +52,7 @@ struct ADBridgeEvent: Codable, Equatable {
     var gatewayHasError: Bool?
     /// MLX local server model list
     var mlxModels: [String]?
+    var mlxResidency: ADModelResidency?
     var modelCatalog: [ADModelCatalogEntry]?
     var modelName: String?
     /// Daemon-owned hardware/module health, intentionally loose for cross-version clients
@@ -184,6 +185,7 @@ struct ADBridgeEvent: Codable, Equatable {
         case gatewayConnected = "gatewayConnected"
         case gatewayHasError = "gatewayHasError"
         case mlxModels = "mlxModels"
+        case mlxResidency = "mlxResidency"
         case modelCatalog = "modelCatalog"
         case modelName = "modelName"
         case moduleHealth = "moduleHealth"
@@ -309,6 +311,7 @@ extension ADBridgeEvent {
         gatewayConnected: Bool?? = nil,
         gatewayHasError: Bool?? = nil,
         mlxModels: [String]?? = nil,
+        mlxResidency: ADModelResidency?? = nil,
         modelCatalog: [ADModelCatalogEntry]?? = nil,
         modelName: String?? = nil,
         moduleHealth: [String: JSONAny]?? = nil,
@@ -414,6 +417,7 @@ extension ADBridgeEvent {
             gatewayConnected: gatewayConnected ?? self.gatewayConnected,
             gatewayHasError: gatewayHasError ?? self.gatewayHasError,
             mlxModels: mlxModels ?? self.mlxModels,
+            mlxResidency: mlxResidency ?? self.mlxResidency,
             modelCatalog: modelCatalog ?? self.modelCatalog,
             modelName: modelName ?? self.modelName,
             moduleHealth: moduleHealth ?? self.moduleHealth,
@@ -1537,6 +1541,63 @@ enum ADGatewayAuthStatus: String, Codable, Equatable {
 // for types that require the use of JSONAny, nor will the implementation of Hashable be
 // synthesized for types that have collections (such as arrays or dictionaries).
 
+/// A completed residency observation. Unknown is explicit; [] with known=true means none.
+///
+/// Optional additive metadata; old producers cannot prove non-residency.
+// MARK: - ADModelResidency
+struct ADModelResidency: Codable, Equatable {
+    var known: Bool
+    var models: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case known = "known"
+        case models = "models"
+    }
+}
+
+// MARK: ADModelResidency convenience initializers and mutators
+
+extension ADModelResidency {
+    init(data: Data) throws {
+        self = try newJSONDecoder().decode(ADModelResidency.self, from: data)
+    }
+
+    init(_ json: String, using encoding: String.Encoding = .utf8) throws {
+        guard let data = json.data(using: encoding) else {
+            throw NSError(domain: "JSONDecoding", code: 0, userInfo: nil)
+        }
+        try self.init(data: data)
+    }
+
+    init(fromURL url: URL) throws {
+        try self.init(data: try Data(contentsOf: url))
+    }
+
+    func with(
+        known: Bool? = nil,
+        models: [String]? = nil
+    ) -> ADModelResidency {
+        return ADModelResidency(
+            known: known ?? self.known,
+            models: models ?? self.models
+        )
+    }
+
+    func jsonData() throws -> Data {
+        return try newJSONEncoder().encode(self)
+    }
+
+    func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
+        return String(data: try self.jsonData(), encoding: encoding)
+    }
+}
+
+//
+// Hashable or Equatable:
+// The compiler will not be able to synthesize the implementation of Hashable or Equatable
+// for types that require the use of JSONAny, nor will the implementation of Hashable be
+// synthesized for types that have collections (such as arrays or dictionaries).
+
 // MARK: - ADModelCatalogEntry
 struct ADModelCatalogEntry: Codable, Equatable {
     var available: Bool
@@ -1603,11 +1664,16 @@ extension ADModelCatalogEntry {
 // MARK: - ADOllamaStatus
 struct ADOllamaStatus: Codable, Equatable {
     var available: Bool
+    var installedModelsKnown: Bool?
     var models: [ADOllamaModel]
+    /// Optional additive metadata; old producers cannot prove non-residency.
+    var residency: ADModelResidency?
 
     enum CodingKeys: String, CodingKey {
         case available = "available"
+        case installedModelsKnown = "installedModelsKnown"
         case models = "models"
+        case residency = "residency"
     }
 }
 
@@ -1631,11 +1697,15 @@ extension ADOllamaStatus {
 
     func with(
         available: Bool? = nil,
-        models: [ADOllamaModel]? = nil
+        installedModelsKnown: Bool?? = nil,
+        models: [ADOllamaModel]? = nil,
+        residency: ADModelResidency?? = nil
     ) -> ADOllamaStatus {
         return ADOllamaStatus(
             available: available ?? self.available,
-            models: models ?? self.models
+            installedModelsKnown: installedModelsKnown ?? self.installedModelsKnown,
+            models: models ?? self.models,
+            residency: residency ?? self.residency
         )
     }
 

@@ -4297,6 +4297,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         gatewayConnected: core.cachedGatewayConnected,
         gatewayAuthStatus: core.cachedGatewayAuthStatus,
         ollamaStatus: core.cachedOllamaStatus,
+        mlxModels: core.cachedMlxModels ?? [],
+        mlxResidency: core.cachedMlxResidency,
         gatewayHasError: (evt as any).gatewayHasError ?? core.cachedGatewayHasError,
         moduleHealth: moduleHealthProvider(),
       };
@@ -4321,12 +4323,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       // `resolveRelayedUsageEvent`. It was inlined here until issue #253: this is
       // the daemon's most flicker-sensitive path, its whole history is about not
       // clobbering the dashboard, and an inline branch had no test seam.
-      core.wsServer.broadcast(resolveRelayedUsageEvent({
+      core.wsServer.broadcast({ ...resolveRelayedUsageEvent({
         relayed: u,
         ownCodexRateLimits: core.lastBuiltCodexRateLimits,
         ownLiveFamilyAuthorityExpiresAtMs: core.lastBuiltCodexLiveFamilyAuthorityExpiresAtMs,
         buildOwnUsage: () => core.buildUsage() as UsageEvent,
-      }));
+      }), ollamaStatus: core.cachedOllamaStatus ?? undefined,
+      mlxModels: core.cachedMlxModels ?? [], mlxResidency: core.cachedMlxResidency });
     } else {
       // prompt_options — relay as-is
       core.wsServer.broadcast(evt);

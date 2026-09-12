@@ -1175,6 +1175,7 @@ struct SettingsScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(detectedProviders, id: \.endpoint) { d in
                         Button {
+                            preferences.apmeJudgeBackend = d.provider == "mlx" ? "mlx" : "openai"
                             preferences.apmeJudgeEndpoint = d.endpoint
                             preferences.apmeJudgeModel = d.models.first ?? ""
                         } label: {

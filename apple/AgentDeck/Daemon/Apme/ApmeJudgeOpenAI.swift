@@ -62,7 +62,7 @@ enum ApmeJudgeOpenAI {
 
     /// Resolve a model id when the user left it unset. Ollama → /api/tags,
     /// everything else → /v1/models.
-    static func resolveModel(base: String, apiKey: String?, configured: String) async -> String {
+    static func resolveModel(base: String, apiKey: String?, configured: String) async throws -> String {
         if !configured.isEmpty && configured != "default" && configured != "qwen3-30b" { return configured }
         func authed(_ url: URL) -> URLRequest {
             var r = URLRequest(url: url); r.timeoutInterval = 3
@@ -74,6 +74,7 @@ enum ApmeJudgeOpenAI {
            (resp as? HTTPURLResponse)?.statusCode == 200,
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let models = json["models"] as? [[String: Any]],
+           Set(models.compactMap({ $0["name"] as? String })).count == 1,
            let name = models.compactMap({ $0["name"] as? String }).first {
             return name
         }
@@ -83,11 +84,10 @@ enum ApmeJudgeOpenAI {
                   (resp as? HTTPURLResponse)?.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let models = json["data"] as? [[String: Any]] else { continue }
-            for m in models {
-                if let id = m["id"] as? String, !id.lowercased().contains("nanollava") { return id }
-            }
+            let names = Set(models.compactMap { $0["id"] as? String }.filter { !$0.isEmpty })
+            if names.count == 1, let id = names.first, !id.lowercased().contains("nanollava") { return id }
         }
-        return configured.isEmpty ? "default" : configured
+        throw MlxSafetyError.refused("OpenAI-compatible judge needs an explicit model or a singleton catalog")
     }
 
     /// Best-effort variant for the automatic pipeline — nil on any failure.
@@ -113,7 +113,7 @@ enum ApmeJudgeOpenAI {
     static func judgeThrowing(prompt: String, config: ApmeJudgeConfig) async throws -> String {
         guard let endpoint = config.endpoint, !endpoint.isEmpty else { throw JudgeError.noEndpoint }
         let b = base(endpoint)
-        let model = await resolveModel(base: b, apiKey: config.apiKey, configured: config.model)
+        let model = try await resolveModel(base: b, apiKey: config.apiKey, configured: config.model)
         LastResolvedModel.set(model)
         guard let url = URL(string: chatURL(endpoint)) else { throw JudgeError.noEndpoint }
 
