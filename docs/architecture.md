@@ -100,6 +100,10 @@ this table live in CLAUDE.md § Key Conventions ("Cross-platform rules are SSOT-
 
 Known hand-mirror debt: `shared/src/creature-layout.ts` band layout (3-way comment-discipline mirror, test parity only) — fold it into a generator when next touched. The idle-gap
 constant in `ApmeCollector` stays grep-pinned by `apme-display-rules-sync.test.ts`.
+`shared/src/timeline-icons.ts` is a 3-way hand mirror too (Apple `TimelineStripView.swift`, Android `TimelineIcons.kt`), with per-surface tests rather than a drift gate — and it has
+demonstrably diverged: on 2026-09-12 the Android mirror was found missing `error` from the `isRotatingEntry` completion list (so a failed turn kept spinning next to the error row that
+explained it) and missing the rotating-glyph swap entirely (so `task_start` rotated the static checklist). Both had been correct in TS and Swift for some time. Parallel tests do not
+catch an omission that exists in every surface's test alike; fold this into a generator when next touched.
 
 ## Terrarium rules SSOT (cross-platform behavior invariants)
 
