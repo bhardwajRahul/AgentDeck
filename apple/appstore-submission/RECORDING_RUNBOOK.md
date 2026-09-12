@@ -57,6 +57,40 @@ gate because the Swift daemon reads `~/.codex` directly. A preview showing a
 populated Claude quota row would depict a capability the shipped app does not
 have without the separately-installed Node daemon.
 
+## What a capture must not inherit
+
+A capture takes whatever the machine is in the mood for unless the harness pins
+it down. Three things reached submission assets before they were pinned, all of
+them invisible until someone looked at the pixels:
+
+- **The operator's UI state.** The dashboard's Habitat/Collaboration toggle is
+  persisted (`dashboardCollaborationEnabled`), and the Debug build shares the
+  shipping bundle id, so a panel left open on this desk lands in the capture —
+  covering the topology rail the `05-devices` crop is taken from.
+  `reset_capture_defaults` writes the deterministic value before every launch.
+- **The system language.** WeatherKit's attribution is localized, so a Korean
+  system put a Korean word in an otherwise English capture. The app is launched
+  with `-AppleLanguages '("en")'`; the raw captures are locale-independent, and
+  only `compose-appstore-screenshots.py`'s captions are per-locale.
+- **Z-order.** `screencapture -D` records the display as composited, so any
+  window above the dashboard is inside the crop rect. On a desk where other
+  agent sessions run GUI apps this is not hypothetical: a game engine's splash
+  window put a third party's UI into a take. `isolate_dashboard` hides every
+  other regular app and restores them afterwards.
+
+Window geometry is now **set, read back, and retried** (`force_window_geometry`)
+rather than set once: the window is restored to its remembered size shortly
+after launch, so the early `set size` was silently reverted and the fixed crop
+rect then framed desktop instead of dashboard. A run that cannot reach the
+geometry fails loudly, because a capture whose frame does not match the crop is
+worse than no capture.
+
+**Stills survive a busy desk; video does not.** Each screenshot beat is an
+instantaneous grab, so a moment of quiet is enough. A preview needs ~48 seconds
+of uninterrupted, unobstructed screen, and another session launching a window
+during it ruins the take with nothing to salvage. Record previews when nothing
+else on this machine is driving a GUI.
+
 ## Producing the submission assets
 
 Both scripts start the feed with an epoch in the **future** and launch the app

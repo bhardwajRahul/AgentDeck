@@ -82,18 +82,77 @@ if delay > 0:
 PY
 }
 
+# A capture must not inherit the operator's UI state or locale. The dashboard's
+# Habitat/Collaboration toggle is persisted in the app's own defaults and the
+# Debug build shares the shipping bundle id, so a panel left open on this desk
+# lands in the submission assets — it happened, covering the topology rail that
+# the `05-devices` crop is taken from. WeatherKit's attribution is localized
+# too, so a Korean system produced a Korean word in an otherwise English
+# capture, which is the opposite of the locale-independent raw capture this
+# harness promises.
+reset_capture_defaults() {
+  defaults write "$BUNDLE_ID" dashboardCollaborationEnabled -bool false 2>/dev/null || true
+}
+
+# `screencapture -D` records the display as composited, so ANY window above the
+# dashboard lands inside the crop rect — a floating window from another app put
+# a third party's UI (in another language) into a submission asset. Geometry was
+# never the problem; z-order was. Hide every other regular app for the duration
+# and put them back afterwards.
+HIDDEN_APPS=""
+isolate_dashboard() {
+  HIDDEN_APPS="$(osascript -e 'tell application "System Events" to get name of (every process whose visible is true and background only is false and name is not "AgentDeck")' 2>/dev/null || true)"
+  osascript -e 'tell application "System Events" to set visible of (every process whose name is not "AgentDeck" and background only is false) to false' >/dev/null 2>&1 || true
+  osascript -e 'tell application "AgentDeck" to activate' >/dev/null 2>&1 || true
+  sleep 1.5
+}
+restore_hidden_apps() {
+  [ -n "$HIDDEN_APPS" ] || return 0
+  local IFS=','
+  for app in $HIDDEN_APPS; do
+    app="$(echo "$app" | sed -e 's/^ *//' -e 's/ *$//')"
+    [ -n "$app" ] || continue
+    osascript -e "tell application \"System Events\" to set visible of process \"$app\" to true" >/dev/null 2>&1 || true
+  done
+  HIDDEN_APPS=""
+}
+
+# Setting the geometry once is not enough: the window is restored to its
+# remembered size after launch, so an early `set size` is silently reverted and
+# the fixed crop rect then frames desktop instead of dashboard. Set it, read it
+# back, and keep trying — a capture whose frame does not match the crop is worse
+# than a failed run, so this reports rather than proceeding blind.
+force_window_geometry() {
+  local want_w="$1" want_h="$2" want_x="$3" want_y="$4" got=""
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8; do
+    osascript -e "tell application \"System Events\" to tell process \"AgentDeck\"
+      set position of window 1 to {$want_x, $want_y}
+      set size of window 1 to {$want_w, $want_h}
+    end tell" >/dev/null 2>&1 || true
+    sleep 0.7
+    got="$(osascript -e 'tell application "System Events" to tell process "AgentDeck" to return size of window 1' 2>/dev/null | tr -d ' ')" || got=""
+    if [ "$got" = "$want_w,$want_h" ]; then
+      echo "window geometry ${want_w}x${want_h} @ ${want_x},${want_y} (attempt $attempt)"
+      return 0
+    fi
+  done
+  echo "window geometry never took: wanted ${want_w}x${want_h}, got ${got:-unknown}" >&2
+  return 1
+}
+
 capture_macos() {
   osascript -e 'quit app "AgentDeck"' >/dev/null 2>&1 || true
   sleep 2
   local epoch; epoch=$(( $(now_ms) + (LEAD_SECONDS * 1000) ))
   start_feed_at "$epoch"
 
-  open -n "$MACOS_APP" --args -AgentDeckScreenshotURL "$WS"
+  reset_capture_defaults
+  open -n "$MACOS_APP" --args -AgentDeckScreenshotURL "$WS" -AppleLanguages '("en")'
   sleep 6
-  osascript -e "tell application \"System Events\" to tell process \"AgentDeck\"
-    set position of window 1 to {$MAC_WIN_X, $MAC_WIN_Y}
-    set size of window 1 to {$MAC_WIN_W, $MAC_WIN_H}
-  end tell" >/dev/null
+
+  isolate_dashboard
+  force_window_geometry "$MAC_WIN_W" "$MAC_WIN_H" "$MAC_WIN_X" "$MAC_WIN_Y"
 
   mkdir -p "$SHOTS/macOS"
   local tmp="${TMPDIR:-/tmp}/agentdeck-shot.png"
@@ -107,6 +166,7 @@ capture_macos() {
     flatten "$SHOTS/macOS/${BEAT_NAMES[$i]}.png"
     echo "captured macOS/${BEAT_NAMES[$i]}.png"
   done
+  restore_hidden_apps
   rm -f "$tmp"
 }
 
