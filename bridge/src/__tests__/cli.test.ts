@@ -276,6 +276,44 @@ describe('weaveAgentCommand', () => {
     expect(weaveAgentCommand('claude-code', 'claude', {})).toBe('claude');
     expect(weaveAgentCommand('claude-code', 'claude', { AGENTDECK_CLAUDE_ARGS: '   ' })).toBe('claude');
   });
+
+  // #273 "Custom launch arguments": the woven string is re-parsed by the
+  // platform shell at spawn (PtyManager uses `$SHELL -l -c` / `cmd.exe /d /s
+  // /c`), so the weave's contract is that it appends and otherwise keeps its
+  // hands off. Quoting or escaping here would corrupt a command the user wrote
+  // for their own shell, and the damage would only appear at spawn time.
+  it('leaves the user\'s shell quoting and metacharacters untouched', () => {
+    expect(
+      weaveAgentCommand('claude-code', 'claude --resume "my session"', {
+        AGENTDECK_CLAUDE_ARGS: '--remote-control',
+      }),
+    ).toBe('claude --resume "my session" --remote-control');
+
+    expect(
+      weaveAgentCommand('codex-cli', 'cd $HOME/work && codex', {
+        AGENTDECK_CODEX_ARGS: '--full-auto',
+      }),
+    ).toBe('cd $HOME/work && codex --full-auto');
+  });
+
+  it('does not re-quote a Windows-style command', () => {
+    expect(
+      weaveAgentCommand('claude-code', 'C:\\Program Files\\claude\\claude.exe', {
+        AGENTDECK_CLAUDE_ARGS: '--remote-control',
+      }),
+    ).toBe('C:\\Program Files\\claude\\claude.exe --remote-control');
+  });
+
+  // The env value itself is appended raw — it is NOT tokenized (that is
+  // AGENTDECK_COMMANDER_ARGS' job). A quoted value must therefore survive with
+  // its quotes intact for the shell to group it.
+  it('appends a quoted env value verbatim rather than tokenizing it', () => {
+    expect(
+      weaveAgentCommand('claude-code', 'claude', {
+        AGENTDECK_CLAUDE_ARGS: '--append-system-prompt "be terse"',
+      }),
+    ).toBe('claude --append-system-prompt "be terse"');
+  });
 });
 
 describe('resolveAgentCommand (per-agent half of the --no-env-args hatch)', () => {
