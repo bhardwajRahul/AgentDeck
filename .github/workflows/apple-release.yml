@@ -134,6 +134,14 @@ jobs:
           bash apple/scripts/verify-appstore-archive.sh \
             "$RUNNER_TEMP/ipa_unpacked/Payload/AgentDeck.app"
 
+      - name: Retain verified iOS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-ios-${{ steps.version.outputs.VERSION }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/export_ios/AgentDeck.ipa
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Upload iOS to TestFlight
         if: ${{ github.event_name == 'push' || inputs.upload }}
         run: |
@@ -244,6 +252,14 @@ jobs:
           APP=$(find "$RUNNER_TEMP/pkg_expanded" -type d -name 'AgentDeck.app' | head -1)
           test -n "$APP"
           bash apple/scripts/verify-appstore-archive.sh "$APP"
+
+      - name: Retain verified macOS candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-macos-${{ steps.version.outputs.VERSION }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/export_macos/AgentDeck.pkg
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Upload macOS to App Store Connect
         if: ${{ github.event_name == 'push' || inputs.upload }}
