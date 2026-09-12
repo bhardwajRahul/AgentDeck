@@ -16,6 +16,10 @@ import {
   routeDaemonLifecycle,
   runSupervisorPlan,
   supervisorJobRunning,
+  supervisorPosture,
+  parseSystemdActive,
+  parseSchtasksRunning,
+  execFailureAnswered,
   supervisorLivenessProbe,
   classifySupervision,
   describeSupervisor,
@@ -231,6 +235,66 @@ describe('supervisorJobRunning / supervisorLivenessProbe', () => {
     // an answer is not an answer.
     const probe = supervisorLivenessProbe({ kind: 'schtasks', label: 'AgentDeckDaemon' });
     expect(probe()).toBe(true);
+  });
+
+  // Review round (2026-09-12): all three probes had a way to answer "dead"
+  // when they had not actually read anything, which is the failure mode
+  // `supervisorJobRunning`'s own doc comment forbids.
+  it('systemd transitional states are not an outcome', () => {
+    expect(parseSystemdActive('active\n')).toBe(true);
+    expect(parseSystemdActive('inactive\n')).toBe(false);
+    expect(parseSystemdActive('failed\n')).toBe(false);
+    // Restart=on-failure backoff. Reading this as dead ends the wait seconds
+    // before systemd brings the daemon back.
+    expect(parseSystemdActive('activating\n')).toBeUndefined();
+    expect(parseSystemdActive('deactivating\n')).toBeUndefined();
+    expect(parseSystemdActive('reloading\n')).toBeUndefined();
+  });
+
+  it('a localized schtasks answer is unreadable, not "not running"', () => {
+    expect(parseSchtasksRunning('TaskName: \\AgentDeckDaemon\nStatus:  Running\n')).toBe(true);
+    expect(parseSchtasksRunning('TaskName: \\AgentDeckDaemon\nStatus:  Ready\n')).toBe(false);
+    expect(parseSchtasksRunning('TaskName: \\AgentDeckDaemon\nStatus:  Disabled\n')).toBe(false);
+    // Korean Windows prints the header and the value localized. The old
+    // `/^Status:\s+Running/` read a RUNNING job as dead here, which made
+    // convergeInstalledSupervision stop a healthy supervised daemon.
+    expect(parseSchtasksRunning('폴더: \\\n작업 이름: \\AgentDeckDaemon\n상태:  실행 중\n')).toBeUndefined();
+    // English header, value we do not model (Queued / Could not start).
+    expect(parseSchtasksRunning('Status:  Queued\n')).toBeUndefined();
+  });
+
+  it('only a command that ran and exited non-zero has answered', () => {
+    expect(execFailureAnswered(Object.assign(new Error('exit 3'), { status: 3 }))).toBe(true);
+    expect(execFailureAnswered(Object.assign(new Error('exit 0'), { status: 0 }))).toBe(true);
+    // Timed out under load during a restart — no reading was taken.
+    expect(execFailureAnswered(
+      Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT', signal: 'SIGTERM' }),
+    )).toBe(false);
+    // The supervisor CLI is not installed / not on PATH.
+    expect(execFailureAnswered(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))).toBe(false);
+    expect(execFailureAnswered(new Error('plain'))).toBe(false);
+    expect(execFailureAnswered(null)).toBe(false);
+  });
+
+  it('a supervisor with no unit file has no posture to compare, not a default one', () => {
+    // A Windows scheduled task: schtasks owns the argv, and the XML that
+    // created it was deleted. Answering [] made every restart on a --local
+    // machine read as a posture mismatch and fork an unsupervised daemon.
+    expect(supervisorPosture({ kind: 'schtasks', label: 'AgentDeckDaemon' })).toBeUndefined();
+    expect(supervisorPosture({ kind: 'systemd', label: 'x.service', unitPath: '/no/such/unit' }))
+      .toBeUndefined();
+  });
+
+  it('an unreadable unit posture leaves the restart with the supervisor', () => {
+    // routeDaemonLifecycle already models the third answer: no comparison to
+    // make means no posture-mismatch takeover.
+    const route = routeDaemonLifecycle({
+      supervisor: { kind: 'schtasks', label: 'AgentDeckDaemon' },
+      oneOffFlags: [],
+      unitPosture: undefined,
+      wantedPosture: ['--local'],
+    });
+    expect(route.via).toBe('supervisor');
   });
 
   it('caches within the throttle window', () => {

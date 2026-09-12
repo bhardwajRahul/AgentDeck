@@ -180,13 +180,27 @@ export function detectSupervisor(): SupervisorFacts | null {
   return null;
 }
 
-/** The unit's baked posture flags, or [] when the file cannot be read. */
-export function supervisorPosture(f: SupervisorFacts): string[] {
-  if (!f.unitPath) return [];
+/**
+ * The unit's baked posture flags, or `undefined` when they cannot be read.
+ *
+ * The third answer is load-bearing here for the same reason it is in
+ * `supervisorJobRunning`. A Windows scheduled task has no `unitPath` at all —
+ * `windows-service.ts` writes the task XML to a temp file and deletes it after
+ * `schtasks /Create` — so this used to answer `[]`, which reads as "the unit
+ * bakes the default posture". Every `daemon restart` on a machine installed
+ * with `--local` then compared its inherited `--local` against a fabricated
+ * default, took the `posture-mismatch` branch, printed a claim about the task
+ * that was not true, and forked an UNSUPERVISED daemon. `routeDaemonLifecycle`
+ * already treats `undefined` as "no comparison to make" and leaves the
+ * supervisor owning the restart, which is the correct behaviour when we could
+ * not look.
+ */
+export function supervisorPosture(f: SupervisorFacts): string[] | undefined {
+  if (!f.unitPath) return undefined;
   try {
     return parseSupervisorPosture(f.kind, readFileSync(f.unitPath, 'utf-8'));
   } catch {
-    return [];
+    return undefined;
   }
 }
 
@@ -288,6 +302,59 @@ export function routeDaemonLifecycle(args: {
  * `undefined` means the supervisor did not answer, which is not "it died": the
  * caller keeps waiting, bounded by the ceiling.
  */
+/**
+ * `systemctl is-active` → the three answers.
+ *
+ * The transitional states are the reason this is not `=== 'active'`. With
+ * `Restart=on-failure` a unit in restart backoff answers `activating`, which
+ * is "still working on it" — reading it as dead makes the liveness probe
+ * declare the job gone seconds before systemd brings the daemon back, which is
+ * the premature deadline this whole path exists to avoid.
+ */
+export function parseSystemdActive(out: string): boolean | undefined {
+  switch (out.trim()) {
+    case 'active': return true;
+    case 'inactive': case 'failed': return false;
+    // activating / deactivating / reloading — in motion, not an outcome.
+    default: return undefined;
+  }
+}
+
+/**
+ * `schtasks /Query /FO LIST` → the three answers.
+ *
+ * `schtasks` localizes both the field headers and the status VALUES, so a
+ * regex for English `Status: Running` is not a test for "is it running" — on a
+ * non-English Windows it fails to match a running job. Returning `false` there
+ * told `convergeInstalledSupervision` to stop a healthy supervised daemon and
+ * collapsed `waitForRestartedDaemon`'s ceiling to its floor. An output this
+ * cannot read is `undefined`: we could not look, which is not "it died".
+ */
+export function parseSchtasksRunning(out: string): boolean | undefined {
+  const m = /^Status:\s*(.+)$/mi.exec(out);
+  if (!m) return undefined;               // localized header — unreadable
+  switch (m[1].trim().toLowerCase()) {
+    case 'running': return true;
+    case 'ready': case 'disabled': return false;
+    // Queued / Unknown / "Could not start" / any localized value.
+    default: return undefined;
+  }
+}
+
+/**
+ * Did a failed `execFileSync` actually ANSWER, or did it fail to look?
+ *
+ * A command that ran and exited non-zero carries a numeric `status` — that is
+ * an answer (`systemctl is-active` exits 3 and prints the state; `launchctl
+ * print` fails outright once the job is booted out). A timeout (`ETIMEDOUT` /
+ * killed by `SIGTERM`) or a missing binary (`ENOENT`) carries no status: the
+ * probe never got a reading, and saying "dead" there is the false-failure
+ * report this module was rewritten to remove.
+ */
+export function execFailureAnswered(e: unknown): boolean {
+  return typeof (e as { status?: unknown } | null)?.status === 'number';
+}
+
 export function supervisorJobRunning(f: SupervisorFacts): boolean | undefined {
   try {
     switch (f.kind) {
@@ -302,20 +369,20 @@ export function supervisorJobRunning(f: SupervisorFacts): boolean | undefined {
       case 'systemd': {
         const out = execFileSync('systemctl', ['--user', 'is-active', f.label],
           { stdio: 'pipe', encoding: 'utf-8', timeout: 5_000 });
-        return out.trim() === 'active';
+        return parseSystemdActive(out);
       }
       case 'schtasks': {
         const out = execFileSync('schtasks', ['/Query', '/TN', f.label, '/FO', 'LIST'],
           { stdio: 'pipe', encoding: 'utf-8', timeout: 5_000, windowsHide: true });
-        return /^Status:\s+Running/mi.test(out);
+        return parseSchtasksRunning(out);
       }
     }
   } catch (e) {
-    // A non-zero exit is an answer for two of the three: `systemctl is-active`
-    // prints the state and exits 3 when it is not active, and `launchctl print`
-    // fails outright once the job has been booted out.
+    // Only a command that ran and exited non-zero is an answer. A timeout or a
+    // missing binary is not — see `execFailureAnswered`.
+    if (!execFailureAnswered(e)) return undefined;
     const out = ((e as { stdout?: Buffer }).stdout?.toString() ?? '').trim();
-    if (f.kind === 'systemd' && out) return out === 'active';
+    if (f.kind === 'systemd' && out) return parseSystemdActive(out);
     if (f.kind === 'launchd') return false;
     return undefined;
   }
