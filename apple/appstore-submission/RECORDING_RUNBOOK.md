@@ -77,10 +77,19 @@ feed now also supplies the port the panel asks (`AgentStateHolder.captureFeedPor
 Without that the panel queried the developer daemon on :9120 and put this
 machine's real sessions into an otherwise synthetic frame.
 
-Two things it does not cover yet: the APME boards (`apme-activity.png`,
-`apme-work.png`) read a much wider API surface than the two endpoints stubbed
-here, and the menu bar popup's activity summary reads the same one, so both are
-still real captures of a real desk.
+The APME boards and the menu bar popup's activity summary read a much wider
+API surface than the two endpoints stubbed here, so they only have anything to
+show against a daemon that has really been measuring work.
+`scripts/capture-live-screenshots.sh` handles those: same window-capture rule
+and the same 1440x900 density, real data by necessity. Real project names and
+whatever language the operator writes in are an accepted trade for those three
+images, and never for an App Store asset.
+
+It does not click the tab for you. SwiftUI's tab bar ignores a System Events
+synthetic click, so the script pins the window and captures whatever tab is
+selected rather than pretending it can drive one. Worth scrolling the Work
+board a row or two first: it opens on the newest task, which on a machine that
+is taking the screenshot is the screenshot.
 
 ## What a capture must not inherit
 
