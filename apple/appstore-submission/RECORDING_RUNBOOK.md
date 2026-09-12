@@ -237,6 +237,16 @@ Launch an iOS Debug Simulator build with these arguments:
 -AgentDeckScreenshotURL ws://127.0.0.1:9220
 ```
 
+For a fresh simulator, complete the first-run onboarding before capturing;
+otherwise the onboarding screen covers the dashboard even though the feed is
+connected. The `prefs.hasSeenOnboarding` preference is read as a Boolean, so
+a string-valued launch argument does not replace completing onboarding.
+`AGENTDECK_CAPTURE_IOS_UDID` selects an explicit simulator for either capture
+script. If the Debug trampoline stalls in `simctl launch`, rebuild the Debug
+simulator target with `ENABLE_DEBUG_DYLIB=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES`
+and ad-hoc simulator signing (`CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES`).
+This does not alter the Release archive settings.
+
 Record at least one complete 60-second cycle, then trim in the editor. The
 existing `apple/appstore-submission/previews/` files remain the current
 upload-ready assets until a replacement passes
