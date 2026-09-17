@@ -267,6 +267,23 @@ export interface UsageEncoderData {
   note?: string;
   /** Companion readout for the single-window 'both' view (see the interface). */
   sideCard?: UsageEncoderSideCard;
+  luna?: CodexLunaReserve;
+}
+
+/** Luna reserve view for the Stream Deck+ Codex encoder LCD. */
+function renderLunaReserveEncoder(reserve: CodexLunaReserve): string {
+  const remaining = Math.round(Math.max(0, Math.min(100, 100 - reserve.usedPercent)));
+  const active = reserve.available !== false && remaining > 0;
+  const bg = UI.popupBgDeep;
+  const moon = active ? Tide.s200 : LABEL_DIM;
+  const reset = reserve.regularResetsAt ?? reserve.resetsAt;
+  return encSvgWrap(
+    `<rect width="${ENC_W}" height="${ENC_H}" fill="${bg}"/>` +
+    `<circle cx="100" cy="39" r="29" fill="${moon}"/>` +
+    `<circle cx="113" cy="31" r="29" fill="${bg}"/>` +
+    `<text x="100" y="78" text-anchor="middle" font-family="Arial,sans-serif" font-size="24" font-weight="bold" fill="${active ? Tide.s50 : LABEL_DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>` +
+    `<text x="100" y="93" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${LABEL_DIM}">LUNA RESERVE${reset ? ` · RESET ${esc(formatResetTime(reset))}` : ''}</text>`,
+  );
 }
 
 function encSvgWrap(inner: string): string {
@@ -416,6 +433,7 @@ function encSideCard(x: number, y: number, w: number, h: number, card: UsageEnco
  * therefore carries only what no gauge can: the subscription behind the quota.
  */
 export function renderUsageEncoderBoth(data: UsageEncoderData): string {
+  if (data.luna) return renderLunaReserveEncoder(data.luna);
   if (data.note != null) return encNote(data);
   const y = 18, h = 80;
   const live = [data.fiveHour, data.sevenDay].filter((t) => t.known);
@@ -440,6 +458,7 @@ export function renderUsageEncoderBoth(data: UsageEncoderData): string {
 
 /** '5h' / '7d' view: one big full-bleed level-fill across the LCD. */
 export function renderUsageEncoderSingle(data: UsageEncoderData, window: '5h' | '7d'): string {
+  if (data.luna) return renderLunaReserveEncoder(data.luna);
   if (data.note != null) return encNote(data);
   const tank = window === '5h' ? data.fiveHour : data.sevenDay;
   return encSvgWrap(

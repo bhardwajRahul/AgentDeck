@@ -276,6 +276,20 @@ describe('pickBestCodexRateLimits', () => {
     expect(pickBestCodexRateLimits(passive, live)).toBe(passive);
   });
 
+  it('preserves Luna metadata when the newer passive reading wins', () => {
+    const passive = {
+      ...at('2026-08-05T13:00:00.000Z', 100),
+      lunaReserve: undefined,
+    };
+    const live = {
+      ...at('2026-08-05T12:18:00.000Z', 100),
+      lunaReserve: { usedPercent: 10, regularResetsAt: '2026-08-06T00:00:00.000Z' },
+    };
+    const picked = pickBestCodexRateLimits(passive, live);
+    expect(picked?.primary?.usedPercent).toBe(100);
+    expect(picked?.lunaReserve?.usedPercent).toBe(10);
+  });
+
   it('handles either side being absent', () => {
     const live = at('2026-08-05T12:18:00.000Z', 100);
     expect(pickBestCodexRateLimits(null, live)).toBe(live);

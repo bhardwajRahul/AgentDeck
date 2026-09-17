@@ -667,6 +667,10 @@ export function pickBestCodexRateLimits(
   nowMs: number = Date.now(),
   opts: { liveOwnsFamilyAuthority?: boolean } = {},
 ): CodexRateLimits | null {
+  const keepLuna = (chosen: CodexRateLimits, other: CodexRateLimits): CodexRateLimits =>
+    chosen.lunaReserve || !other.lunaReserve
+      ? chosen
+      : { ...chosen, lunaReserve: other.lunaReserve };
   if (!live) return passive;
   if (!passive) return live;
   const livePlanMatches = codexSnapshotMatchesAccountPlan(live.planType, accountPlan);
@@ -683,15 +687,21 @@ export function pickBestCodexRateLimits(
   // relayed rollout is seconds old — and the result is every slot-based Codex
   // surface going empty.
   if (hasRenderableContent(passive) !== hasRenderableContent(live)) {
-    return hasRenderableContent(passive) ? passive : live;
+    return hasRenderableContent(passive)
+      ? keepLuna(passive, live)
+      : keepLuna(live, passive);
   }
-  return codexSnapshotOutranks(
+  const chosen = codexSnapshotOutranks(
     { planType: live.planType, capturedAtMs: capturedAtMs(live) },
     { planType: passive.planType, capturedAtMs: capturedAtMs(passive) },
     accountPlan,
   )
     ? live
     : passive;
+  // The passive rollout is normally newer and wins the account-window race,
+  // but it cannot carry additional pools. Preserve Luna metadata from the live
+  // account read when both snapshots describe the same family.
+  return keepLuna(chosen, chosen === live ? passive : live);
 }
 
 /** Throttle policy, kept pure so the cadence is testable without spawning. */
