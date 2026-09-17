@@ -379,6 +379,7 @@ function renderSlotSvg(config: SessionSlotConfig, _slot: number, layout?: DeckLa
         known: config.usageKnown !== false,
         footnote: config.usageFootnote,
         inactive: config.usageInactive === true,
+        luna: config.usageLuna,
       });
 
     case 'usage-page':

@@ -32,6 +32,13 @@ const liveResult = {
     spendControlReached: false,
     planType: 'plus',
     rateLimitReachedType: 'rate_limit_reached',
+    additionalRateLimits: [{
+      meteredFeature: 'gpt-5.6-luna',
+      limitName: 'Luna Reserve',
+      rateLimit: {
+        primary: { usedPercent: 18, windowDurationMins: 300, resetsAt: 1786459585 },
+      },
+    }],
   },
   rateLimitResetCredits: { availableCount: 0, credits: [] },
 };
@@ -77,6 +84,12 @@ describe('parseLiveCodexRateLimits', () => {
       usedPercent: 100,
       windowMinutes: 10080,
       resetsAt: new Date(1786459585 * 1000).toISOString(),
+    });
+    expect(parsed!.lunaReserve).toEqual({
+      usedPercent: 18,
+      resetsAt: new Date(1786459585 * 1000).toISOString(),
+      regularResetsAt: new Date(1786459585 * 1000).toISOString(),
+      available: true,
     });
     expect(parsed!.secondary).toBeUndefined();
     expect(parsed!.planType).toBe('plus');

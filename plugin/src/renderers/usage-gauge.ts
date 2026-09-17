@@ -16,7 +16,8 @@
  * 200×100 Stream Deck+ encoder LCD views (`renderUsageEncoderBoth`,
  * `renderUsageEncoderSingle`).
  */
-import { Brand, UI, CLAUDE_LOGO_PATH, CODEX_LOGO_PATH } from '@agentdeck/shared';
+import { Brand, Tide, UI, CLAUDE_LOGO_PATH, CODEX_LOGO_PATH } from '@agentdeck/shared';
+import type { CodexLunaReserve } from '@agentdeck/shared';
 import { formatResetTime, splitResetTwoLine, formatScopedLabel } from '../utility-modes/usage.js';
 
 const W = 144;
@@ -110,6 +111,24 @@ export interface UsageGaugeData {
    *  informational cyan instead of the severity ramp. Defaults false so the real
    *  5H/7D tiles are byte-unchanged. */
   inactive?: boolean;
+  luna?: CodexLunaReserve;
+}
+
+/** Dedicated Luna state: the moon is the focal mark, not a corner badge. */
+export function renderLunaReserveGauge(reserve: CodexLunaReserve): string {
+  const remaining = Math.round(Math.max(0, Math.min(100, 100 - reserve.usedPercent)));
+  const active = reserve.available !== false && remaining > 0;
+  const bg = UI.popupBgDeep;
+  const moon = active ? Tide.s200 : LABEL_DIM;
+  const reset = reserve.regularResetsAt ?? reserve.resetsAt;
+  return svgWrap(
+    `<rect width="${W}" height="${H}" rx="${RX}" fill="${bg}"/>` +
+    `<circle cx="72" cy="48" r="35" fill="${moon}"/>` +
+    `<circle cx="88" cy="38" r="35" fill="${bg}"/>` +
+    `<text x="72" y="101" text-anchor="middle" font-family="Arial,sans-serif" font-size="30" font-weight="bold" fill="${active ? HEADLINE : LABEL_DIM}">${active ? `${remaining}%` : 'EMPTY'}</text>` +
+    `<text x="72" y="122" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${LABEL_DIM}">LUNA RESERVE</text>` +
+    (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${LABEL_DIM}">RESET ${esc(formatResetTime(reset))}</text>` : ''),
+  );
 }
 
 function esc(s: string): string {
@@ -127,6 +146,7 @@ function clampPct(p: number): number {
 }
 
 export function renderUsageGauge(data: UsageGaugeData): string {
+  if (data.luna) return renderLunaReserveGauge(data.luna);
   const known = data.known !== false;
   const agent = data.agent === 'codex' ? 'codex' : 'claude';
   const label = data.label || data.window.toUpperCase();

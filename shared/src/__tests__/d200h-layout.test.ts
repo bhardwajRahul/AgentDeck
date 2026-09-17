@@ -5,12 +5,19 @@ import {
   renderUsageButton,
   renderUsagePairGauge,
   renderUsageWideSlot,
+  renderLunaReserveTile,
 } from '../d200h-layout.js';
 
 const positions = (n: number): string[] =>
   Array.from({ length: n }, (_, i) => `${i % 5}_${Math.floor(i / 5)}`);
 
 describe('usage tiles — usageKnown tri-state', () => {
+  it('renders Luna Reserve as a large moon tile with remaining percentage', () => {
+    const svg = renderLunaReserveTile({ usedPercent: 32, regularResetsAt: new Date(Date.now() + 3600000).toISOString() });
+    expect(svg).toContain('LUNA RESERVE');
+    expect(svg).toContain('68%');
+    expect(svg).toContain('<circle');
+  });
   // Note: svgFrame emits a gradient with offset="0%" coordinates, so assert on the
   // value text element (`…%</text>`) rather than the bare substring "0%".
   it('renders a percent when the quota is known', () => {

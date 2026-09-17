@@ -152,6 +152,18 @@ export interface CodexCredits {
   balance?: string;
 }
 
+/** Luna-only reserve window returned as an additional Codex rate-limit pool. */
+export interface CodexLunaReserve {
+  /** Percent of the reserve already consumed (0–100). */
+  usedPercent: number;
+  /** The reserve's own reset, when supplied. */
+  resetsAt?: string;
+  /** When the regular advanced-model allowance becomes available again. */
+  regularResetsAt?: string;
+  /** Whether the reserve is currently usable. */
+  available?: boolean;
+}
+
 /** Codex usage limits parsed from local rollout files. `primary` is the short
  *  (5h-style) window, `secondary` the long (weekly) window — same idea as the
  *  Claude 5h/7d gauges. Credit-based plans report `primary`/`secondary` as null
@@ -165,6 +177,8 @@ export interface CodexRateLimits {
   limitId?: string;
   /** Credit balance for credit-based plans (present when windows are null). */
   credits?: CodexCredits;
+  /** Additional Luna-only pool, separate from the account 5h/7d windows. */
+  lunaReserve?: CodexLunaReserve;
   /** ISO-8601 instant this snapshot was WRITTEN by Codex (the rate-limit line's
    *  own timestamp, falling back to the rollout file's mtime).
    *

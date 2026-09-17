@@ -5,7 +5,7 @@
  * - List View: each button shows one session (OC first, then CC by startedAt)
  * - Detail View: button 1=BACK, button 2=session info, buttons 3-7=options, button 8=ESC/STOP
  */
-import type { SessionInfo, StatusCardTone, StatusIconKind, CodexRateLimits, ScopedUsageLimit } from '@agentdeck/shared';
+import type { SessionInfo, StatusCardTone, StatusIconKind, CodexRateLimits, CodexLunaReserve, ScopedUsageLimit } from '@agentdeck/shared';
 import { State, sortSessions, assignDisplayNames, foldCodexSessionsForDisplay, aliasModelName, Brand, formatScopedLabel, scopedLimitClaimsUsageKey, codexWindowsBeside, usageStripRank, usageWindowKind, usageWindowLabel, codexUsageFootnote, summarizeQuestionForKey, approvalReasonHead, UI } from '@agentdeck/shared';
 import type { PromptOption } from '@agentdeck/shared';
 import { dlog } from './log.js';
@@ -41,6 +41,7 @@ export interface UsageGauge {
    *  the only thing that tells it apart from a 5H/7D window when seating the
    *  strip in `USAGE_STRIP_ORDER`. */
   scoped?: boolean;
+  luna?: CodexLunaReserve;
 }
 
 /** Max bottom-row keys usage may claim: Claude 5h/7d + Codex 5h/7d (or, when
@@ -82,6 +83,7 @@ export interface SessionSlotConfig {
   usageWindow?: '5h' | '7d';
   usageResetsAt?: string;
   usageFootnote?: string;
+  usageLuna?: CodexLunaReserve;
   /** Scoped cap that isn't the binding one — muted ramp, never critical. */
   usageInactive?: boolean;
 }
@@ -277,6 +279,7 @@ export class SessionSlotManager {
   private _sevenDayKnown = false;
   private _codexPrimary: CodexWindowSnapshot | null = null;
   private _codexSecondary: CodexWindowSnapshot | null = null;
+  private _codexLunaReserve: CodexLunaReserve | undefined;
   /** When the Codex snapshot behind both windows was written (see
    *  `CodexRateLimits.capturedAt`). Freshness is derived per repaint from this,
    *  never stored as a boolean — a stored flag would freeze exactly like the
@@ -421,6 +424,7 @@ export class SessionSlotManager {
     this._codexSecondary = cx?.secondary
       ? { percent: cx.secondary.usedPercent, resetsAt: cx.secondary.resetsAt, windowMinutes: cx.secondary.windowMinutes, stale: cx.secondary.stale === true }
       : null;
+    this._codexLunaReserve = cx?.lunaReserve;
     this._codexCapturedAt = cx?.capturedAt;
     // Worst-first already (active desc, then percent desc) — only [0] can ever
     // reach a key, so the rest is dead work here. Paging through them lives on
@@ -494,7 +498,15 @@ export class SessionSlotManager {
     // present window by its own length (windowMinutes), never by slot: Codex now
     // sometimes reports the weekly (10080-min) window as `primary` with
     // `secondary` null, so a slot-based "7D = secondary" would drop the gauge.
-    for (const w of codexWindows) {
+    if (this._codexLunaReserve) {
+      gauges.push({
+        agent: 'codex', window: '5h', label: 'LUNA',
+        percent: this._codexLunaReserve.usedPercent,
+        resetsAt: this._codexLunaReserve.regularResetsAt ?? this._codexLunaReserve.resetsAt,
+        known: true, color: CODEX_USAGE_COLOR, luna: this._codexLunaReserve,
+      });
+    }
+    for (const w of this._codexLunaReserve ? [] : codexWindows) {
       gauges.push({
         agent: 'codex', window: usageWindowKind(w.windowMinutes), label: usageWindowLabel(w.windowMinutes) || '5H',
         percent: w.percent, resetsAt: w.resetsAt,
@@ -829,6 +841,7 @@ export class SessionSlotManager {
             usageResetsAt: g.resetsAt,
             usageFootnote: g.footnote,
             usageInactive: g.inactive === true,
+            usageLuna: g.luna,
           };
         }
         return { type: 'empty' };
