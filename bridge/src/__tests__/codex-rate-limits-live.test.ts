@@ -41,6 +41,15 @@ const liveResult = {
     }],
   },
   rateLimitResetCredits: { availableCount: 0, credits: [] },
+  rateLimitsByLimitId: {
+    base_model_inference: {
+      limitId: 'base_model_inference',
+      limitName: 'gpt-reserve',
+      primary: { usedPercent: 18, windowDurationMins: 10080, resetsAt: 1786459585 },
+      secondary: null,
+      planType: 'plus',
+    },
+  },
 };
 
 // Both halves of the 2026-08-27 reading, copied off `account/rateLimits/read`

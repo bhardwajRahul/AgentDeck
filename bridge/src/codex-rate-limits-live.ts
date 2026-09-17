@@ -96,6 +96,11 @@ function isLunaAdditionalLimit(limit: RawLiveAdditionalLimit): boolean {
   return `${limit.meteredFeature ?? ''} ${limit.limitName ?? ''}`.toLowerCase().includes('luna');
 }
 
+function isLunaRateLimitBlock(id: string, limit: RawLiveRateLimits): boolean {
+  return `${id} ${limit.limitName ?? ''}`.toLowerCase().includes('reserve')
+    || id.toLowerCase() === 'base_model_inference';
+}
+
 function toWindow(raw?: RawLiveWindow | null): CodexRateLimitWindow | undefined {
   if (!raw || typeof raw.usedPercent !== 'number') return undefined;
   const windowMinutes = typeof raw.windowDurationMins === 'number'
@@ -149,7 +154,9 @@ export function parseLiveCodexRateLimits(result: unknown, capturedAt: string): C
   const primary = toWindow(rl.primary);
   const secondary = toWindow(rl.secondary);
   const credits = toCredits(rl.credits);
-  const luna = (rl.additionalRateLimits ?? []).find(isLunaAdditionalLimit)?.rateLimit;
+  const luna = (rl.additionalRateLimits ?? []).find(isLunaAdditionalLimit)?.rateLimit
+    ?? Object.entries(res?.rateLimitsByLimitId ?? {})
+      .find(([id, limit]) => isLunaRateLimitBlock(id, limit))?.[1];
   const lunaPrimary = toWindow(luna?.primary);
   const lunaSecondary = toWindow(luna?.secondary);
   // The map key rides out with the block. Without it a value that carries no
