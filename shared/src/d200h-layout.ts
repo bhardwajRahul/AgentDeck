@@ -271,7 +271,7 @@ export function renderLunaReserveTile(reserve: CodexLunaReserve): string {
     + `<circle cx="126" cy="13" r="9" fill="${UI.popupBgMid}" opacity="0.8"/>`
     + `<g transform="translate(117,4) scale(0.75) translate(0,0)"><path d="${CODEX_LOGO_PATH}" fill="${Brand.codex}" fill-rule="evenodd"/></g>`
     + `<circle cx="72" cy="57" r="29" fill="${moon}"/>`
-    + `<circle cx="84" cy="51" r="29" fill="${BG}"/>`
+    + `<circle cx="60" cy="51" r="29" fill="${BG}"/>`
     + `<text x="72" y="103" text-anchor="middle" font-family="Arial,sans-serif" font-size="27" font-weight="bold" fill="${active ? Tide.s50 : DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>`
     + `<text x="72" y="121" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${DIM}">LUNA RESERVE</text>`
     + (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${DIM}">RESET IN ${escXml(reset)}</text>` : '')

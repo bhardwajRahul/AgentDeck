@@ -143,9 +143,8 @@ function svgWrap(inner: string): string {
 function lunaMark(cx: number, cy: number, radius: number, moon: string, bg: string): string {
   return `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="${moon}"/>` +
     // The reference mark is a waning crescent: the shadow disk is shifted
-    // upper-right, leaving the lit mass on the lower-left with both tips
-    // pointing toward the upper-right.
-    `<circle cx="${cx + Math.round(radius * 0.42)}" cy="${cy - Math.round(radius * 0.20)}" r="${radius}" fill="${bg}"/>`;
+    // upper-left, leaving the lit mass on the lower-right.
+    `<circle cx="${cx - Math.round(radius * 0.42)}" cy="${cy - Math.round(radius * 0.20)}" r="${radius}" fill="${bg}"/>`;
 }
 
 function lunaGaugeHeader(): string {
