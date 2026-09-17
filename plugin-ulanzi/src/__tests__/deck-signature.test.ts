@@ -69,5 +69,13 @@ describe('D200H deckSignature — every render-affecting change must be visible'
     expect(deckSignature(base)).not.toBe(deckSignature({
       ...base, codexRateLimits: { primary: { usedPercent: 10 } },
     }));
+    expect(deckSignature(base)).not.toBe(deckSignature({
+      ...base, codexRateLimits: { lunaReserve: { usedPercent: 11, available: true } },
+    }));
+    expect(deckSignature({
+      ...base, codexRateLimits: { lunaReserve: { usedPercent: 11, available: true } },
+    })).not.toBe(deckSignature({
+      ...base, codexRateLimits: { lunaReserve: { usedPercent: 12, available: true } },
+    }));
   });
 });
