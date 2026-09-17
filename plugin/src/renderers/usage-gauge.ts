@@ -119,15 +119,15 @@ export function renderLunaReserveGauge(reserve: CodexLunaReserve): string {
   const remaining = Math.round(Math.max(0, Math.min(100, 100 - reserve.usedPercent)));
   const active = reserve.available !== false && remaining > 0;
   const bg = UI.popupBgDeep;
-  const moon = active ? Tide.s200 : LABEL_DIM;
+  const moon = active ? UI.attn : LABEL_DIM;
   const reset = reserve.regularResetsAt ?? reserve.resetsAt;
   return svgWrap(
     `<rect width="${W}" height="${H}" rx="${RX}" fill="${bg}"/>` +
-    `<circle cx="72" cy="48" r="35" fill="${moon}"/>` +
-    `<circle cx="88" cy="38" r="35" fill="${bg}"/>` +
-    `<text x="72" y="101" text-anchor="middle" font-family="Arial,sans-serif" font-size="30" font-weight="bold" fill="${active ? HEADLINE : LABEL_DIM}">${active ? `${remaining}%` : 'EMPTY'}</text>` +
-    `<text x="72" y="122" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${LABEL_DIM}">LUNA RESERVE</text>` +
-    (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${LABEL_DIM}">RESET ${esc(formatResetTime(reset))}</text>` : ''),
+    lunaGaugeHeader() +
+    lunaMark(72, 58, 29, moon, bg) +
+    `<text x="72" y="103" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="bold" fill="${active ? HEADLINE : LABEL_DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>` +
+    `<text x="72" y="121" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${active ? Tide.s50 : LABEL_DIM}">LUNA RESERVE</text>` +
+    (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${LABEL_DIM}">RESET IN ${esc(formatResetTime(reset))}</text>` : ''),
   );
 }
 
@@ -137,6 +137,17 @@ function esc(s: string): string {
 
 function svgWrap(inner: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`;
+}
+
+/** Canonical right-open crescent used by Luna state views. */
+function lunaMark(cx: number, cy: number, radius: number, moon: string, bg: string): string {
+  return `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="${moon}"/>` +
+    `<circle cx="${cx + Math.round(radius * 0.42)}" cy="${cy - Math.round(radius * 0.04)}" r="${radius}" fill="${bg}"/>`;
+}
+
+function lunaGaugeHeader(): string {
+  return `<text x="12" y="17" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${HEADLINE}">CODEX</text>` +
+    brandLogo('codex', 126, 13, 14, false);
 }
 
 function clampPct(p: number): number {
@@ -275,14 +286,15 @@ function renderLunaReserveEncoder(reserve: CodexLunaReserve): string {
   const remaining = Math.round(Math.max(0, Math.min(100, 100 - reserve.usedPercent)));
   const active = reserve.available !== false && remaining > 0;
   const bg = UI.popupBgDeep;
-  const moon = active ? Tide.s200 : LABEL_DIM;
+  const moon = active ? UI.attn : LABEL_DIM;
   const reset = reserve.regularResetsAt ?? reserve.resetsAt;
   return encSvgWrap(
     `<rect width="${ENC_W}" height="${ENC_H}" fill="${bg}"/>` +
-    `<circle cx="100" cy="39" r="29" fill="${moon}"/>` +
-    `<circle cx="113" cy="31" r="29" fill="${bg}"/>` +
-    `<text x="100" y="78" text-anchor="middle" font-family="Arial,sans-serif" font-size="24" font-weight="bold" fill="${active ? Tide.s50 : LABEL_DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>` +
-    `<text x="100" y="93" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${LABEL_DIM}">LUNA RESERVE${reset ? ` · RESET ${esc(formatResetTime(reset))}` : ''}</text>`,
+    encHeader({ agent: 'codex', title: 'CODEX' } as UsageEncoderData, false) +
+    lunaMark(34, 56, 27, moon, bg) +
+    `<text x="72" y="40" font-family="JetBrains Mono, monospace" font-size="13" font-weight="bold" fill="${active ? Tide.s50 : LABEL_DIM}">LUNA RESERVE</text>` +
+    `<text x="72" y="69" font-family="Arial,sans-serif" font-size="25" font-weight="bold" fill="${active ? HEADLINE : LABEL_DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>` +
+    (reset ? `<text x="72" y="88" font-family="JetBrains Mono, monospace" font-size="11" fill="${LABEL_DIM}">RESET IN ${esc(formatResetTime(reset))}</text>` : ''),
   );
 }
 

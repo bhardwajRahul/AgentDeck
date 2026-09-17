@@ -252,6 +252,21 @@ describe('renderUsageEncoderBoth — single live window', () => {
     expect(svg).toContain('5H');
     expect(svg).toContain('7D');
   });
+
+  it('keeps the Codex identity while showing Luna in the wide SD+ layout', () => {
+    const svg = renderUsageEncoderBoth(buildCodexUsageEncoder({
+      codexRateLimits: {
+        lunaReserve: {
+          usedPercent: 11,
+          regularResetsAt: new Date(Date.now() + 2 * 86400000).toISOString(),
+        },
+      },
+    }, true));
+    expect(svg).toContain('>CODEX</text>');
+    expect(svg).toContain('LUNA RESERVE');
+    expect(svg).toContain('89% LEFT');
+    expect(svg).toContain('RESET IN');
+  });
 });
 
 describe('availableUsageViews', () => {

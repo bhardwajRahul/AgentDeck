@@ -259,7 +259,7 @@ function formatResetCountdown(iso?: string): string {
 
 /** Large, unmistakable Luna state tile used in place of the Codex gauge. */
 export function renderLunaReserveTile(reserve: CodexLunaReserve): string {
-  const W = 144, H = 144, BG = UI.popupBgDeep, MOON = Tide.s200, DIM = UI.idleDark;
+  const W = 144, H = 144, BG = UI.popupBgDeep, MOON = UI.attn, DIM = UI.idleDark;
   const used = Math.max(0, Math.min(100, reserve.usedPercent));
   const remaining = Math.round(100 - used);
   const active = reserve.available !== false && remaining > 0;
@@ -267,11 +267,14 @@ export function renderLunaReserveTile(reserve: CodexLunaReserve): string {
   const reset = formatResetCountdown(reserve.regularResetsAt ?? reserve.resetsAt);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
     + `<rect width="${W}" height="${H}" rx="12" fill="${BG}"/>`
-    + `<circle cx="72" cy="52" r="31" fill="${moon}"/>`
-    + `<circle cx="86" cy="43" r="31" fill="${BG}"/>`
-    + `<text x="72" y="103" text-anchor="middle" font-family="Arial,sans-serif" font-size="30" font-weight="bold" fill="${active ? Tide.s50 : DIM}">${active ? `${remaining}%` : 'EMPTY'}</text>`
-    + `<text x="72" y="123" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${DIM}">LUNA RESERVE</text>`
-    + (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${DIM}">RESET ${escXml(reset)}</text>` : '')
+    + `<text x="12" y="17" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${Tide.s50}">CODEX</text>`
+    + `<circle cx="126" cy="13" r="9" fill="${UI.popupBgMid}" opacity="0.8"/>`
+    + `<g transform="translate(117,4) scale(0.75) translate(0,0)"><path d="${CODEX_LOGO_PATH}" fill="${Brand.codex}" fill-rule="evenodd"/></g>`
+    + `<circle cx="72" cy="57" r="29" fill="${moon}"/>`
+    + `<circle cx="84" cy="56" r="29" fill="${BG}"/>`
+    + `<text x="72" y="103" text-anchor="middle" font-family="Arial,sans-serif" font-size="27" font-weight="bold" fill="${active ? Tide.s50 : DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>`
+    + `<text x="72" y="121" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${DIM}">LUNA RESERVE</text>`
+    + (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${DIM}">RESET IN ${escXml(reset)}</text>` : '')
     + `</svg>`;
 }
 

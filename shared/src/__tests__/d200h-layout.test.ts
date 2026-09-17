@@ -15,6 +15,7 @@ describe('usage tiles — usageKnown tri-state', () => {
   it('renders Luna Reserve as a large moon tile with remaining percentage', () => {
     const svg = renderLunaReserveTile({ usedPercent: 32, regularResetsAt: new Date(Date.now() + 3600000).toISOString() });
     expect(svg).toContain('LUNA RESERVE');
+    expect(svg).toContain('>CODEX</text>');
     expect(svg).toContain('68%');
     expect(svg).toContain('<circle');
   });
