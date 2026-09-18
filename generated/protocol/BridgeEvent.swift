@@ -890,6 +890,8 @@ struct ADCodexRateLimits: Codable, Equatable {
     var credits: ADCodexCredits?
     /// Limit identifier reported by Codex (e.g. "premium" for credit-based plans).
     var limitId: String?
+    /// Additional Luna-only pool, separate from the account 5h/7d windows.
+    var lunaReserve: ADCodexLunaReserve?
     /// Plan tier reported alongside the limits (e.g. "plus", "pro").
     var planType: String?
     var primary: ADCodexRateLimitWindow?
@@ -899,6 +901,7 @@ struct ADCodexRateLimits: Codable, Equatable {
         case capturedAt = "capturedAt"
         case credits = "credits"
         case limitId = "limitId"
+        case lunaReserve = "lunaReserve"
         case planType = "planType"
         case primary = "primary"
         case secondary = "secondary"
@@ -927,6 +930,7 @@ extension ADCodexRateLimits {
         capturedAt: String?? = nil,
         credits: ADCodexCredits?? = nil,
         limitId: String?? = nil,
+        lunaReserve: ADCodexLunaReserve?? = nil,
         planType: String?? = nil,
         primary: ADCodexRateLimitWindow?? = nil,
         secondary: ADCodexRateLimitWindow?? = nil
@@ -935,6 +939,7 @@ extension ADCodexRateLimits {
             capturedAt: capturedAt ?? self.capturedAt,
             credits: credits ?? self.credits,
             limitId: limitId ?? self.limitId,
+            lunaReserve: lunaReserve ?? self.lunaReserve,
             planType: planType ?? self.planType,
             primary: primary ?? self.primary,
             secondary: secondary ?? self.secondary
@@ -1004,6 +1009,75 @@ extension ADCodexCredits {
             balance: balance ?? self.balance,
             hasCredits: hasCredits ?? self.hasCredits,
             unlimited: unlimited ?? self.unlimited
+        )
+    }
+
+    func jsonData() throws -> Data {
+        return try newJSONEncoder().encode(self)
+    }
+
+    func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
+        return String(data: try self.jsonData(), encoding: encoding)
+    }
+}
+
+//
+// Hashable or Equatable:
+// The compiler will not be able to synthesize the implementation of Hashable or Equatable
+// for types that require the use of JSONAny, nor will the implementation of Hashable be
+// synthesized for types that have collections (such as arrays or dictionaries).
+
+/// Additional Luna-only pool, separate from the account 5h/7d windows.
+///
+/// Luna-only reserve window returned as an additional Codex rate-limit pool.
+// MARK: - ADCodexLunaReserve
+struct ADCodexLunaReserve: Codable, Equatable {
+    /// Whether the reserve is currently usable.
+    var available: Bool?
+    /// When the regular advanced-model allowance becomes available again.
+    var regularResetsAt: String?
+    /// The reserve's own reset, when supplied.
+    var resetsAt: String?
+    /// Percent of the reserve already consumed (0–100).
+    var usedPercent: Double
+
+    enum CodingKeys: String, CodingKey {
+        case available = "available"
+        case regularResetsAt = "regularResetsAt"
+        case resetsAt = "resetsAt"
+        case usedPercent = "usedPercent"
+    }
+}
+
+// MARK: ADCodexLunaReserve convenience initializers and mutators
+
+extension ADCodexLunaReserve {
+    init(data: Data) throws {
+        self = try newJSONDecoder().decode(ADCodexLunaReserve.self, from: data)
+    }
+
+    init(_ json: String, using encoding: String.Encoding = .utf8) throws {
+        guard let data = json.data(using: encoding) else {
+            throw NSError(domain: "JSONDecoding", code: 0, userInfo: nil)
+        }
+        try self.init(data: data)
+    }
+
+    init(fromURL url: URL) throws {
+        try self.init(data: try Data(contentsOf: url))
+    }
+
+    func with(
+        available: Bool?? = nil,
+        regularResetsAt: String?? = nil,
+        resetsAt: String?? = nil,
+        usedPercent: Double? = nil
+    ) -> ADCodexLunaReserve {
+        return ADCodexLunaReserve(
+            available: available ?? self.available,
+            regularResetsAt: regularResetsAt ?? self.regularResetsAt,
+            resetsAt: resetsAt ?? self.resetsAt,
+            usedPercent: usedPercent ?? self.usedPercent
         )
     }
 

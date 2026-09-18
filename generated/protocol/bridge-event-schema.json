@@ -532,6 +532,32 @@
       ],
       "type": "object"
     },
+    "CodexLunaReserve": {
+      "additionalProperties": false,
+      "description": "Luna-only reserve window returned as an additional Codex rate-limit pool.",
+      "properties": {
+        "available": {
+          "description": "Whether the reserve is currently usable.",
+          "type": "boolean"
+        },
+        "regularResetsAt": {
+          "description": "When the regular advanced-model allowance becomes available again.",
+          "type": "string"
+        },
+        "resetsAt": {
+          "description": "The reserve's own reset, when supplied.",
+          "type": "string"
+        },
+        "usedPercent": {
+          "description": "Percent of the reserve already consumed (0–100).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "usedPercent"
+      ],
+      "type": "object"
+    },
     "CodexRateLimitWindow": {
       "additionalProperties": false,
       "description": "One Codex (ChatGPT) rate-limit window, mirroring the Claude 5h/7d shape. Sourced from the user's own local Codex session rollout files — Codex CLI writes these snapshots itself, so this is local-file data, not an API call.",
@@ -573,6 +599,10 @@
         "limitId": {
           "description": "Limit identifier reported by Codex (e.g. \"premium\" for credit-based plans).",
           "type": "string"
+        },
+        "lunaReserve": {
+          "$ref": "#/definitions/CodexLunaReserve",
+          "description": "Additional Luna-only pool, separate from the account 5h/7d windows."
         },
         "planType": {
           "description": "Plan tier reported alongside the limits (e.g. \"plus\", \"pro\").",

@@ -700,7 +700,9 @@ export function pickBestCodexRateLimits(
     : passive;
   // The passive rollout is normally newer and wins the account-window race,
   // but it cannot carry additional pools. Preserve Luna metadata from the live
-  // account read when both snapshots describe the same family.
+  // account read — both snapshots describe the same account, so no family
+  // gate is needed here; a plan-mismatched snapshot (its own Luna included)
+  // is voided later by normalizeCodexRateLimits.
   return keepLuna(chosen, chosen === live ? passive : live);
 }
 
