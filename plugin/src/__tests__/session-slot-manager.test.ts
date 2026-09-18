@@ -641,6 +641,39 @@ describe('SessionSlotManager list-view usage tiles', () => {
     expect(types.filter((t) => t === 'usage')).toHaveLength(2);
   });
 
+  it('replaces the Codex 5h/7d keys with one LUNA gauge while a reserve is reported', () => {
+    const manager = new SessionSlotManager();
+    manager.updateUsage({
+      fiveHourPercent: 42,
+      sevenDayPercent: 17,
+      codexRateLimits: {
+        ...CODEX_LIMITS,
+        lunaReserve: { usedPercent: 32, regularResetsAt: '2099-01-01T00:00:00Z', available: true },
+      },
+    });
+    manager.updateSessions(fewSessions(3));
+
+    // 3 usage keys: Claude 5H/7D + one LUNA gauge carrying the reserve itself
+    // (usagePercent = reserve used, usageLuna drives the crescent renderer).
+    expect(manager.getSlotConfig(12, SD_CLASSIC_LAYOUT)).toMatchObject({ type: 'usage', usageLabel: '5H', usageAgent: 'claude', usagePercent: 42 });
+    expect(manager.getSlotConfig(13, SD_CLASSIC_LAYOUT)).toMatchObject({ type: 'usage', usageLabel: '7D', usageAgent: 'claude', usagePercent: 17 });
+    expect(manager.getSlotConfig(14, SD_CLASSIC_LAYOUT)).toMatchObject({
+      type: 'usage', usageLabel: 'LUNA', usageAgent: 'codex', usagePercent: 32,
+      usageLuna: { usedPercent: 32, regularResetsAt: '2099-01-01T00:00:00Z', available: true },
+    });
+    const types = Array.from({ length: 15 }, (_, i) => manager.getSlotConfig(i, SD_CLASSIC_LAYOUT).type);
+    expect(types.filter((t) => t === 'usage')).toHaveLength(3);
+
+    // Without the reserve the same report seats the Codex windows again (4 keys).
+    const plain = new SessionSlotManager();
+    plain.updateUsage({ fiveHourPercent: 42, sevenDayPercent: 17, codexRateLimits: CODEX_LIMITS });
+    plain.updateSessions(fewSessions(3));
+    expect(plain.getSlotConfig(13, SD_CLASSIC_LAYOUT)).toMatchObject({ type: 'usage', usageLabel: '5H', usageAgent: 'codex', usagePercent: 30 });
+    expect(plain.getSlotConfig(14, SD_CLASSIC_LAYOUT)).toMatchObject({ type: 'usage', usageLabel: '7D', usageAgent: 'codex', usagePercent: 12 });
+    const plainTypes = Array.from({ length: 15 }, (_, i) => plain.getSlotConfig(i, SD_CLASSIC_LAYOUT).type);
+    expect(plainTypes.filter((t) => t === 'usage')).toHaveLength(4);
+  });
+
   it('does NOT reserve usage on Stream Deck+ (encoder carries usage)', () => {
     const manager = new SessionSlotManager();
     manager.updateUsage({ fiveHourPercent: 42, sevenDayPercent: 17, codexRateLimits: CODEX_LIMITS });

@@ -265,6 +265,51 @@ describe('buildSessionDeck list-view usage tiles', () => {
     expect(deck.get(STRIP_R)!.svg).toContain('∞');
   });
 
+  it('replaces the Codex windows with one LUNA tile while a reserve is reported', () => {
+    // Same full Codex report as the compaction case, plus a reserve: the two
+    // account windows stand down — the reserve is the quota that binds — and
+    // exactly one LUNA tile takes their place. Claude readings are untouched.
+    const withLuna = {
+      codexRateLimits: {
+        primary: { usedPercent: 30, windowMinutes: 300, resetsAt: undefined },
+        secondary: { usedPercent: 10, windowMinutes: 10080, resetsAt: undefined },
+        planType: 'plus',
+        lunaReserve: { usedPercent: 32, regularResetsAt: '2099-01-01T00:00:00Z', available: true },
+      },
+    };
+    const deck = buildSessionDeck(baseState(2, withLuna), { mode: 'list', showUsage: true }, POS);
+    // 3 tiles: Claude 5H/7D + LUNA — no Codex pair, no fourth reading.
+    expect(usageCells(deck)).toHaveLength(3);
+    expect(deck.get(STRIP_L)!.svg).toContain('5H');
+    expect(deck.get(STRIP_L)!.svg).toContain(CLAUDE_MARK);
+    expect(deck.get(STRIP_M)!.svg).toContain('7D');
+    expect(deck.get(STRIP_M)!.svg).toContain(CLAUDE_MARK);
+    const luna = deck.get(STRIP_R)!.svg;
+    expect(luna).toContain('LUNA RESERVE');
+    expect(luna).toContain('68% LEFT');   // remaining, not used
+    expect(luna).toContain(CODEX_MARK);   // identity stays Codex
+    // The displaced windows' percents render nowhere on the strip.
+    const all = usageCells(deck).map((c) => c.svg).join('');
+    expect(all).not.toContain('>30<');
+    expect(all).not.toContain('>10<');
+    // An exhausted reserve reads EMPTY, not a zero gauge.
+    const empty = buildSessionDeck(baseState(2, {
+      codexRateLimits: { ...withLuna.codexRateLimits, lunaReserve: { usedPercent: 100, available: true } },
+    }), { mode: 'list', showUsage: true }, POS);
+    expect(usageCells(empty)).toHaveLength(3);
+    expect(usageCells(empty)[2].svg).toContain('EMPTY');
+
+    // Without the reserve the very same report seats both Codex windows again
+    // (4 logical readings → the pair compacts onto the clock-side key).
+    const withoutLuna = {
+      codexRateLimits: { ...withLuna.codexRateLimits, lunaReserve: undefined },
+    };
+    const restored = buildSessionDeck(baseState(2, withoutLuna), { mode: 'list', showUsage: true }, POS);
+    expect(usageCells(restored)).toHaveLength(3);
+    expect(usageCells(restored)[2].svg).toContain('>30<');
+    expect(usageCells(restored)[2].svg).toContain('>10<');
+  });
+
   it('falls back to trailing keys on a tiny deck where the strip is not placed', () => {
     // Only 3 keys placed (none of 0_2/1_2/2_2) → strip empty, so usage falls back
     // to the trailing keys. Old `slots.length >= 6` gate dropped ALL usage here;
