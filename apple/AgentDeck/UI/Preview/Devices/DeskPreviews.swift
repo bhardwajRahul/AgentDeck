@@ -290,7 +290,7 @@ private struct D200HSlotTile: View {
             return StateColors.color(for: state).opacity(0.16)
         case .offlineGrid(_, _, _, _), .info:
             return Color.black.opacity(0.5)
-        case .usageGauge:
+        case .usageGauge, .lunaReserve:
             return Color.black.opacity(0.42)
         case .empty:
             return Color.white.opacity(0.04)
@@ -382,6 +382,42 @@ private struct D200HSlotTile: View {
                 }
                 .padding(size * 0.08)
             }
+        case .lunaReserve(let remainingPercent, let active):
+            // Mirrors renderLunaReserveTile (d200h-layout.ts): the moon is the
+            // focal mark — a right-open crescent with the lit mass lower-right —
+            // beneath it the remaining percent ("N% LEFT") or EMPTY. Identity
+            // stays Codex: brand mark top-right, "LUNA" as the window label.
+            VStack(spacing: size * 0.02) {
+                HStack(alignment: .top) {
+                    Text("LUNA")
+                        .font(.system(size: size * 0.15, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(active ? 1 : 0.45))
+                    Spacer(minLength: 0)
+                    CanonicalCreatureView(
+                        agentType: "codex-cli",
+                        size: size * 0.18,
+                        color: StateColors.brand(agent: "codex-cli")
+                    )
+                }
+                ZStack {
+                    Circle()
+                        .fill(active ? Color(red: 0xEA / 255.0, green: 0xB3 / 255.0, blue: 0x08 / 255.0) : .white.opacity(0.30))
+                        .frame(width: size * 0.42, height: size * 0.42)
+                    // Shadow disk offset up-left, matching the TS mark
+                    // (cx − ⌈r·0.42⌉, cy − ⌈r·0.20⌉).
+                    Circle()
+                        .fill(Color.black.opacity(0.42))
+                        .frame(width: size * 0.42, height: size * 0.42)
+                        .offset(x: -size * 0.09, y: -size * 0.04)
+                }
+                .frame(maxHeight: .infinity)
+                Text(active ? "\(Int(remainingPercent))% LEFT" : "EMPTY")
+                    .font(.system(size: size * 0.15, weight: .heavy))
+                    .foregroundStyle(active ? .white : .white.opacity(0.45))
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+            }
+            .padding(size * 0.08)
         case .usagePair(let agent, let windows):
             // Mirrors renderUsagePairGauge: two real windows share one physical
             // key only when the fixed three-key strip would otherwise drop one.

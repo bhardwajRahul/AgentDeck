@@ -391,4 +391,66 @@ final class DevicePreviewSnapshotTests: XCTestCase {
         // A measured zero is a reading, not an absence.
         XCTAssertEqual(labels(D200HUsage(fiveHourPercent: 0, sevenDayPercent: 0, known: true)), ["5H", "7D"])
     }
+
+    /// A reported Luna reserve replaces BOTH Codex windows with one LUNA tile
+    /// (TS `buildUsageTiles`: `cx?.lunaReserve ? [] : codexWindowsBeside(…)`).
+    /// Claude readings are untouched. Mirrors `session-deck-usage.test.ts` /
+    /// `d200h-layout.test.ts` on the TS side.
+    func testLunaReserveReplacesCodexWindowsWithOneTile() throws {
+        func usageKinds(_ usage: D200HUsage) -> [D200HSlotKind] {
+            let input = D200HDeckInput(
+                state: "IDLE",
+                sessions: [D200HSession(id: "s0", agentType: "claude-code", state: "idle", projectName: "p0")],
+                usage: usage
+            )
+            return D200HLayoutModel.buildSessionDeck(input, view: D200HDeckView(mode: .list))
+                .map(\.kind)
+        }
+        func isCodexWindow(_ kind: D200HSlotKind) -> Bool {
+            if case .usageGauge(agent: "codex", _, _, _, _, _, _) = kind { return true }
+            if case .usagePair("codex", _) = kind { return true }
+            return false
+        }
+        func isLuna(_ kind: D200HSlotKind) -> Bool {
+            if case .lunaReserve = kind { return true }
+            return false
+        }
+        func isClaudeWindow(_ kind: D200HSlotKind) -> Bool {
+            if case .usageGauge(agent: "claude", _, _, _, _, _, _) = kind { return true }
+            return false
+        }
+
+        // With Luna: no Codex 5H/7D gauges, one LUNA tile showing what is LEFT.
+        let withLuna = usageKinds(D200HUsage(
+            fiveHourPercent: 42, sevenDayPercent: 17, known: true,
+            codexPrimaryPercent: 30, codexPrimaryWindowMinutes: 300,
+            codexSecondaryPercent: 10, codexSecondaryWindowMinutes: 10080,
+            lunaReserve: D200HLunaReserve(usedPercent: 32, available: true)
+        ))
+        XCTAssertFalse(withLuna.contains(where: isCodexWindow), "Codex windows must be replaced while Luna is reported")
+        guard case .some(.lunaReserve(let remaining, let active)) = withLuna.first(where: isLuna)
+        else { return XCTFail("expected a LUNA tile, got \(withLuna)") }
+        XCTAssertEqual(remaining, 68)
+        XCTAssertTrue(active)
+        // Claude 5H/7D survive alongside Luna.
+        XCTAssertTrue(withLuna.contains(where: isClaudeWindow))
+
+        // An exhausted reserve (100% used) renders EMPTY, not a zero gauge.
+        let exhausted = usageKinds(D200HUsage(
+            codexPrimaryPercent: 30, codexPrimaryWindowMinutes: 300,
+            lunaReserve: D200HLunaReserve(usedPercent: 100, available: true)
+        ))
+        guard case .some(.lunaReserve(let remaining, let active)) = exhausted.first(where: isLuna)
+        else { return XCTFail("expected a LUNA tile, got \(exhausted)") }
+        XCTAssertEqual(remaining, 0)
+        XCTAssertFalse(active)
+
+        // Without Luna the Codex windows return.
+        let withoutLuna = usageKinds(D200HUsage(
+            codexPrimaryPercent: 30, codexPrimaryWindowMinutes: 300,
+            codexSecondaryPercent: 10, codexSecondaryWindowMinutes: 10080
+        ))
+        XCTAssertTrue(withoutLuna.contains(where: isCodexWindow))
+        XCTAssertFalse(withoutLuna.contains(where: isLuna))
+    }
 }
