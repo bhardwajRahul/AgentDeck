@@ -238,7 +238,7 @@ import {
 import { esp32ConnectionCount, getESP32DeviceInfo, onESP32Message, sendAuthProvisionToAll, sendWifiProvision, sendWifiProvisionToAll, handleESP32Wake, getESP32Ports, getSerialConnectionStatus, getSerialLastError, getSerialReachableBoards, releaseESP32SerialPorts } from './esp32-serial.js';
 import { clampLeaseSeconds, clearLease, readLease, writeLease } from './esp32-flash-lease.js';
 import { loadWifiConfig } from './wifi-config.js';
-import { getConnectedAdbDevices, hasAdb, getAdbDeviceCount } from './adb-reverse.js';
+import { getAdbDeviceCountCached, getCachedAdbDevices } from './adb-reverse.js';
 import { getPixooDeviceDetails, pixooDeviceCount } from './pixoo/pixoo-bridge.js';
 import { loadTimeboxDevices } from './timebox/timebox-settings.js';
 import { getLanIp, stripUnsafeText, cleanRawText, prepareMarkdownDetail, normalizeCommandPrompt, formatDurationSec, type TimelineEntry, PluginCommand } from '@agentdeck/shared';
@@ -290,6 +290,7 @@ import { resolveRelayedUsageEvent } from './relayed-usage.js';
 import { CARD_FEED_PATH, CARD_OUTBOX_PATH, FONT_PACK_PATH, GLANCE_FRAME_PATH, LEARNING_PACK_PATH, type CardFeedResponse, type SessionInfo, type OutboxPushRequest } from '@agentdeck/shared';
 import { readFileSync, statSync, writeFileSync, appendFileSync } from 'fs';
 import { readFile, rm } from 'fs/promises';
+import { sampleEventLoopDelay } from './event-loop-telemetry.js';
 import { tmpdir, networkInterfaces, type NetworkInterfaceInfo } from 'os';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -1269,14 +1270,19 @@ function buildNodeModuleHealth(startedModules: DeviceModule[]): Record<string, u
   const modules: Record<string, unknown> = {};
 
   if (started.has('adb')) {
-    const adbAvailable = hasAdb();
-    const devices = adbAvailable ? getConnectedAdbDevices() : [];
+    // Cache, never a live spawn: this feeds /health itself, and a synchronous
+    // `adb devices` here (the pre-#327 shape) put a 5 s event-loop block on
+    // every health poll — under host load that is 5–15 s, exactly the latency
+    // the macOS app reads as "daemon gone" before promoting a fallback on
+    // 9121 and opening the same serial devices twice. The 30 s adb poll keeps
+    // the cache warm.
+    const { devices } = getCachedAdbDevices();
     modules.adb = {
-      available: adbAvailable,
+      available: true,
       devices,
       classifiedDevices: [],
       reverseReadyCount: devices.length,
-      lastError: adbAvailable ? null : 'adb not found',
+      lastError: null,
     };
   }
 
@@ -1934,6 +1940,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         // This is the field that says the samples were lying (null = stable).
         gatewayInstability,
         uptime: process.uptime(), port, pid: process.pid,
+        // Loop-blocked vs process-gone, on the route that decides it (#327):
+        // a 5–15 s /health with a live listener was only attributable after
+        // the fact, by native sampling. Rolling window, reset per read.
+        eventLoopDelayMs: sampleEventLoopDelay(),
         // Which build is SERVING this port. Captured when this process started
         // (see daemon-build-identity.ts) and never recomputed, so a rebuild
         // underneath a running daemon reads as a mismatch instead of being
@@ -2152,7 +2162,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           { type: 'pixoo', details: getPixooDeviceDetails() },
           { type: 'timebox', devices: loadTimeboxDevices() },
           { type: 'idotmatrix', devices: loadIDotMatrixDevices() },
-          { type: 'adb', count: getAdbDeviceCount() },
+          { type: 'adb', count: getAdbDeviceCountCached() },
           {
             type: 'd200h',
             connected: ulanziPluginConnected,

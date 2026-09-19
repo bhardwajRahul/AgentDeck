@@ -70,7 +70,7 @@ import {
   sendWifiProvisionToAll,
 } from './esp32-serial.js';
 import { loadWifiConfig } from './wifi-config.js';
-import { getAdbDeviceCount } from './adb-reverse.js';
+import { getAdbDeviceCountCached } from './adb-reverse.js';
 import { esp32ConnectionCount, getESP32Ports } from './esp32-serial.js';
 import { getPixooDeviceDetails, getLastFrame, renderPreviewFrame } from './pixoo/pixoo-bridge.js';
 import {
@@ -519,7 +519,9 @@ export async function startSession(opts: SessionOptions): Promise<void> {
       { type: 'websocket', count: core.wsServer.getClientCount() },
       { type: 'esp32', count: esp32ConnectionCount(), ports: getESP32Ports() },
       { type: 'pixoo', details: getPixooDeviceDetails() },
-      { type: 'adb', count: getAdbDeviceCount() },
+      // Cached count — spawning adb on the /devices request path blocked the
+      // event loop for the call's whole wall time (#327).
+      { type: 'adb', count: getAdbDeviceCountCached() },
     ],
   }));
 
