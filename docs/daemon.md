@@ -435,11 +435,17 @@ carries the weight band) never collapses two differently-pinned tabs.
 - **Precedence**: observed rows without their own weight only. Managed
   sessions keep their launch-time `--weight`; remote-attached sessions keep
   their pushed weight; the store never overrides an explicit value.
-- **Swift parity gap**: the in-process Swift daemon does not read the file and
-  does not serve the route — while it owns the port, `agentdeck order` exits
-  with a message naming the takeover command. Parity is deliberately deferred
-  (tracked in #273): the replacement gate validates against the Node
-  daemon-first path first.
+- **Swift parity**: the in-process Swift daemon is a deliberate
+  near-transliteration (`apple/AgentDeck/Daemon/Session/SessionOrderStore.swift`)
+  — it reads/writes the same `session-order.json` and serves the same
+  `GET/POST /sessions/order` with byte-compatible response shapes, so
+  `agentdeck order` works against whichever daemon owns the port and pins
+  survive a handover in either direction. Unsandboxed dev builds share the
+  exact `~/.agentdeck` file with Node; the sandboxed App Store build writes a
+  container-local copy Node cannot read (the same asymmetry its
+  `daemon.json`/`timeline.json` already carry). The TTL and pin cap are a
+  cross-daemon file contract single-sourced in `shared/src/session-utils.ts`
+  and emitted to both platforms by `pnpm generate-session-weight-rules`.
 
 ## Supporting files
 
@@ -449,7 +455,7 @@ carries the weight band) never collapses two differently-pinned tabs.
 - `bridge/src/session-push-channel.ts` — extracted push-channel handler (`session_push_register`/`session_push_state`/`session_event_up`) with remote classification + sender-identity guards
 - `bridge/src/auth.ts` — `~/.agentdeck/auth-token` 32-char hex 토큰, local bypass, constant-time validation, `rotateToken()`
 - `bridge/src/http-auth-gate.ts` — LAN default-deny 정책 (pure functions: `isAuthorizedHttpRequest`/`gateHttpRequest`/`buildPublicHealth`)
-- `bridge/src/session-order-store.ts` — daemon-persisted observed-session order pins (`session-order.json`, TTL/size-capped, bare-id keyed) + `/sessions/order` helpers (prefix resolution, weight validation)
+- `bridge/src/session-order-store.ts` — daemon-persisted observed-session order pins (`session-order.json`, TTL/size-capped, bare-id keyed) + `/sessions/order` helpers (prefix resolution, weight validation); Swift near-transliteration in `apple/AgentDeck/Daemon/Session/SessionOrderStore.swift`
 - `bridge/src/session-registry.ts` — `daemon.json` port discovery (`writeDaemonInfo`/`readDaemonInfo`/`removeDaemonInfo`/`findDaemonPort`/`probeDaemonHealth`)
 - `bridge/src/hook-server.ts` — SSE (`/sse`), `/health` (includes `mode` field), `/status`, 토큰 인증
 - `bridge/src/ws-server.ts` — remote WS 연결 토큰 검증 (4001 거부), local bypass

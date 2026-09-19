@@ -161,6 +161,18 @@ export const SESSION_WEIGHT_MIN = -9999;
 export const SESSION_WEIGHT_MAX = 9999;
 
 /**
+ * Lifecycle constants of the daemon-persisted observed-session order pins
+ * (#273). Both daemon implementations (Node bridge and Swift) read and write
+ * the SAME `session-order.json`, so these values are a file contract between
+ * the two daemons, not an implementation detail — a pin must not live 30 days
+ * under one daemon and 7 under the other. Emitted to Swift/Kotlin by
+ * `scripts/generate-session-weight-rules.mjs` (drift-gated in vitest).
+ */
+export const SESSION_ORDER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Upper bound on persisted pins; past it the least-recently-seen go first. */
+export const MAX_SESSION_ORDER_PINS = 256;
+
+/**
  * Normalize a session weight to a finite integer inside the documented range.
  * A missing / null / non-finite weight collapses to 0, so unweighted sessions
  * all share the same "neutral" band and sort among themselves exactly as they

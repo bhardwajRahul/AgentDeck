@@ -156,9 +156,11 @@ from the roster for 30 days is garbage-collected; at most 256 pins are kept
 rows only — a managed session's launch-time `--weight` (and a remote-attached
 session's pushed weight) always wins.
 
-Swift parity gap: the in-process Swift daemon does not read the pin file. While
-it owns port 9120, `agentdeck order` exits with a message saying so; run
-`agentdeck daemon start` to take the port with the Node daemon.
+Both daemons implement it: the Node daemon and the in-process Swift daemon
+read and write the same pin file and serve the same `agentdeck order` routes
+with identical behaviour, so pins survive a daemon handover in either
+direction. Only a daemon build older than the feature answers 404 — update
+and restart it.
 
 ### Daemon
 

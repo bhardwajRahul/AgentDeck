@@ -3301,7 +3301,7 @@ async function postSessionOrder(body: Record<string, unknown>, portOpt?: string)
       signal: AbortSignal.timeout(5000),
     });
     if (res.status === 404) {
-      log(`The daemon on port ${port} does not support session-order pins (the in-process Swift daemon does not read them). Run 'agentdeck daemon start' to take the port with the Node daemon.`);
+      log(`The daemon on port ${port} does not support session-order pins (its build predates them). Update AgentDeck and restart the daemon.`);
       process.exit(1);
     }
     const json = await res.json().catch(() => ({})) as Record<string, any>;
@@ -3361,7 +3361,7 @@ order
     try {
       const res = await fetch(`http://127.0.0.1:${port}/sessions/order`, { signal: AbortSignal.timeout(5000) });
       if (res.status === 404) {
-        log(`The daemon on port ${port} does not support session-order pins (the in-process Swift daemon does not read them). Run 'agentdeck daemon start' to take the port with the Node daemon.`);
+        log(`The daemon on port ${port} does not support session-order pins (its build predates them). Update AgentDeck and restart the daemon.`);
         process.exit(1);
       }
       const json = await res.json().catch(() => ({})) as { pins?: Array<{ id: string; weight: number; lastSeenAt: number }> };

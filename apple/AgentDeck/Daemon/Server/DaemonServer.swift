@@ -1135,6 +1135,11 @@ final class DaemonServer {
     /// which shows up as empty `sessions_list` broadcasts and blank
     /// terrariums on every surface.
     private var pushedSessionsById: [String: DaemonSessionEntry] = [:]
+    /// Daemon-persisted sort pins for observed sessions (#273). Loaded once
+    /// here; every mutation persists synchronously (see SessionOrderStore —
+    /// the Swift store reads/writes the same session-order.json as the Node
+    /// daemon, so pins survive a handover in either direction).
+    private let sessionOrderStore = SessionOrderStore().load()
     /// Sessions with a held PreToolUse gate: updateSessionHookState must not
     /// overwrite their awaiting_permission overlay from parallel tool hooks
     /// while the device decision is pending (≤ hold timeout).
@@ -3587,6 +3592,32 @@ final class DaemonServer {
             return .json(responseBody, status: result.closed ? 200 : 404)
         }
 
+        // Daemon-persisted sort pins for observed sessions (#273) — mirror of
+        // the Node daemon's GET/POST /sessions/order. `agentdeck order
+        // set|clear|list` posts here when the Swift daemon owns the port;
+        // response shapes are byte-compatible with the Node route so the CLI
+        // never branches on which daemon answered. Behind the normal LAN gate
+        // like every route above (same-machine CLI needs no token).
+        await httpServer.get("/sessions/order") { [weak self] _ in
+            let payload = await self?.sessionOrderListPayload()
+            return .json(payload?.value ?? ["pins": []])
+        }
+        await httpServer.post("/sessions/order") { [weak self] request in
+            guard let self else { return .json(["error": "daemon offline"], status: 503) }
+            var sessionId: String? = nil
+            var weight: Any? = nil
+            var clear = false
+            if let body = request.body,
+               let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                if let s = json["sessionId"] as? String { sessionId = s }
+                weight = json["weight"]
+                clear = json["clear"] as? Bool == true
+            }
+            let result = await self.handleSessionOrderMutation(
+                sessionId: sessionId, weight: weight, clear: clear)
+            return .json(result.body.value, status: result.status)
+        }
+
         await httpServer.post("/hook") { [weak self] request in
             guard let body = request.body,
                   let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
@@ -4475,9 +4506,68 @@ final class DaemonServer {
     /// Insert-or-update a session entry in `cachedSessions`, preserving sort
     /// order. Used by both `handleSessionPushRegister` and `handleSessionPushState`.
     private func upsertIntoCachedSessions(_ entry: DaemonSessionEntry) {
-        cachedSessions.removeAll { $0.id == entry.id }
-        cachedSessions.append(entry)
+        // Order-pin overlay (#273) lands here so a hook-minted observed row
+        // (session_start → this path) carries its pin immediately instead of
+        // waiting for the next refreshSessions pass. Precedence per the store:
+        // observed rows without their own weight only.
+        let pinned = sessionOrderStore.apply(to: entry)
+        cachedSessions.removeAll { $0.id == pinned.id }
+        cachedSessions.append(pinned)
         cachedSessions = DashboardDataRules.sortSessions(cachedSessions)
+    }
+
+    // MARK: - Session order pins (#273)
+
+    /// `GET /sessions/order` payload — identical shape to the Node daemon.
+    /// Boxed in `SendableDict` to cross the actor boundary into the
+    /// @concurrent route closure (Swift 6: `[String: Any]` is not Sendable).
+    private func sessionOrderListPayload() -> SendableDict {
+        SendableDict(["pins": sessionOrderStore.list()])
+    }
+
+    /// `POST /sessions/order` mutation. Response bodies mirror the Node
+    /// daemon exactly — the `agentdeck order` CLI posts to whichever daemon
+    /// owns the port and must not care which implementation answered.
+    /// The body is `SendableDict`-boxed for the same actor-crossing reason.
+    private func handleSessionOrderMutation(
+        sessionId: String?, weight: Any?, clear: Bool
+    ) -> (body: SendableDict, status: Int) {
+        guard let rawId = sessionId?.trimmingCharacters(in: .whitespaces), !rawId.isEmpty else {
+            return (SendableDict(["error": "sessionId required"]), 400)
+        }
+        // Same semantics as the Node route: explicit clear, JSON null, or a
+        // (valid) weight of 0 all mean "remove the pin" — 0 is the default
+        // sort band, so pinning it is a no-op spelled as a clear.
+        let wantsClear = clear || weight is NSNull || SessionOrderRules.parseWeight(weight) == 0
+        var parsedWeight: Int? = nil
+        if !wantsClear {
+            parsedWeight = SessionOrderRules.parseWeight(weight)
+            if parsedWeight == nil {
+                return (SendableDict([
+                    "error": "weight must be an integer between \(SessionWeightRules.min) and \(SessionWeightRules.max) (or clear it with weight 0)",
+                ]), 400)
+            }
+        }
+        // Resolve against the observed rows the dashboards actually show.
+        let observedIds = cachedSessions.filter { $0.controlMode == "observed" }.map(\.id)
+        switch SessionOrderRules.resolveTarget(rawId, knownIds: observedIds) {
+        case .ambiguous(let candidates):
+            return (SendableDict([
+                "error": "session id prefix is ambiguous — it matches \(candidates.count) live sessions",
+                "matches": candidates,
+            ]), 400)
+        case .resolved(let id):
+            if wantsClear {
+                let had = sessionOrderStore.clear(id)
+                broadcastSessionsList()
+                return (SendableDict(["cleared": true, "hadPin": had, "sessionId": id]), 200)
+            }
+            // parsedWeight is non-nil here: the !wantsClear branch above
+            // already rejected everything parseWeight could not handle.
+            let applied = sessionOrderStore.set(id, weight: parsedWeight ?? 0)
+            broadcastSessionsList()
+            return (SendableDict(["sessionId": id, "weight": applied ?? 0]), 200)
+        }
     }
 
     /// Drop every per-session map entry keyed on `sessionId`. Mirrors the
@@ -8792,10 +8882,17 @@ final class DaemonServer {
 
         let enriched = await enrichSessionsWithState(merged)
 
+        // Order-pin overlay (#273), applied before fold+sort like the Node
+        // enricher: observed rows without their own weight pick up the stored
+        // pin, and the ids seen this pass advance the pins' liveness clock
+        // (lastSeenAt → TTL GC). Managed/remote rows keep their pushed weight.
+        let pinnedEnriched = enriched.map { sessionOrderStore.apply(to: $0) }
+        sessionOrderStore.noteSeen(ids: pinnedEnriched.filter { $0.controlMode == "observed" }.map(\.id))
+
         // Prune pushed sessions whose /health probe failed repeatedly — the
         // bridge is gone. `enrichSessionsWithState` leaves `state = nil` when
         // the probe errors; we catch those and drop the local push entry.
-        let livePushedIds = Set(enriched.filter { $0.state != nil }.map { $0.id })
+        let livePushedIds = Set(pinnedEnriched.filter { $0.state != nil }.map { $0.id })
         let stalePushed = pushedSessionsById.keys.filter { id in
             registryEntries.contains(where: { $0.id == id }) == false
                 && livePushedIds.contains(id) == false
@@ -8806,7 +8903,7 @@ final class DaemonServer {
             codexProcessingTouchedAtBySession.removeValue(forKey: id)
         }
 
-        cachedSessions = DashboardDataRules.sortSessions(enriched.filter { entry in
+        cachedSessions = DashboardDataRules.sortSessions(pinnedEnriched.filter { entry in
             // Keep filesystem entries unconditionally; drop pushed entries
             // whose probe failed (already pruned above, double-gate for safety).
             if registryEntries.contains(where: { $0.id == entry.id }) { return true }

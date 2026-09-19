@@ -5,11 +5,11 @@ Working measurement for [#273](https://github.com/puritysb/AgentDeck/issues/273)
 
 The other two gates are not fully covered here. Remote attach names a
 real-topology validation as its completion condition, so it cannot be closed
-from a source reading. Session ordering now has a daemon-first implementation
-(Node daemon `session-order.json` pins, `agentdeck order` CLI — see
-[daemon.md](daemon.md#observed-session-order-pins-273));
-its remaining open condition is the real-user tab-to-deck scenario, not a
-missing mechanism.
+from a source reading. Session ordering has a daemon-first implementation in
+BOTH daemons (Node `session-order.json` pins mirrored by the Swift store,
+`agentdeck order` CLI — see
+[daemon.md](daemon.md#observed-session-order-pins-273)); its remaining open
+condition is the real-user tab-to-deck scenario, not a missing mechanism.
 
 Every row below is either **measured** (a cited source line) or **open** (named as
 unmeasured). Nothing here decides a replacement design; it establishes what a replacement

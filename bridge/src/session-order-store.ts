@@ -47,15 +47,21 @@ import {
   sessionWeight,
   SESSION_WEIGHT_MIN,
   SESSION_WEIGHT_MAX,
+  SESSION_ORDER_TTL_MS,
+  MAX_SESSION_ORDER_PINS,
 } from '@agentdeck/shared';
 import { getDataDir } from './session-registry.js';
 import { debug } from './logger.js';
 
-/** A pin whose session has been absent from every roster for this long is GC'd. */
-export const SESSION_ORDER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * A pin whose session has been absent from every roster for this long is GC'd.
+ * Cross-daemon file contract (the Swift daemon reads/writes the same file) —
+ * SSOT in shared/src/session-utils.ts, mirrored via
+ * `pnpm generate-session-weight-rules`.
+ */
+export { SESSION_ORDER_TTL_MS, MAX_SESSION_ORDER_PINS };
 
 /** Upper bound on persisted pins; past it the least-recently-seen go first. */
-export const MAX_SESSION_ORDER_PINS = 256;
 
 /** `lastSeenAt` is only worth a persist when it moved by at least this much. */
 const SEEN_PERSIST_THRESHOLD_MS = 60_000;
