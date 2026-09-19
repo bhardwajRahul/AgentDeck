@@ -140,6 +140,44 @@ fun codexLimitRows(limits: CodexRateLimits?, nowMs: Long = System.currentTimeMil
     }
 }
 
+/**
+ * z.ai (GLM Coding Plan) usage rows — the same window grammar as the Codex
+ * rows. The `agentType` stays "zai", which is deliberately ABSENT from the
+ * BrandIcon allow-list: no upstream z.ai brand mark ships in design/brand/
+ * (marks are upstream SVGs, never redrawn), so these gauges carry no icon
+ * while [codexLimitRows] carry the Codex mark — the unknown-agent rule
+ * rendering as nothing is exactly the wanted neutral identity. Labels derive
+ * from each window's length (300 → "5h", 43200 → "30d"). NOT gated by Claude's
+ * `usageStale`; each window carries its own stale flag (#348).
+ */
+fun zaiLimitRows(limits: ZaiRateLimits?, nowMs: Long = System.currentTimeMillis()): List<ProviderLimitRow> {
+    if (limits == null) return emptyList()
+    return buildList {
+        limits.primary?.let { p ->
+            val pct = p.usedPercent
+            if (pct != null) {
+                add(
+                    ProviderLimitRow(
+                        "zai", windowLabel(p.windowMinutes), pct, p.resetsAt, p.stale == true,
+                        CodexFreshnessRules.footnote(p.stale == true, limits.capturedAt, nowMs),
+                    ),
+                )
+            }
+        }
+        limits.secondary?.let { s ->
+            val pct = s.usedPercent
+            if (pct != null) {
+                add(
+                    ProviderLimitRow(
+                        "zai", windowLabel(s.windowMinutes), pct, s.resetsAt, s.stale == true,
+                        CodexFreshnessRules.footnote(s.stale == true, limits.capturedAt, nowMs),
+                    ),
+                )
+            }
+        }
+    }
+}
+
 
 /** Format duration from epoch millis to "H:MM" or "D:HH:MM" */
 fun formatUptime(connectedSinceMs: Long): String {

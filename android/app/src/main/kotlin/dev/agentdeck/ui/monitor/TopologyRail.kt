@@ -76,7 +76,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.json.JSONArray
 
-private val providerNames = linkedMapOf("claude" to "Claude", "codex" to "Codex", "openclaw" to "OpenClaw", "mlx" to "MLX", "ollama" to "Ollama", "antigravity" to "Antigravity")
+private val providerNames = linkedMapOf("claude" to "Claude", "codex" to "Codex", "zai" to "z.ai", "openclaw" to "OpenClaw", "mlx" to "MLX", "ollama" to "Ollama", "antigravity" to "Antigravity")
 private val providerClient = okhttp3.OkHttpClient.Builder().callTimeout(5, java.util.concurrent.TimeUnit.SECONDS).build()
 private suspend fun syncProviders(raw: String, save: List<String>? = null, initialize: Boolean = false): List<String>? = withContext(Dispatchers.IO) {
     val url = raw.replaceFirst("wss://", "https://").replaceFirst("ws://", "http://").toHttpUrl().newBuilder().encodedPath("/dashboard/providers").build()

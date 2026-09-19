@@ -38,8 +38,8 @@ struct TopologyRail: View {
     #endif
     @State private var displayedProviders: [String]? = nil
     @State private var providerSaveError: String? = nil
-    private let providerNames = ["claude": "Claude", "codex": "Codex", "openclaw": "OpenClaw", "mlx": "MLX", "ollama": "Ollama", "antigravity": "Antigravity"]
-    private let providerOrder = ["claude", "codex", "openclaw", "mlx", "ollama", "antigravity"]
+    private let providerNames = ["claude": "Claude", "codex": "Codex", "zai": "z.ai", "openclaw": "OpenClaw", "mlx": "MLX", "ollama": "Ollama", "antigravity": "Antigravity"]
+    private let providerOrder = ["claude", "codex", "zai", "openclaw", "mlx", "ollama", "antigravity"]
     @State private var hubPulse = false
 
     /// Landscape passes the water-region height so a long DOWNSTREAM
@@ -235,6 +235,7 @@ struct TopologyRail: View {
         var ids: [String] = []
         if s.oauthConnected == true || !consumerCreatures(for: .claude).isEmpty { ids.append("claude") }
         if s.codexRateLimits != nil || s.codexPlanType != nil { ids.append("codex") }
+        if s.zaiRateLimits != nil { ids.append("zai") }
         if ProviderRailEvaluator.openClaw(state: s) != nil { ids.append("openclaw") }
         if !s.mlxModels.isEmpty || s.mlxResidency?.known == true { ids.append("mlx") }
         if s.ollamaStatus != nil { ids.append("ollama") }
@@ -286,6 +287,7 @@ struct TopologyRail: View {
             let visible = displayedProviders ?? discoveredProviders
             if visible.contains("claude") { claudeRow }
             if visible.contains("codex") { codexRow }
+            if visible.contains("zai") { zaiRow }
             if visible.contains("openclaw") { openClawRow }
             if visible.contains("mlx") { mlxRow }
             if visible.contains("ollama") { ollamaRow }
@@ -446,6 +448,57 @@ struct TopologyRail: View {
         let creditsText = "\(tier) · \(bal) credits"
         if let planLabel { return "\(planLabel) · \(creditsText)" }
         return creditsText
+    }
+
+    /// z.ai GLM Coding Plan row (#348). A direct provider-account reading: the
+    /// plan serves Claude Code, Codex and other CLIs from one quota, so the row
+    /// shows the plan tier + its rolling windows and names no harness. A
+    /// windowless block (pay-as-you-go key, or the display retirement) keeps
+    /// the row but drops the chips — absence of windows is never 0%.
+    private var zaiRow: some View {
+        guard let limits = stateHolder.state.zaiRateLimits else {
+            return unavailableProvider("z.ai")
+        }
+        return AnyView(
+            ProviderRow(
+                name: "z.ai",
+                status: .ok,
+                subtitle: Self.zaiSubtitle(limits),
+                rateLimits: zaiRateLimitChips,
+                consumers: []
+            )
+        )
+    }
+
+    static func zaiSubtitle(_ limits: ZaiRateLimits) -> String? {
+        guard let plan = ZaiQuotaRules.formatPlanName(limits.planType) else { return nil }
+        return "GLM Coding Plan \(plan)"
+    }
+
+    /// z.ai usage chips, mirroring the Codex window grammar. Labels derive from
+    /// each window's length, so the monthly MCP quota reads "30d".
+    private var zaiRateLimitChips: [RateChip] {
+        guard let limits = stateHolder.state.zaiRateLimits else { return [] }
+        var chips: [RateChip] = []
+        if let p = limits.primary, let pct = p.usedPercent {
+            chips.append(.init(
+                label: Self.windowLabel(p.windowMinutes),
+                percent: pct,
+                reset: formatResetTime(p.resetsAt),
+                stale: p.stale == true,
+                footnote: CodexUsageFreshness.footnote(window: p, capturedAt: limits.capturedAt)
+            ))
+        }
+        if let s = limits.secondary, let pct = s.usedPercent {
+            chips.append(.init(
+                label: Self.windowLabel(s.windowMinutes),
+                percent: pct,
+                reset: formatResetTime(s.resetsAt),
+                stale: s.stale == true,
+                footnote: CodexUsageFreshness.footnote(window: s, capturedAt: limits.capturedAt)
+            ))
+        }
+        return chips
     }
 
     /// Antigravity is a Google-hosted model product — when the bridge

@@ -118,6 +118,28 @@ fun UsageSummaryCard(
                 }
             }
 
+            // z.ai GLM Coding Plan (#348) — same neutral-row grammar; renders
+            // only when the provider reports windows, so an absent plan leaves
+            // no reserved space.
+            val zaiRows = zaiLimitRows(usage.zaiRateLimits)
+            if (zaiRows.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    zaiRows.forEach { row ->
+                        CompactGauge(
+                            label = row.label,
+                            percent = row.percent,
+                            resetAt = if (row.stale || row.footnote != null) null else row.resetIso,
+                            suffix = row.footnote ?: if (row.stale) "stale" else null,
+                            agentType = row.agentType,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+
             // Extra usage bar
             if (usageLive && usage.extraUsageEnabled == true && usage.extraUsageUtilization != null) {
                 CompactGauge(

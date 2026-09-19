@@ -175,6 +175,7 @@ data class UsageUpdate(
     // 5h window, secondary ≈ weekly. Mirrors Claude's fiveHourPercent/
     // sevenDayPercent shape. Only rides on usage_update, not state_update.
     val codexRateLimits: CodexRateLimits? = null,
+    val zaiRateLimits: ZaiRateLimits? = null,
     val modelCatalog: List<ModelCatalogEntry>? = null,
     val mlxModels: List<String>? = null,
     val subscriptions: List<SubscriptionInfo>? = null,
@@ -244,6 +245,24 @@ data class CodexRateLimits(
      *  when Codex stops being used, and [CodexRateLimitWindow.stale] cannot expose
      *  that — it fires only once the window has ENDED, which for the weekly window
      *  is up to 7 days out. */
+    val capturedAt: String? = null,
+)
+
+/** z.ai (GLM Coding Plan) usage limits — a direct provider-account reading
+ *  (#348), independent of every harness that may use the plan. Same slot
+ *  grammar as [CodexRateLimits]: `primary` = 5-hour credits window,
+ *  `secondary` = the long window when the plan reports one (weekly credits or
+ *  the monthly MCP quota — [limitId] says which quantity). */
+@Serializable
+data class ZaiRateLimits(
+    val primary: CodexRateLimitWindow? = null,
+    val secondary: CodexRateLimitWindow? = null,
+    /** Plan tier stamped into every snapshot ("lite" | "pro" | "max"). */
+    val planType: String? = null,
+    /** Schema family the windows were read from: "standard" | "credit" | "payg". */
+    val limitId: String? = null,
+    /** ISO-8601 instant this reading was fetched (age derived at the consumer,
+     *  same contract as [CodexRateLimits.capturedAt]). */
     val capturedAt: String? = null,
 )
 

@@ -169,8 +169,18 @@ enum IntegrationCatalog {
         connectInstructions: "Paste an Admin API key from console.anthropic.com/settings/keys."
     )
 
+    static let zaiCodingPlan = IntegrationDescriptor(
+        id: "zai",
+        displayName: "z.ai GLM Coding Plan",
+        kind: .apiKey,
+        iconSystemName: "gauge.with.dots.needle.bottom.50percent",
+        iconTint: SessionBrand.color(for: "codex-cli"),
+        oneLineHelp: "Remaining 5-hour and long-window credits for the GLM Coding Plan, read directly from your z.ai account.",
+        connectInstructions: "Paste your z.ai coding-plan API key (z.ai/manage-apikey/apikey-list)."
+    )
+
     static let all: [IntegrationDescriptor] = [
-        claudeCode, codex, openClaw, antigravity, openCode, kiro, anthropicAdmin,
+        claudeCode, codex, openClaw, antigravity, openCode, kiro, anthropicAdmin, zaiCodingPlan,
     ]
 }
 
@@ -227,7 +237,8 @@ enum IntegrationStatusEvaluator {
         for descriptor: IntegrationDescriptor,
         state: DashboardState,
         preferences: AppPreferences,
-        anthropicKeySaved: Bool
+        anthropicKeySaved: Bool,
+        zaiKeySaved: Bool = false
     ) -> IntegrationStatus {
         switch descriptor.id {
         case "claude":
@@ -244,6 +255,8 @@ enum IntegrationStatusEvaluator {
             return kiroStatus(preferences: preferences)
         case "anthropic-admin":
             return anthropicStatus(state: state, hasKey: anthropicKeySaved)
+        case "zai":
+            return zaiStatus(state: state, hasKey: zaiKeySaved)
         default:
             return .notConfigured(detail: nil)
         }
@@ -415,6 +428,27 @@ enum IntegrationStatusEvaluator {
         if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
         return "\(n)"
     }
+
+    /// z.ai GLM Coding Plan (#348): a provider-account key, independent of
+    /// every harness that may use the plan. A pay-as-you-go key answers the
+    /// endpoint but carries no plan windows — that is a not-a-subscription
+    /// fact, never a failure.
+    private static func zaiStatus(state: DashboardState, hasKey: Bool) -> IntegrationStatus {
+        guard hasKey else {
+            return .notConfigured(detail: "Optional. Adds GLM Coding Plan quota windows when configured.")
+        }
+        guard let limits = state.zaiRateLimits else {
+            return .connected(detail: "Awaiting first reading")
+        }
+        if limits.limitId == "payg" {
+            return .notConfigured(detail: "Key is pay-as-you-go — no plan windows to show.")
+        }
+        if limits.primary == nil && limits.secondary == nil {
+            return .connected(detail: "Plan connected · no windows in the latest reading")
+        }
+        let plan = ZaiQuotaRules.formatPlanName(limits.planType) ?? "plan"
+        return .connected(detail: "GLM Coding Plan \(plan) · windows live")
+    }
 }
 
 // MARK: - Row view
@@ -576,6 +610,9 @@ struct IntegrationsView<AccountSlot: View, ApiKeySlot: View>: View {
     /// to make IntegrationsView App-Store-only.
     let anthropicKeySaved: Bool
 
+    /// `true` when the z.ai GLM Coding Plan key is present in Keychain (#348).
+    let zaiKeySaved: Bool
+
     /// Per-row inline editor (e.g. OpenClaw Advanced disclosure with
     /// the shared-token field, Antigravity database picker). Returns
     /// `EmptyView()` for rows that have no extra controls.
@@ -628,7 +665,8 @@ struct IntegrationsView<AccountSlot: View, ApiKeySlot: View>: View {
                             for: descriptor,
                             state: stateHolder.state,
                             preferences: preferences,
-                            anthropicKeySaved: anthropicKeySaved
+                            anthropicKeySaved: anthropicKeySaved,
+                            zaiKeySaved: zaiKeySaved
                         ),
                         mode: .settings
                     )

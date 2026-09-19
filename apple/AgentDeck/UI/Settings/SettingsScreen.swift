@@ -57,6 +57,9 @@ struct SettingsScreen: View {
     @State private var anthropicAdminApiKeyInput: String = ""
     @State private var anthropicAdminApiKeySaved: Bool = false
     @State private var anthropicAdminApiKeyError: String?
+    @State private var zaiApiKeyInput: String = ""
+    @State private var zaiApiKeySaved: Bool = false
+    @State private var zaiApiKeyError: String?
     #if os(macOS)
     @State private var portInput: String = ""
     @StateObject private var weatherLocationPicker = WeatherLocationPicker()
@@ -1697,6 +1700,91 @@ struct SettingsScreen: View {
         #endif
     }
 
+    // MARK: - z.ai GLM Coding Plan key editor (#348)
+
+    @ViewBuilder
+    private var zaiApiKeyEditor: some View {
+        #if os(macOS) && AGENTDECK_APP_STORE
+        VStack(alignment: .leading, spacing: 6) {
+            SecureField(
+                zaiApiKeySaved
+                    ? "Coding-plan key saved — paste to replace"
+                    : "z.ai coding-plan API key",
+                text: $zaiApiKeyInput
+            )
+            .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                Button("Save key") {
+                    saveZaiApiKey()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(zaiApiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button("Clear") {
+                    clearZaiApiKey()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!zaiApiKeySaved && zaiApiKeyInput.isEmpty)
+
+                if zaiApiKeySaved {
+                    Text("Saved in Keychain")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.green)
+                }
+            }
+            Text("Reads remaining plan credits directly from your z.ai account. The same key serves Claude Code, Codex and other tools from one quota.")
+                .font(.system(size: 10))
+                .foregroundStyle(TerrariumHUD.subtext.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
+            if let zaiApiKeyError {
+                Text(zaiApiKeyError)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        #else
+        EmptyView()
+        #endif
+    }
+
+    private func loadZaiApiKeyState() {
+        #if os(macOS) && AGENTDECK_APP_STORE
+        zaiApiKeySaved = ZaiUsageApiKeyStore.loadKey() != nil
+        zaiApiKeyError = nil
+        #endif
+    }
+
+    private func saveZaiApiKey() {
+        #if os(macOS) && AGENTDECK_APP_STORE
+        do {
+            try ZaiUsageApiKeyStore.saveKey(zaiApiKeyInput)
+            zaiApiKeyInput = ""
+            zaiApiKeySaved = true
+            zaiApiKeyError = nil
+            Task { await daemonService.restart() }
+        } catch {
+            zaiApiKeyError = "Could not save key: \(error.localizedDescription)"
+        }
+        #endif
+    }
+
+    private func clearZaiApiKey() {
+        #if os(macOS) && AGENTDECK_APP_STORE
+        do {
+            try ZaiUsageApiKeyStore.deleteKey()
+            zaiApiKeyInput = ""
+            zaiApiKeySaved = false
+            zaiApiKeyError = nil
+            Task { await daemonService.restart() }
+        } catch {
+            zaiApiKeyError = "Could not clear key: \(error.localizedDescription)"
+        }
+        #endif
+    }
+
     #if os(macOS)
     @State private var showESP32Sheet: Bool = false
     @State private var showPixooSheet: Bool = false
@@ -1797,6 +1885,7 @@ struct SettingsScreen: View {
         VStack(alignment: .leading, spacing: 14) {
             IntegrationsView(
                 anthropicKeySaved: anthropicAdminApiKeySaved,
+                zaiKeySaved: zaiApiKeySaved,
                 accountSlot: { descriptor in
                     accountIntegrationSlot(descriptor)
                 },
@@ -1821,11 +1910,16 @@ struct SettingsScreen: View {
                 async let anthropicSaved = Task.detached(priority: .userInitiated) {
                     AnthropicAdminApiKeyStore.loadKey() != nil
                 }.value
-                let (oc, an) = await (openClawSaved, anthropicSaved)
+                async let zaiSaved = Task.detached(priority: .userInitiated) {
+                    ZaiUsageApiKeyStore.loadKey() != nil
+                }.value
+                let (oc, an, za) = await (openClawSaved, anthropicSaved, zaiSaved)
                 openClawGatewayTokenSaved = oc
                 openClawGatewayTokenError = nil
                 anthropicAdminApiKeySaved = an
                 anthropicAdminApiKeyError = nil
+                zaiApiKeySaved = za
+                zaiApiKeyError = nil
                 #endif
             }
         }
@@ -1915,6 +2009,14 @@ struct SettingsScreen: View {
             anthropicAdminApiEditor
             #else
             Text("Configure on macOS to add an Admin API key.")
+                .font(.system(size: 10))
+                .foregroundStyle(TerrariumHUD.subtext.opacity(0.7))
+            #endif
+        case "zai":
+            #if os(macOS) && AGENTDECK_APP_STORE
+            zaiApiKeyEditor
+            #else
+            Text("Configure on macOS to add a z.ai coding-plan key.")
                 .font(.system(size: 10))
                 .foregroundStyle(TerrariumHUD.subtext.opacity(0.7))
             #endif
