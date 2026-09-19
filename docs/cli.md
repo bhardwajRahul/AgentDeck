@@ -19,9 +19,10 @@ default) aggregates all sessions for external clients.
 > **Legacy compatibility notice:** `agentdeck claude`, `agentdeck codex`,
 > `agentdeck opencode`, and `agentdeck monitor` still work, and no removal date
 > is set. The daemon-first default is `agentdeck daemon install` followed by a
-> normal agent launch. Remote attach, `--weight`, `AGENTDECK_<AGENT>_ARGS`,
+> normal agent launch. Remote attach, `AGENTDECK_<AGENT>_ARGS`,
 > terminal steering, and terminal telemetry do not have daemon-first
-> equivalents yet. Replacement design is discussed in
+> equivalents yet; for session ordering use `agentdeck order` (below).
+> Replacement design is discussed in
 > [Discussion #278](https://github.com/puritysb/AgentDeck/discussions/278) and
 > implementation remains tracked in
 > [#273](https://github.com/puritysb/AgentDeck/issues/273).
@@ -45,6 +46,9 @@ The CLI command is `agentdeck`.
 | `agentdeck codex` | **Legacy compatibility:** start Codex in the managed PTY session bridge |
 | `agentdeck opencode` | **Legacy compatibility:** start OpenCode in the managed PTY/SSE session bridge |
 | `agentdeck monitor` | **Legacy compatibility:** start the managed hook-only per-session bridge |
+| `agentdeck order set <id> <n>` | Pin an observed session's deck/tab sort slot (daemon-persisted; `0` clears) |
+| `agentdeck order clear <id>` | Remove an observed session order pin |
+| `agentdeck order list` | List stored order pins |
 
 The following flags document the managed compatibility path. New ordinary local
 sessions should use the normal agent commands; keep this path when one of these
@@ -126,6 +130,37 @@ agentdeck claude --weight 3   # …and so on
 Negative weights sort ahead of unweighted sessions (e.g. `--weight -5` to always
 float a session to the top). The value is a pure sort key — it never changes how
 a session behaves.
+
+#### Pinning observed session order with `agentdeck order`
+
+`--weight` is a launch-time flag of the managed PTY commands. A normally
+launched observed session (run `claude`/`codex`/`opencode` directly with the
+daemon installed) has no launch line to hang a flag on, so ordering it is
+daemon-first instead: `agentdeck order` pins the weight on the daemon, and the
+daemon applies it every time it builds `sessions_list` — same comparator, same
+surfaces, and the same fold behaviour (two same-project Codex tabs pinned to
+different weights never collapse into one row).
+
+```bash
+agentdeck order set observed:claude:1a2b… 1   # pin (id, unique prefix, or bare uuid)
+agentdeck order set observed:claude:1a2b… 0   # weight 0 clears the pin
+agentdeck order clear observed:claude:1a2b…
+agentdeck order list
+```
+
+Lifecycle: pins live in `~/.agentdeck/session-order.json`, survive daemon
+restarts, and re-apply automatically when the same session id reappears
+(`claude --resume <uuid>` keeps its pin). A pin whose session has been absent
+from the roster for 30 days is garbage-collected; at most 256 pins are kept
+(least-recently-seen evicted first). Precedence: the store pins **observed**
+rows only — a managed session's launch-time `--weight` (and a remote-attached
+session's pushed weight) always wins.
+
+Both daemons implement it: the Node daemon and the in-process Swift daemon
+read and write the same pin file and serve the same `agentdeck order` routes
+with identical behaviour, so pins survive a daemon handover in either
+direction. Only a daemon build older than the feature answers 404 — update
+and restart it.
 
 ### Daemon
 

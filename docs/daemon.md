@@ -407,6 +407,46 @@ removed.
 - **Reverse control (daemon → session) — same-socket only**: the worker's outbound push socket is **bidirectional**. When the daemon focuses a remote session it sends command frames back **down the socket the worker already opened** — the daemon never dials back, so a NAT'd / SSH-only worker needs no inbound reachability at all. The daemon stores the live push socket (`remote-sessions.ts` `sender`, `getRemoteSender`); the focus relay drives it (`setSameSocketResolver`) with `session_command_down` frames. On focus it sends `session_focus_down` (worker emits an initial state snapshot up); the worker forwards its `RELAYED_EVENTS` back up as `session_event_up` while focused; unfocus sends `session_unfocus_down`. Commands run through the **same** `applyPluginCommand` handler the local WS server uses (`index.ts`), so local and remote control never diverge. A remote session with no live push socket is unreachable until its worker reconnects.
 - **Sender-identity guards**: registration, state updates, event ingestion, and teardown are all keyed to the session's **registered sender socket**. A worker reconnect migrates focus to the new socket (`migrateSender`) before the old close fires; a stale socket's close, state push, or `session_event_up` cannot affect the newer registration; a worker ignores down-frames whose `sessionId` isn't its own. The guard covers the shared push-state **aggregator cache** too, not just the remote registry — in the local + `--remote-daemon` dual-registration case the sessions list dedups to the local row, whose displayed state comes from that cache.
 
+## Observed-session order pins (#273)
+
+Observed sessions (run directly with the daemon installed) have no launch line
+to carry `--weight`, so their ordering is daemon-persisted instead: the Node
+daemon owns `~/.agentdeck/session-order.json` — a bounded map of weight pins
+keyed on the bare session id (`rawSessionId` of the `sessions_list` id, so
+`observed:claude:<uuid>` and the bare `<uuid>` address the same pin). The
+daemon overlays pins onto observed rows in the sessions enricher, before
+fold+sort, so the value rides the existing `SessionInfo.weight` wire field to
+every surface — no protocol change, and the Codex display fold (whose key
+carries the weight band) never collapses two differently-pinned tabs.
+
+- **Surface**: `GET /sessions/order` lists pins; `POST /sessions/order` with
+  `{ sessionId, weight }` sets one and `{ sessionId, clear: true }` (or weight
+  `0`/`null`) removes it. Both sit behind the standard LAN auth gate — the
+  same-machine CLI needs no token, a remote peer needs the pairing token. A
+  mutation triggers an immediate `sessions_list` rebroadcast. `sessionId`
+  accepts the exact id, a device-truncated echo, or the bare uuid; a prefix
+  must match exactly one live observed session (ambiguity is refused with the
+  candidates). CLI: `agentdeck order set|clear|list`.
+- **Lifecycle**: pins survive daemon restarts (atomic tmp+rename writes);
+  `lastSeenAt` advances whenever the daemon rosters the id, and a pin unseen
+  for 30 days is garbage-collected; at most 256 pins persist
+  (least-recently-seen evicted first). A `claude --resume <uuid>` session
+  re-picks-up its pin because the id is unchanged.
+- **Precedence**: observed rows without their own weight only. Managed
+  sessions keep their launch-time `--weight`; remote-attached sessions keep
+  their pushed weight; the store never overrides an explicit value.
+- **Swift parity**: the in-process Swift daemon is a deliberate
+  near-transliteration (`apple/AgentDeck/Daemon/Session/SessionOrderStore.swift`)
+  — it reads/writes the same `session-order.json` and serves the same
+  `GET/POST /sessions/order` with byte-compatible response shapes, so
+  `agentdeck order` works against whichever daemon owns the port and pins
+  survive a handover in either direction. Unsandboxed dev builds share the
+  exact `~/.agentdeck` file with Node; the sandboxed App Store build writes a
+  container-local copy Node cannot read (the same asymmetry its
+  `daemon.json`/`timeline.json` already carry). The TTL and pin cap are a
+  cross-daemon file contract single-sourced in `shared/src/session-utils.ts`
+  and emitted to both platforms by `pnpm generate-session-weight-rules`.
+
 ## Supporting files
 
 - `bridge/src/mdns.ts` — `bonjour-service` mDNS 광고 (`_agentdeck._tcp`), daemon only
@@ -415,6 +455,7 @@ removed.
 - `bridge/src/session-push-channel.ts` — extracted push-channel handler (`session_push_register`/`session_push_state`/`session_event_up`) with remote classification + sender-identity guards
 - `bridge/src/auth.ts` — `~/.agentdeck/auth-token` 32-char hex 토큰, local bypass, constant-time validation, `rotateToken()`
 - `bridge/src/http-auth-gate.ts` — LAN default-deny 정책 (pure functions: `isAuthorizedHttpRequest`/`gateHttpRequest`/`buildPublicHealth`)
+- `bridge/src/session-order-store.ts` — daemon-persisted observed-session order pins (`session-order.json`, TTL/size-capped, bare-id keyed) + `/sessions/order` helpers (prefix resolution, weight validation); Swift near-transliteration in `apple/AgentDeck/Daemon/Session/SessionOrderStore.swift`
 - `bridge/src/session-registry.ts` — `daemon.json` port discovery (`writeDaemonInfo`/`readDaemonInfo`/`removeDaemonInfo`/`findDaemonPort`/`probeDaemonHealth`)
 - `bridge/src/hook-server.ts` — SSE (`/sse`), `/health` (includes `mode` field), `/status`, 토큰 인증
 - `bridge/src/ws-server.ts` — remote WS 연결 토큰 검증 (4001 거부), local bypass

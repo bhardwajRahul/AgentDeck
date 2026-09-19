@@ -79,6 +79,92 @@ fails identically on stashed master (pre-existing, collaboration-rail
 domain, unrelated). Remaining #327 scope: the CLI port-window suspend sweep
 (phase 3) and post-write reset/readback under load (phase 4).
 
+## 2026-09-19 — Session-order pins: Swift daemon parity (#273)
+
+The Node increment earlier today left the Swift daemon unable to serve the
+new session-order pins: while the in-process Swift daemon owned port 9120,
+`agentdeck order` hit a 404 and the documented advice was "take the port back
+with the Node daemon". That made the replacement daemon-first only in the
+narrow sense — a Mac-app user would have had to evict their own daemon to pin
+a tab.
+
+Parity is now a deliberate near-transliteration, the pairing-knock precedent
+("a rule restated in different words is a rule that can drift").
+`apple/AgentDeck/Daemon/Session/SessionOrderStore.swift` reads and writes the
+SAME `session-order.json` (unsandboxed dev builds resolve
+`AgentDeckPaths.baseDirectory` to `~/.agentdeck`, the exact file Node uses;
+the App Store sandbox writes a container-local copy, the same asymmetry its
+`daemon.json`/`timeline.json` already carry), keys pins on the bare id via
+`ObservedAgentRules.rawSessionId`, and implements the identical precedence —
+observed rows without their own weight only, weight 0 is a clear.
+`DaemonServer` overlays pins in `refreshSessions` before fold+sort and in
+`upsertIntoCachedSessions` so a hook-minted observed row carries its pin
+immediately, and serves `GET/POST /sessions/order` with byte-compatible
+response shapes (the route handlers box payloads in `SendableDict` to cross
+the `@DaemonActor` boundary under Swift 6).
+
+The TTL (30 days unseen) and the pin cap (256) were Node-local constants
+before this; they are now a cross-daemon file contract single-sourced in
+`shared/src/session-utils.ts` (`SESSION_ORDER_TTL_MS` /
+`MAX_SESSION_ORDER_PINS`) and emitted to Swift/Kotlin by the existing
+`pnpm generate-session-weight-rules` generator, whose drift test now pins
+them — a pin must not live 30 days under one daemon and 7 under the other.
+The SSOT catalogue in docs/architecture.md gained the previously missing row.
+
+Validation: 15 new XCTest cases in `SessionOrderStoreTests.swift` mirror the
+TS suite (both id forms, 0-clears, clamping, restart round-trip, the
+cross-daemon JSON shape asserted structurally, corrupt-file tolerance, TTL
+GC, cap eviction, noteSeen throttling, overlay precedence, prefix resolution,
+weight validation) — AgentDeckTests_macOS fully green, iOS target builds
+(the store is `#if os(macOS)` like its sibling SessionRegistry.swift), and
+the Node suite re-run green after the SSOT move. The live cross-daemon
+handover (pin under Node → Swift serves it, and back) is exercised
+structurally here; the real-user tab-to-deck scenario remains the open #273
+gate and must run on a merged build, not a worktree daemon.
+
+## 2026-09-19 — Observed-session order pins (#273 session-ordering gate)
+
+Issue #273's "Session ordering" gate named the gap precisely: `--weight` is a
+launch-time flag of the managed PTY path, and a normally launched observed
+session (direct `claude`/`codex`/`opencode` with the daemon installed) has no
+launch line to hang a flag on, so it could not be ordered at all — and any
+daemon-side pin would have had no storage, since observed rows are in-memory
+only in both daemons.
+
+The daemon-first replacement now exists on the Node daemon. `SessionOrderStore`
+(`bridge/src/session-order-store.ts`) persists weight pins in
+`~/.agentdeck/session-order.json` — daemon-written like `timeline.json`,
+atomic tmp+rename — keyed on the **bare** session id (`rawSessionId`), so
+`observed:claude:<uuid>` and the uuid a hook carries address the same pin.
+Lifecycle rules are explicit and tested: pins survive daemon restarts, a
+resumed session (`claude --resume <uuid>`) re-picks-up its pin because the id
+is unchanged, `lastSeenAt` advances on every roster the daemon builds
+(throttled, debounced persist), a pin unseen for 30 days is GC'd, and at most
+256 pins persist with least-recently-seen eviction. The daemon overlays pins
+in the sessions enricher **before fold+sort** onto observed rows **without
+their own weight only** — managed `--weight` and remote pushed weights always
+win, and weight 0 is a clear, not a pin. No wire change: the value rides the
+existing `SessionInfo.weight`, so the Codex display fold's weight-band key
+keeps distinct pins unfolded on every surface.
+
+Surface: `GET/POST /sessions/order` (standard LAN auth gate; prefix/uuid id
+resolution with ambiguity refusal; mutation triggers an immediate
+`sessions_list` rebroadcast) and `agentdeck order set|clear|list`. The managed
+compatibility notice no longer claims ordering lacks a daemon-first
+equivalent. Honest limits, stated in docs/daemon.md and the feature matrix:
+the Swift daemon neither reads the file nor serves the route (the CLI names
+the takeover command), and the gate's real-user tab-to-deck scenario remains
+open — this lands the mechanism and its rules, not the validation that would
+let the managed path retire.
+
+Validation: new `bridge/src/__tests__/session-order-store.test.ts` (identity
+both id forms, 0-clears, clamping, persistence round-trip, corrupt-file
+tolerance, TTL GC, 256-cap eviction, noteSeen throttling, overlay precedence,
+prefix resolution, weight validation, and pinned-observed rows through the
+shared fold+sort pipeline incl. the never-fold distinct-pins case) — 87 tests
+green in that file plus cli.test.ts over the revised notice; `pnpm build`,
+`pnpm typecheck` clean.
+
 ## 2026-09-19 — Luna reserve on Codex usage surfaces
 
 Codex accounts with a Luna reserve report it as an additional rate-limit pool
