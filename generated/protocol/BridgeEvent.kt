@@ -475,6 +475,11 @@ data class CodexRateLimits (
     val limitID: String? = null,
 
     /**
+     * Additional Luna-only pool, separate from the account 5h/7d windows.
+     */
+    val lunaReserve: CodexLunaReserve? = null,
+
+    /**
      * Plan tier reported alongside the limits (e.g. "plus", "pro").
      */
     val planType: String? = null,
@@ -505,6 +510,33 @@ data class CodexCredits (
      * Unlimited credits (no balance ceiling).
      */
     val unlimited: Boolean
+)
+
+/**
+ * Additional Luna-only pool, separate from the account 5h/7d windows.
+ *
+ * Luna-only reserve window returned as an additional Codex rate-limit pool.
+ */
+data class CodexLunaReserve (
+    /**
+     * Whether the reserve is currently usable.
+     */
+    val available: Boolean? = null,
+
+    /**
+     * When the regular advanced-model allowance becomes available again.
+     */
+    val regularResetsAt: String? = null,
+
+    /**
+     * The reserve's own reset, when supplied.
+     */
+    val resetsAt: String? = null,
+
+    /**
+     * Percent of the reserve already consumed (0–100).
+     */
+    val usedPercent: Double
 )
 
 /**

@@ -24,7 +24,7 @@
 // against; `scripts/check-preview-mirror-sync.mjs` verifies they match the
 // current `git hash-object` of each file and fails CI when the origin drifts
 // ahead of this mirror. Update them whenever you re-port.
-// SYNC-HASH shared/src/d200h-layout.ts cea0192c105ba8ddcf3f759260ccfb54a525002f
+// SYNC-HASH shared/src/d200h-layout.ts b66a15e9dc75d5ad43ec0698a7187eb4b82bc827
 // SYNC-HASH shared/src/session-utils.ts 7f8022d89d51bd496a7d09ca25e9f676ab80e036
 //
 // INTENTIONALLY OMITTED (not needed by a read-only preview):
@@ -168,6 +168,27 @@ public struct D200HScopedLimit: Equatable, Sendable {
     }
 }
 
+/// Luna-only reserve window (`CodexLunaReserve` on the wire), returned as an
+/// additional Codex rate-limit pool. When present it REPLACES the Codex 5H/7D
+/// gauge tiles with a single Luna tile — mirroring `buildUsageTiles` in
+/// d200h-layout.ts. Mirrors the subset `renderLunaReserveTile` reads.
+public struct D200HLunaReserve: Equatable, Sendable {
+    /// Percent of the reserve already consumed (0–100).
+    public var usedPercent: Double
+    /// The reserve's own reset, when supplied.
+    public var resetsAt: String?
+    /// When the regular advanced-model allowance becomes available again.
+    public var regularResetsAt: String?
+    /// Whether the reserve is currently usable.
+    public var available: Bool?
+    public init(usedPercent: Double, resetsAt: String? = nil, regularResetsAt: String? = nil, available: Bool? = nil) {
+        self.usedPercent = usedPercent
+        self.resetsAt = resetsAt
+        self.regularResetsAt = regularResetsAt
+        self.available = available
+    }
+}
+
 public struct D200HUsage: Equatable, Sendable {
     /// Claude 5h window used%. nil → tile omitted.
     public var fiveHourPercent: Double?
@@ -192,6 +213,9 @@ public struct D200HUsage: Equatable, Sendable {
     /// current clock — a still-live window whose snapshot went cold renders dimmed
     /// with a "3h ago" footnote instead of passing for a live reading.
     public var codexCapturedAt: String?
+    /// Luna-only reserve pool. Non-nil → the Codex 5H/7D tiles are replaced by
+    /// one LUNA tile (the reserve is the quota that binds while it lasts).
+    public var lunaReserve: D200HLunaReserve?
 
     public init(
         fiveHourPercent: Double? = nil,
@@ -204,7 +228,8 @@ public struct D200HUsage: Equatable, Sendable {
         codexSecondaryPercent: Double? = nil,
         codexSecondaryWindowMinutes: Int? = nil,
         codexSecondaryStale: Bool = false,
-        codexCapturedAt: String? = nil
+        codexCapturedAt: String? = nil,
+        lunaReserve: D200HLunaReserve? = nil
     ) {
         self.fiveHourPercent = fiveHourPercent
         self.sevenDayPercent = sevenDayPercent
@@ -217,6 +242,7 @@ public struct D200HUsage: Equatable, Sendable {
         self.codexSecondaryWindowMinutes = codexSecondaryWindowMinutes
         self.codexSecondaryStale = codexSecondaryStale
         self.codexCapturedAt = codexCapturedAt
+        self.lunaReserve = lunaReserve
     }
 }
 
@@ -332,6 +358,10 @@ public enum D200HSlotKind: Equatable, Sendable {
     case usageGauge(agent: String, window: String, percent: Double, known: Bool, stale: Bool, inactive: Bool, footnote: String?)
     /// Two same-provider windows compacted into one physical usage key.
     case usagePair(agent: String, windows: [D200HUsagePairWindow])
+    /// Luna reserve tile (renderLunaReserveTile): the reserve replaces the
+    /// Codex 5H/7D gauges while it lasts. `remainingPercent` is what is left,
+    /// `active` = the moon still has mass (not EMPTY).
+    case lunaReserve(remainingPercent: Double, active: Bool)
 }
 
 public struct D200HUsagePairWindow: Equatable, Sendable {
@@ -713,19 +743,23 @@ public enum D200HLayoutModel {
         // Codex windows are labelled by their own length, never by slot: Codex now
         // sometimes reports the weekly (10080-min) window as `primary` with
         // `secondary` null, so a slot-based "7D = secondary" would drop the gauge.
+        // While a Luna reserve is reported it replaces BOTH Codex windows — the
+        // reserve is the quota that binds (TS: `cx?.lunaReserve ? [] : …`).
         var codexTiles: [(D200HSlotKind, String, String)] = []
         var codexPair: [D200HUsagePairWindow] = []
-        if let p = usage.codexPrimaryPercent {
-            let label = usageWindowLabel(usage.codexPrimaryWindowMinutes)
-            let footnote = codexFootnote(stale: usage.codexPrimaryStale, capturedAt: usage.codexCapturedAt)
-            codexTiles.append((.usageGauge(agent: "codex", window: usageWindowKind(usage.codexPrimaryWindowMinutes), percent: p, known: true, stale: usage.codexPrimaryStale, inactive: false, footnote: footnote), label, "codex"))
-            codexPair.append(.init(label: label, percent: p, stale: usage.codexPrimaryStale, footnote: footnote))
-        }
-        if let s = usage.codexSecondaryPercent {
-            let label = usageWindowLabel(usage.codexSecondaryWindowMinutes)
-            let footnote = codexFootnote(stale: usage.codexSecondaryStale, capturedAt: usage.codexCapturedAt)
-            codexTiles.append((.usageGauge(agent: "codex", window: usageWindowKind(usage.codexSecondaryWindowMinutes), percent: s, known: true, stale: usage.codexSecondaryStale, inactive: false, footnote: footnote), label, "codex"))
-            codexPair.append(.init(label: label, percent: s, stale: usage.codexSecondaryStale, footnote: footnote))
+        if usage.lunaReserve == nil {
+            if let p = usage.codexPrimaryPercent {
+                let label = usageWindowLabel(usage.codexPrimaryWindowMinutes)
+                let footnote = codexFootnote(stale: usage.codexPrimaryStale, capturedAt: usage.codexCapturedAt)
+                codexTiles.append((.usageGauge(agent: "codex", window: usageWindowKind(usage.codexPrimaryWindowMinutes), percent: p, known: true, stale: usage.codexPrimaryStale, inactive: false, footnote: footnote), label, "codex"))
+                codexPair.append(.init(label: label, percent: p, stale: usage.codexPrimaryStale, footnote: footnote))
+            }
+            if let s = usage.codexSecondaryPercent {
+                let label = usageWindowLabel(usage.codexSecondaryWindowMinutes)
+                let footnote = codexFootnote(stale: usage.codexSecondaryStale, capturedAt: usage.codexCapturedAt)
+                codexTiles.append((.usageGauge(agent: "codex", window: usageWindowKind(usage.codexSecondaryWindowMinutes), percent: s, known: true, stale: usage.codexSecondaryStale, inactive: false, footnote: footnote), label, "codex"))
+                codexPair.append(.init(label: label, percent: s, stale: usage.codexSecondaryStale, footnote: footnote))
+            }
         }
         let worstScoped = usage.known ? usage.scopedLimits.first : nil
         let scopedClaims = worstScoped != nil
@@ -747,7 +781,15 @@ public enum D200HLayoutModel {
             guard let scopedLabel, let s = worstScoped else { return nil }
             return .init(label: scopedLabel, percent: s.percent, stale: false, footnote: nil, inactive: !s.active)
         }()
-        let logicalCount = claudeTiles.count + codexTiles.count + (scopedTile == nil ? 0 : 1)
+        // The Luna tile is its own logical reading — it counts toward strip
+        // pressure exactly like a Codex window would (TS: `+ (lunaTile ? 1 : 0)`).
+        let lunaTile: (D200HSlotKind, String, String)? = usage.lunaReserve.map { luna in
+            let used = min(100, max(0, luna.usedPercent))
+            let remaining = (100 - used).rounded()
+            let active = luna.available != false && remaining > 0
+            return (.lunaReserve(remainingPercent: remaining, active: active), "LUNA", "codex")
+        }
+        let logicalCount = claudeTiles.count + codexTiles.count + (scopedTile == nil ? 0 : 1) + (lunaTile == nil ? 0 : 1)
         let compactCodex = logicalCount > usagePreferredPositions.count && codexPair.count == 2
         let stillOverflows = logicalCount - (compactCodex ? 1 : 0) > usagePreferredPositions.count
         let pairScopedWith7D = stillOverflows && scopedPair != nil && claudePair.count == 2
@@ -769,6 +811,7 @@ public enum D200HLayoutModel {
             if let scopedTile { tiles.append(scopedTile) }
         }
         tiles.append(contentsOf: cells("codex", codexTiles, codexPair, compact: compactCodex))
+        if let lunaTile { tiles.append(lunaTile) }
         return tiles
     }
 

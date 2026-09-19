@@ -16,7 +16,8 @@
  * 200×100 Stream Deck+ encoder LCD views (`renderUsageEncoderBoth`,
  * `renderUsageEncoderSingle`).
  */
-import { Brand, UI, CLAUDE_LOGO_PATH, CODEX_LOGO_PATH } from '@agentdeck/shared';
+import { Brand, Tide, UI, CLAUDE_LOGO_PATH, CODEX_LOGO_PATH } from '@agentdeck/shared';
+import type { CodexLunaReserve } from '@agentdeck/shared';
 import { formatResetTime, splitResetTwoLine, formatScopedLabel } from '../utility-modes/usage.js';
 
 const W = 144;
@@ -110,6 +111,24 @@ export interface UsageGaugeData {
    *  informational cyan instead of the severity ramp. Defaults false so the real
    *  5H/7D tiles are byte-unchanged. */
   inactive?: boolean;
+  luna?: CodexLunaReserve;
+}
+
+/** Dedicated Luna state: the moon is the focal mark, not a corner badge. */
+export function renderLunaReserveGauge(reserve: CodexLunaReserve): string {
+  const remaining = Math.round(Math.max(0, Math.min(100, 100 - reserve.usedPercent)));
+  const active = reserve.available !== false && remaining > 0;
+  const bg = UI.popupBgDeep;
+  const moon = active ? UI.attn : LABEL_DIM;
+  const reset = reserve.regularResetsAt ?? reserve.resetsAt;
+  return svgWrap(
+    `<rect width="${W}" height="${H}" rx="${RX}" fill="${bg}"/>` +
+    lunaGaugeHeader() +
+    lunaMark(72, 58, 29, moon, bg) +
+    `<text x="72" y="103" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="bold" fill="${active ? HEADLINE : LABEL_DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>` +
+    `<text x="72" y="121" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${active ? Tide.s50 : LABEL_DIM}">LUNA RESERVE</text>` +
+    (reset ? `<text x="72" y="138" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="${LABEL_DIM}">RESET IN ${esc(formatResetTime(reset))}</text>` : ''),
+  );
 }
 
 function esc(s: string): string {
@@ -120,6 +139,19 @@ function svgWrap(inner: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`;
 }
 
+/** Canonical right-open crescent used by Luna state views. */
+function lunaMark(cx: number, cy: number, radius: number, moon: string, bg: string): string {
+  return `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="${moon}"/>` +
+    // The reference mark is a waning crescent: the shadow disk is shifted
+    // upper-left, leaving the lit mass on the lower-right.
+    `<circle cx="${cx - Math.round(radius * 0.42)}" cy="${cy - Math.round(radius * 0.20)}" r="${radius}" fill="${bg}"/>`;
+}
+
+function lunaGaugeHeader(): string {
+  return `<text x="12" y="17" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${HEADLINE}">CODEX</text>` +
+    brandLogo('codex', 126, 13, 14, false);
+}
+
 function clampPct(p: number): number {
   // Guard NaN/Infinity (an undocumented scoped percent could be non-finite) so a
   // gauge never renders "NaN%"; finite values are unchanged.
@@ -127,6 +159,7 @@ function clampPct(p: number): number {
 }
 
 export function renderUsageGauge(data: UsageGaugeData): string {
+  if (data.luna) return renderLunaReserveGauge(data.luna);
   const known = data.known !== false;
   const agent = data.agent === 'codex' ? 'codex' : 'claude';
   const label = data.label || data.window.toUpperCase();
@@ -247,6 +280,24 @@ export interface UsageEncoderData {
   note?: string;
   /** Companion readout for the single-window 'both' view (see the interface). */
   sideCard?: UsageEncoderSideCard;
+  luna?: CodexLunaReserve;
+}
+
+/** Luna reserve view for the Stream Deck+ Codex encoder LCD. */
+function renderLunaReserveEncoder(reserve: CodexLunaReserve): string {
+  const remaining = Math.round(Math.max(0, Math.min(100, 100 - reserve.usedPercent)));
+  const active = reserve.available !== false && remaining > 0;
+  const bg = UI.popupBgDeep;
+  const moon = active ? UI.attn : LABEL_DIM;
+  const reset = reserve.regularResetsAt ?? reserve.resetsAt;
+  return encSvgWrap(
+    `<rect width="${ENC_W}" height="${ENC_H}" fill="${bg}"/>` +
+    encHeader({ agent: 'codex', title: 'CODEX' } as UsageEncoderData, false) +
+    lunaMark(34, 56, 27, moon, bg) +
+    `<text x="72" y="40" font-family="JetBrains Mono, monospace" font-size="13" font-weight="bold" fill="${active ? Tide.s50 : LABEL_DIM}">LUNA RESERVE</text>` +
+    `<text x="72" y="69" font-family="Arial,sans-serif" font-size="25" font-weight="bold" fill="${active ? HEADLINE : LABEL_DIM}">${active ? `${remaining}% LEFT` : 'EMPTY'}</text>` +
+    (reset ? `<text x="72" y="88" font-family="JetBrains Mono, monospace" font-size="11" fill="${LABEL_DIM}">RESET IN ${esc(formatResetTime(reset))}</text>` : ''),
+  );
 }
 
 function encSvgWrap(inner: string): string {
@@ -396,6 +447,7 @@ function encSideCard(x: number, y: number, w: number, h: number, card: UsageEnco
  * therefore carries only what no gauge can: the subscription behind the quota.
  */
 export function renderUsageEncoderBoth(data: UsageEncoderData): string {
+  if (data.luna) return renderLunaReserveEncoder(data.luna);
   if (data.note != null) return encNote(data);
   const y = 18, h = 80;
   const live = [data.fiveHour, data.sevenDay].filter((t) => t.known);
@@ -420,6 +472,7 @@ export function renderUsageEncoderBoth(data: UsageEncoderData): string {
 
 /** '5h' / '7d' view: one big full-bleed level-fill across the LCD. */
 export function renderUsageEncoderSingle(data: UsageEncoderData, window: '5h' | '7d'): string {
+  if (data.luna) return renderLunaReserveEncoder(data.luna);
   if (data.note != null) return encNote(data);
   const tank = window === '5h' ? data.fiveHour : data.sevenDay;
   return encSvgWrap(

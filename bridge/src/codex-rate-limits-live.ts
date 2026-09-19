@@ -83,6 +83,22 @@ interface RawLiveRateLimits {
   /** Set only on a limit scoped to one model/feature — see `isModelScopedCodexLimit`. */
   limitName?: string | null;
   credits?: RawLiveCredits | null;
+  additionalRateLimits?: RawLiveAdditionalLimit[] | null;
+}
+
+interface RawLiveAdditionalLimit {
+  meteredFeature?: string;
+  limitName?: string | null;
+  rateLimit?: RawLiveRateLimits | null;
+}
+
+function isLunaAdditionalLimit(limit: RawLiveAdditionalLimit): boolean {
+  return `${limit.meteredFeature ?? ''} ${limit.limitName ?? ''}`.toLowerCase().includes('luna');
+}
+
+function isLunaRateLimitBlock(id: string, limit: RawLiveRateLimits): boolean {
+  return `${id} ${limit.limitName ?? ''}`.toLowerCase().includes('reserve')
+    || id.toLowerCase() === 'base_model_inference';
 }
 
 function toWindow(raw?: RawLiveWindow | null): CodexRateLimitWindow | undefined {
@@ -138,6 +154,11 @@ export function parseLiveCodexRateLimits(result: unknown, capturedAt: string): C
   const primary = toWindow(rl.primary);
   const secondary = toWindow(rl.secondary);
   const credits = toCredits(rl.credits);
+  const luna = (rl.additionalRateLimits ?? []).find(isLunaAdditionalLimit)?.rateLimit
+    ?? Object.entries(res?.rateLimitsByLimitId ?? {})
+      .find(([id, limit]) => isLunaRateLimitBlock(id, limit))?.[1];
+  const lunaPrimary = toWindow(luna?.primary);
+  const lunaSecondary = toWindow(luna?.secondary);
   // The map key rides out with the block. Without it a value that carries no
   // `limitId` produces a snapshot with none, and `codexSnapshotsShareLimitFamily`
   // then short-circuits on the missing id and answers "same family" for every
@@ -151,6 +172,14 @@ export function parseLiveCodexRateLimits(result: unknown, capturedAt: string): C
     planType: typeof rl.planType === 'string' ? rl.planType : undefined,
     limitId,
     credits,
+    lunaReserve: lunaPrimary || lunaSecondary
+      ? {
+          usedPercent: (lunaPrimary ?? lunaSecondary)!.usedPercent,
+          resetsAt: (lunaPrimary ?? lunaSecondary)!.resetsAt,
+          regularResetsAt: [primary, secondary].find((w) => w?.resetsAt)?.resetsAt,
+          available: (lunaPrimary ?? lunaSecondary)!.usedPercent < 100,
+        }
+      : undefined,
     capturedAt,
   };
 }
@@ -638,6 +667,10 @@ export function pickBestCodexRateLimits(
   nowMs: number = Date.now(),
   opts: { liveOwnsFamilyAuthority?: boolean } = {},
 ): CodexRateLimits | null {
+  const keepLuna = (chosen: CodexRateLimits, other: CodexRateLimits): CodexRateLimits =>
+    chosen.lunaReserve || !other.lunaReserve
+      ? chosen
+      : { ...chosen, lunaReserve: other.lunaReserve };
   if (!live) return passive;
   if (!passive) return live;
   const livePlanMatches = codexSnapshotMatchesAccountPlan(live.planType, accountPlan);
@@ -654,15 +687,23 @@ export function pickBestCodexRateLimits(
   // relayed rollout is seconds old — and the result is every slot-based Codex
   // surface going empty.
   if (hasRenderableContent(passive) !== hasRenderableContent(live)) {
-    return hasRenderableContent(passive) ? passive : live;
+    return hasRenderableContent(passive)
+      ? keepLuna(passive, live)
+      : keepLuna(live, passive);
   }
-  return codexSnapshotOutranks(
+  const chosen = codexSnapshotOutranks(
     { planType: live.planType, capturedAtMs: capturedAtMs(live) },
     { planType: passive.planType, capturedAtMs: capturedAtMs(passive) },
     accountPlan,
   )
     ? live
     : passive;
+  // The passive rollout is normally newer and wins the account-window race,
+  // but it cannot carry additional pools. Preserve Luna metadata from the live
+  // account read — both snapshots describe the same account, so no family
+  // gate is needed here; a plan-mismatched snapshot (its own Luna included)
+  // is voided later by normalizeCodexRateLimits.
+  return keepLuna(chosen, chosen === live ? passive : live);
 }
 
 /** Throttle policy, kept pure so the cadence is testable without spawning. */

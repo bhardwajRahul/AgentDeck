@@ -2,7 +2,7 @@
  * Usage data types and shared formatting helpers.
  * Used by the dedicated Usage Dial (E3) renderer.
  */
-import type { CodexRateLimits, ScopedUsageLimit } from '@agentdeck/shared';
+import type { CodexLunaReserve, CodexRateLimits, ScopedUsageLimit } from '@agentdeck/shared';
 // Codex freshness footnote (SSOT `shared/format-utils`): "stale" for an ended
 // window, "3h ago" for a still-live window whose snapshot has gone cold.
 import { codexUsageFootnote, isCodexFreePlan } from '@agentdeck/shared';
@@ -237,6 +237,7 @@ export function buildCodexUsageEncoder(data: UsageModeData, hasReceivedData: boo
     sevenDay: { label: '7D', usedPercent: secondary?.usedPercent ?? 0, resetsAt: secondary?.resetsAt, known: secondary != null, stale: secondary?.stale === true, footnote: codexUsageFootnote(secondary, cx?.capturedAt)?.text },
     note,
     sideCard: solo ? buildCodexSideCard(data, cx, solo) : undefined,
+    luna: cx?.lunaReserve,
   };
 }
 
