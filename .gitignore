@@ -16,6 +16,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# workmux task worktrees (CLAUDE.md § Worktree auto cleanup)
+__worktrees/
+
 # Xcode user-specific state (window/editor state, breakpoints, schemes)
 **/xcuserdata/
 *.xcuserstate
