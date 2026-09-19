@@ -3,9 +3,13 @@
 Working measurement for [#273](https://github.com/puritysb/AgentDeck/issues/273), gates
 **Custom launch arguments** and **Terminal-only gaps**. Measured against `3f7dc473`.
 
-The other two gates (remote attach, session ordering) are not covered here. Both name a
-real-topology or real-user validation as their completion condition, so neither can be
-closed from a source reading.
+The other two gates are not fully covered here. Remote attach names a
+real-topology validation as its completion condition, so it cannot be closed
+from a source reading. Session ordering now has a daemon-first implementation
+(Node daemon `session-order.json` pins, `agentdeck order` CLI — see
+[daemon.md](daemon.md#observed-session-order-pins-273));
+its remaining open condition is the real-user tab-to-deck scenario, not a
+missing mechanism.
 
 Every row below is either **measured** (a cited source line) or **open** (named as
 unmeasured). Nothing here decides a replacement design; it establishes what a replacement

@@ -59,6 +59,9 @@ import {
   notePermissionPromptShown, noteToolEnd, steeringSnapshot,
 } from './observed-steering.js';
 import { resolveSessionIdPrefix } from './session-id-resolve.js';
+import {
+  SessionOrderStore, resolveSessionOrderTarget, parseSessionOrderWeight,
+} from './session-order-store.js';
 import { injectObservedSelection, injectObservedText } from './observed-inject.js';
 import {
   setSerialCommandSink, setSerialVoiceSink, setSerialQuiesceCheck, sendSerialJson,
@@ -1644,6 +1647,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   // the rest of startup finishes. A later `const` would leave that window
   // throwing on the temporal dead zone.
   const passiveSessionObserver = new PassiveSessionObserver();
+  // Daemon-persisted sort pins for observed sessions (#273 session-ordering
+  // gate — the daemon-first replacement for launch-time `--weight`). Declared
+  // before the HTTP server for the same TDZ reason as the observer: the
+  // /sessions/order route and the sessions enricher both close over it.
+  const sessionOrder = new SessionOrderStore().load();
+  /** Observed-session ids from the last enricher pass — the id set the deck
+   *  actually rendered, kept so the /sessions/order route can resolve a
+   *  user-supplied prefix/uuid against exactly what sessions_list shows. */
+  let lastObservedRosterIds: string[] = [];
   /** Produces live timeline rows for observed Kiro sessions — see the class
    *  doc for why Kiro needs a producer when hook agents do not. */
   const kiroTimelineFeed = new KiroTimelineFeed();
@@ -2141,6 +2153,70 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         clients: core.wsServer.getClientCount(),
         modules: moduleHealthProvider(),
       }));
+      return;
+    }
+
+    // Daemon-persisted sort pins for observed sessions (#273 session-ordering
+    // gate). GET lists every pin; POST { sessionId, weight } sets one and POST
+    // { sessionId, clear: true } (or weight 0/null) removes it. Authenticated
+    // by the LAN gate above like every other route — the CLI (`agentdeck
+    // order …`) is the intended same-machine client, a remote peer needs the
+    // pairing token. `sessionId` accepts the exact sessions_list id, a device
+    // truncated echo, or the bare uuid; a prefix must match exactly one live
+    // observed session. After a mutation the sessions list is rebroadcast so
+    // every surface re-sorts within one frame.
+    if (pathname === '/sessions/order' && (req.method === 'GET' || req.method === 'POST')) {
+      void (async () => {
+        try {
+          if (req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+            res.end(JSON.stringify({ pins: sessionOrder.list() }));
+            return;
+          }
+          const body = await readJsonBody(req, 4096);
+          const rawId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+          if (!rawId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'sessionId required' }));
+            return;
+          }
+          const wantsClear = body.clear === true || body.weight === null || body.weight === 0;
+          let weight: number | undefined;
+          if (!wantsClear) {
+            weight = parseSessionOrderWeight(body.weight);
+            if (weight === undefined) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                error: 'weight must be an integer between -9999 and 9999 (or clear it with weight 0)',
+              }));
+              return;
+            }
+          }
+          const target = resolveSessionOrderTarget(rawId, lastObservedRosterIds);
+          if (target.status === 'ambiguous') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              error: `session id prefix is ambiguous — it matches ${target.candidates.length} live sessions`,
+              matches: target.candidates,
+            }));
+            return;
+          }
+          if (wantsClear) {
+            const had = sessionOrder.clear(target.id);
+            core.maybeBroadcastSessionsList();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ cleared: true, hadPin: had, sessionId: target.id }));
+            return;
+          }
+          const applied = sessionOrder.set(target.id, weight ?? 0);
+          core.maybeBroadcastSessionsList();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sessionId: target.id, weight: applied }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `bad body: ${String(err)}` }));
+        }
+      })();
       return;
     }
     if (req.method === 'GET' && pathname === '/devices') {
@@ -4891,10 +4967,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     const subagentCensus = subagentTimeline?.summaries() ?? new Map();
     const coordinationCensus = coordination.summaries();
     const enrichedSessions = [...sessions, ...observed, ...remote].map((s) => {
+      // Daemon-persisted sort pin (#273): observed rows without their own
+      // weight pick up the stored pin here, one pass before fold+sort, so a
+      // pinned observed session lands in its slot on every surface and two
+      // same-project Codex pins never fold together (the fold key carries the
+      // weight band). Managed/remote rows keep their launch-time --weight.
+      const withOrder = sessionOrder.applyTo(s);
       // On-demand review badge (REVIEW tile verdict / REVIEWING state) —
       // applies to every session type, managed included.
-      const review = reviewSnapshot(s.id);
-      const withReview = Object.keys(review).length > 0 ? { ...s, ...review } : s;
+      const review = reviewSnapshot(withOrder.id);
+      const withReview = Object.keys(review).length > 0 ? { ...withOrder, ...review } : withOrder;
       // Emitted whenever this session has EVER had a child, zeros included: a
       // field that disappears when the last child exits latches "8 running" on
       // every client that merges retain-on-absent.
@@ -4907,6 +4989,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       const sec = Math.round((now - Date.parse(withCensus.startedAt)) / 1000);
       return Number.isFinite(sec) && sec >= 0 ? { ...withCensus, elapsedSec: sec } : withCensus;
     });
+    // Feed the pin store's liveness tracking (lastSeenAt → TTL GC) and the
+    // /sessions/order prefix resolver with the observed ids this pass produced.
+    lastObservedRosterIds = observed.map((s) => s.id);
+    sessionOrder.noteSeen(lastObservedRosterIds);
     // SSOT: inject iff Gateway is authenticated (gatewayConnected). Reachability
     // / adapter-liveness alone must not materialize a session — that kept a
     // phantom OpenClaw alive on devices after it was effectively off. Shared
@@ -7106,6 +7192,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     // Flush synchronously — the process exits a few lines below and a pending
     // debounce timer would take the last turn's entries with it.
     core.bridgeTimeline.stopPersistence();
+    // Same for any pending lastSeenAt write in the session-order pin store.
+    sessionOrder.flush();
     // iDotMatrix BLE sync is stopped by IDotMatrixModule.stop() via stopModules below.
     await Promise.all([
       gatewayAdapter ? gatewayAdapter.shutdown().catch(() => {}) : Promise.resolve(),

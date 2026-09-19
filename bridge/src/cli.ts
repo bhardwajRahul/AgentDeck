@@ -87,7 +87,7 @@ export function managedPtyCompatibilityNotice(command: LegacySessionCommand): st
   return [
     `[agentdeck] LEGACY COMPATIBILITY MODE: \`agentdeck ${command}\` uses the managed per-session bridge; daemon-first launch is the recommended default.`,
     `[agentdeck] For ordinary local sessions, run \`agentdeck daemon install\`, then ${directLaunch}.`,
-    '[agentdeck] --remote-daemon, --weight, AGENTDECK_<AGENT>_ARGS, and terminal-only controls do not yet have daemon-first equivalents. No removal date is set. Design: https://github.com/puritysb/AgentDeck/discussions/278 Tracking: https://github.com/puritysb/AgentDeck/issues/273',
+    '[agentdeck] --remote-daemon, AGENTDECK_<AGENT>_ARGS, and terminal-only controls do not yet have daemon-first equivalents; for session ordering use `agentdeck order` on the observed session. No removal date is set. Design: https://github.com/puritysb/AgentDeck/discussions/278 Tracking: https://github.com/puritysb/AgentDeck/issues/273',
   ];
 }
 
@@ -3276,6 +3276,109 @@ task
   .option('-s, --session <id>', 'Target session id (defaults to active OpenClaw session)')
   .action(async (opts: { session?: string }) => {
     await postTaskClose({ signal: 'manual', outcome: 'abandoned', sessionId: opts.session });
+  });
+
+// ===== Daemon-persisted observed session order (#273 session-ordering gate) =====
+
+const order = program.command('order')
+  .description('Pin observed session order on the daemon (deck/tab sort; the daemon-first successor of managed `--weight`)');
+
+async function postSessionOrder(body: Record<string, unknown>, portOpt?: string): Promise<Record<string, any> | null> {
+  const { readDaemonInfo, findDaemonPort } = await import('./session-registry.js');
+  const info = readDaemonInfo();
+  const port = portOpt != null
+    ? parseInt(portOpt, 10)
+    : (info?.httpPort ?? info?.port ?? findDaemonPort());
+  if (!port) {
+    log('Daemon not running. Start it with `agentdeck daemon start`.');
+    process.exit(1);
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/sessions/order`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.status === 404) {
+      log(`The daemon on port ${port} does not support session-order pins (the in-process Swift daemon does not read them). Run 'agentdeck daemon start' to take the port with the Node daemon.`);
+      process.exit(1);
+    }
+    const json = await res.json().catch(() => ({})) as Record<string, any>;
+    if (!res.ok) {
+      const matches = Array.isArray(json.matches) ? `\n  matches: ${json.matches.join('\n          ')}` : '';
+      log(`Failed (${res.status}): ${json.error ?? JSON.stringify(json)}${matches}`);
+      process.exit(1);
+    }
+    return json;
+  } catch (err) {
+    log(`Request failed: ${String(err)}`);
+    process.exit(1);
+  }
+}
+
+order
+  .command('set')
+  .description('Pin an observed session to a deck/tab sort slot (weight 0 clears the pin)')
+  .argument('<sessionId>', 'Observed session id — exact sessions_list id, unique prefix, or bare uuid')
+  .argument('<weight>', 'Integer -9999..9999; lower sorts first', parseWeight)
+  .option('-p, --port <port>', 'Daemon port')
+  .action(async (sessionId: string, weight: number, opts: { port?: string }) => {
+    const json = await postSessionOrder({ sessionId, weight }, opts.port);
+    if (!json) return;
+    if (json.weight === undefined) {
+      log(`Cleared order pin for ${json.sessionId}.`);
+    } else {
+      log(`Pinned ${json.sessionId} to weight ${json.weight} — every surface re-sorts on the next sessions_list.`);
+    }
+  });
+
+order
+  .command('clear')
+  .description('Remove an observed session order pin')
+  .argument('<sessionId>', 'Observed session id — exact sessions_list id, unique prefix, or bare uuid')
+  .option('-p, --port <port>', 'Daemon port')
+  .action(async (sessionId: string, opts: { port?: string }) => {
+    const json = await postSessionOrder({ sessionId, clear: true }, opts.port);
+    if (!json) return;
+    log(json.hadPin ? `Cleared order pin for ${json.sessionId}.` : `No pin was set for ${json.sessionId}.`);
+  });
+
+order
+  .command('list')
+  .description('List stored observed-session order pins')
+  .option('-p, --port <port>', 'Daemon port')
+  .action(async (opts: { port?: string }) => {
+    const { readDaemonInfo, findDaemonPort } = await import('./session-registry.js');
+    const info = readDaemonInfo();
+    const port = opts.port != null
+      ? parseInt(opts.port, 10)
+      : (info?.httpPort ?? info?.port ?? findDaemonPort());
+    if (!port) {
+      log('Daemon not running. Start it with `agentdeck daemon start`.');
+      process.exit(1);
+    }
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/sessions/order`, { signal: AbortSignal.timeout(5000) });
+      if (res.status === 404) {
+        log(`The daemon on port ${port} does not support session-order pins (the in-process Swift daemon does not read them). Run 'agentdeck daemon start' to take the port with the Node daemon.`);
+        process.exit(1);
+      }
+      const json = await res.json().catch(() => ({})) as { pins?: Array<{ id: string; weight: number; lastSeenAt: number }> };
+      const pins = json.pins ?? [];
+      if (pins.length === 0) {
+        log('No session order pins stored.');
+        return;
+      }
+      log('Stored order pins (lower weight sorts first):');
+      for (const pin of pins) {
+        const seenMin = Math.max(1, Math.round((Date.now() - pin.lastSeenAt) / 60_000));
+        log(`  ${String(pin.weight).padStart(5)}  ${pin.id}  (seen ${seenMin}m ago)`);
+      }
+    } catch (err) {
+      log(`Request failed: ${String(err)}`);
+      process.exit(1);
+    }
   });
 
 // ===== Optional Python BLE runtime =====
