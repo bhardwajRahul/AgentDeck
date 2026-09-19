@@ -218,6 +218,29 @@ function getAgentdeckBin(): string {
 }
 
 /**
+ * A worktree checkout (`__worktrees/<name>`, the workmux collaboration
+ * surfaces) is temporary: merging one removes its directory while everything
+ * installed from it — the Stream Deck plugin symlink, the global CLI link, an
+ * autostart unit — keeps pointing at the removed files. Observed 2026-09-19:
+ * the luna-reserve worktree was pruned after merge and every Stream Deck
+ * status key went dark because the plugin symlink still pointed into it.
+ *
+ * Splits on both separators so a Windows path is classified on any platform.
+ */
+export function isWorktreeCheckoutPath(path: string): boolean {
+  return path.split(/[\\/]/).includes('__worktrees');
+}
+
+/** realpath of `p`, or the literal path when resolution fails. */
+function realPathOrLiteral(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
  * Extra `daemon start` argv the autostart unit must carry.
  *
  * A posture that only applies when typed by hand is not a posture: an
@@ -2054,6 +2077,22 @@ daemon
     }
     if (postureArgs.length > 0) {
       log(`Autostart posture: ${postureArgs.join(' ')} (baked into the autostart unit's arguments).`);
+    }
+    // The autostart unit outlives the checkout it was installed from, so it
+    // must not be baked with a worktree path: `daemon install` from inside
+    // `__worktrees/<name>` writes a unit that launches deleted files the
+    // moment the worktree is merged and removed (see
+    // isWorktreeCheckoutPath). Both spellings matter — the plist/task
+    // ExecStart bakes `which agentdeck`, while the systemd unit resolves
+    // cli.js next to this module.
+    const unitTargets = [getAgentdeckBin(), fileURLToPath(import.meta.url)];
+    const worktreeTarget = unitTargets.find((t) => isWorktreeCheckoutPath(realPathOrLiteral(t)));
+    if (worktreeTarget) {
+      log('Refusing to install the daemon autostart unit from a worktree checkout:');
+      log(`  ${realPathOrLiteral(worktreeTarget)}`);
+      log('Worktrees are removed after merge, and the unit would then launch deleted files.');
+      log('Run this from the main checkout, or install via: npx @agentdeck/setup');
+      process.exit(1);
     }
     if (process.platform === 'win32') {
       try {

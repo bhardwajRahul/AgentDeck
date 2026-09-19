@@ -11,6 +11,7 @@ import {
   resolveAgentCommand,
   daemonPostureArgs,
   buildPlist,
+  isWorktreeCheckoutPath,
   waitForRestartedDaemon,
   managedPtyCompatibilityNotice,
 } from '../cli.js';
@@ -423,6 +424,31 @@ describe('daemon autostart posture', () => {
   it('a plain LaunchAgent is byte-identical to the pre-posture one', () => {
     expect(buildPlist()).toBe(buildPlist([]));
     expect(buildPlist()).not.toContain('--loopback');
+  });
+});
+
+describe('worktree checkout guard (autostart/plugin installs)', () => {
+  // 2026-09-19 incident: `streamdeck link` + CLI link + daemon install ran from
+  // the luna-reserve worktree; merging it removed the directory and the plugin
+  // symlink dangled, silently killing every Stream Deck status key.
+  it('classifies a worktree path by path segment', () => {
+    expect(
+      isWorktreeCheckoutPath('/Users/x/github/AgentDeck/__worktrees/luna-reserve/bridge/dist/cli.js'),
+    ).toBe(true);
+  });
+
+  it('accepts the main checkout and npm-global install paths', () => {
+    expect(isWorktreeCheckoutPath('/Users/x/github/AgentDeck/bridge/dist/cli.js')).toBe(false);
+    expect(isWorktreeCheckoutPath('/opt/homebrew/bin/agentdeck')).toBe(false);
+  });
+
+  it('matches only the whole path segment, not a substring of another name', () => {
+    expect(isWorktreeCheckoutPath('/Users/x/__worktrees_archive/bridge/dist/cli.js')).toBe(false);
+  });
+
+  it('classifies Windows-style paths on any platform', () => {
+    expect(isWorktreeCheckoutPath('C:\\repo\\AgentDeck\\__worktrees\\task-1\\bridge\\dist\\cli.js')).toBe(true);
+    expect(isWorktreeCheckoutPath('C:\\Users\\x\\AppData\\Roaming\\npm\\agentdeck')).toBe(false);
   });
 });
 
