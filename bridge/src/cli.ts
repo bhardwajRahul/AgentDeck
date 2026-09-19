@@ -2721,7 +2721,8 @@ esp32Cmd
 
 async function runEsp32Flash(target: string, opts: Record<string, any>): Promise<void> {
     const {
-      resolveFlashBoard, resolveFirmware, flashBoard, scanPortHolders, classifyHolders,
+      resolveFlashBoard, resolveFirmware, flashBoard, scanPortHolders, classifyHolders, scanTcpListener,
+      sweepAndSuspendDaemons,
       readDeviceIdentity, SERIAL_PROBE_UNAVAILABLE,
     } = await import('./esp32-flash.js');
     const { listCandidatePorts, loadSerialPort } = await import('./esp32-flash-transport.js');
@@ -2823,41 +2824,43 @@ async function runEsp32Flash(target: string, opts: Record<string, any>): Promise
     // A generous lease: a 16MB erase plus a 2MB write at 115200 is minutes, and
     // the lease expiring mid-write would hand the port back to the daemon.
     const leaseSeconds = opts.erase ? 900 : 420;
-    let suspended = false;
-    // Three outcomes, not two. A daemon that ANSWERS and refuses is not the same
-    // as no daemon: reporting a 401 as "nothing to suspend" would send the user
-    // into a flash with the daemon still holding the port, having just told them
-    // it was not.
-    const callDaemon = async (path: string, body: unknown): Promise<'ok' | 'absent' | string> => {
+
+    // Suspend EVERY AgentDeck daemon in the port window via the shared sweep —
+    // policy and the #327 truth table live in esp32-flash.ts (unit-pinned
+    // there): silence from an AgentDeck listener refuses the flash, a session
+    // bridge's 404 does not.
+    const callDaemonOn = async (
+      port: number, path: string, body: unknown,
+    ): Promise<{ ok: boolean; statusCode: number | null; errCode: string | null }> => {
       try {
         const { statusCode } = await postJsonWithTimeout<Record<string, unknown>>(
-          `http://127.0.0.1:${resolvedDaemonPort}${path}`, body, 10_000,
+          `http://127.0.0.1:${port}${path}`, body, 10_000,
         );
-        if (statusCode >= 200 && statusCode < 300) return 'ok';
-        return `daemon on :${resolvedDaemonPort} answered HTTP ${statusCode}`;
-      } catch {
-        return 'absent'; // nothing listening — the easy case, not an error
+        return { ok: statusCode >= 200 && statusCode < 300, statusCode, errCode: null };
+      } catch (err) {
+        return { ok: false, statusCode: null, errCode: (err as { code?: string }).code ?? null };
       }
     };
 
+    const sweepPorts = [...new Set<number>([
+      resolvedDaemonPort,
+      ...Array.from({ length: 20 }, (_, i) => 9120 + i),
+    ])];
+
+    let suspendedPorts: number[] = [];
     if (opts.suspend !== false) {
-      const result = await callDaemon('/esp32/serial/suspend', {
-        seconds: leaseSeconds, reason: 'agentdeck esp32 flash', pid: process.pid, board: board.id,
+      const { probeDaemonHealth } = await import('./session-registry.js');
+      const sweep = await sweepAndSuspendDaemons(sweepPorts, leaseSeconds, {
+        postSuspend: (port) => callDaemonOn(port, '/esp32/serial/suspend', {
+          seconds: leaseSeconds, reason: 'agentdeck esp32 flash', pid: process.pid, board: board.id,
+        }),
+        probeDaemonHealth,
+        scanTcpListener,
       });
-      suspended = result === 'ok';
-      if (suspended) {
-        log(`Daemon serial suspended for ${leaseSeconds}s (survives a daemon respawn).`);
-      } else if (result === 'absent') {
-        log('No daemon is listening — nothing to suspend.');
-      } else {
-        // It is there and said no. Refusing here beats flashing against a
-        // daemon that is still holding the port.
-        throw new Error(
-          `${result}. Refusing to flash while a daemon that will not stand down holds the port.\n`
-          + '  Stop it with `agentdeck daemon stop`, or pass --no-suspend if you have freed the port yourself.',
-        );
-      }
-      if (ours.length > 0 && !suspended) {
+      suspendedPorts = sweep.suspendedPorts;
+      for (const notice of sweep.notices) log(notice);
+      if (sweep.refuse) throw new Error(sweep.refuse);
+      if (ours.length > 0 && suspendedPorts.length === 0) {
         log(`WARNING: ${portPath} is held by ${ours.map((h) => `${h.command}(${h.pid})`).join(', ')}`
           + ' and no daemon answered the suspend call. If this is the macOS app, quit it.');
       }
@@ -2918,12 +2921,19 @@ async function runEsp32Flash(target: string, opts: Record<string, any>): Promise
     } finally {
       // ALWAYS, including on a thrown preflight refusal or a killed write. The
       // lease also expires on its own, so this is the fast path, not the only
-      // one.
-      if (suspended) {
-        const ok = await callDaemon('/esp32/serial/resume', {});
-        log(ok === 'ok'
-          ? 'Daemon serial resumed.'
-          : `Daemon did not resume (${ok}); the lease expires on its own in ≤${leaseSeconds}s.`);
+      // one — and every daemon the sweep suspended gets its resume, not just
+      // the registry's.
+      if (suspendedPorts.length > 0) {
+        const resumed: number[] = [];
+        const failed: number[] = [];
+        for (const port of suspendedPorts) {
+          const r = await callDaemonOn(port, '/esp32/serial/resume', {});
+          (r.ok ? resumed : failed).push(port);
+        }
+        if (resumed.length > 0) log(`Daemon serial resumed on :${resumed.join(', :')}.`);
+        if (failed.length > 0) {
+          log(`Daemon on :${failed.join(', :')} did not resume; the lease expires on its own in ≤${leaseSeconds}s.`);
+        }
       }
     }
 }
