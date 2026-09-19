@@ -217,6 +217,30 @@ final class SessionOrderStoreTests: XCTestCase {
             SessionOrderRules.resolveTarget("observed:claude:zzzz-not-live", knownIds: roster),
             .resolved(id: "zzzz-not-live"))
     }
+
+    func testResolveTargetCrossFormAgainstBareIdRoster() {
+        // Swift's observed rows carry the bare uuid. A prefix copied from the
+        // Node world (`observed:claude:512d…`) must still resolve — before
+        // this it fell through to the truncated uuid and the pin never
+        // applied (found live 2026-09-19).
+        let roster = [
+            "aaaa1111-0000-0000-0000-000000000000",
+            "bbbb2222-0000-0000-0000-000000000000",
+        ]
+        XCTAssertEqual(
+            SessionOrderRules.resolveTarget("observed:claude:aaaa1111-0000-0000-0", knownIds: roster),
+            .resolved(id: roster[0]))
+        XCTAssertEqual(
+            SessionOrderRules.resolveTarget("observed:claude:bbbb2222-0000-0000-0000-000000000000", knownIds: roster),
+            .resolved(id: roster[1]))
+        // Bare-prefix ambiguity across agents is still named.
+        if case .ambiguous(let candidates) = SessionOrderRules.resolveTarget(
+            "aaaa", knownIds: ["observed:claude:aaaa1", "observed:codex:aaaa2"]) {
+            XCTAssertEqual(candidates.count, 2)
+        } else {
+            XCTFail("expected ambiguity")
+        }
+    }
 }
 
 #endif

@@ -95,22 +95,53 @@ export type SessionOrderTarget =
 /**
  * Resolve a user-supplied session reference against the current roster.
  *
- * Accepts the exact `sessions_list` id (`observed:claude:<uuid>`), a device
- * truncated echo (31 chars — `resolveSessionIdPrefix` restores it), or the
- * bare uuid timeline rows carry. An id that matches nothing on the roster is
- * still accepted as-is (pinning a not-currently-live session is legal — the
- * pin just waits for the id to reappear); only genuine prefix ambiguity
- * between live sessions is refused, naming the candidates.
+ * Accepts the exact `sessions_list` id, a device-truncated echo (31 chars —
+ * `resolveSessionIdPrefix` restores it), or the bare uuid timeline rows
+ * carry — and, critically, in EITHER id form against a roster in the other:
+ * the Node daemon addresses observed sessions as `observed:claude:<uuid>`
+ * while the Swift daemon's rows carry the bare `<uuid>`, so a reference
+ * copied from one daemon's world must resolve against the other's roster
+ * (found live 2026-09-19: an `observed:claude:` prefix keyed a pin on the
+ * truncated uuid against Swift's bare roster and never applied). Both the
+ * input and every known id are therefore tried in raw and prefix form. An
+ * id that matches nothing on the roster is still accepted as-is (pinning a
+ * not-currently-live session is legal — the pin just waits for the id to
+ * reappear); only genuine prefix ambiguity between live sessions is refused,
+ * naming the candidates.
  */
 export function resolveSessionOrderTarget(raw: string, knownIds: readonly string[]): SessionOrderTarget {
-  const trimmed = raw.trim();
+  const input = raw.trim();
+  const rawInput = rawSessionId(input);
   const ids = knownIds.filter((id) => typeof id === 'string' && id);
-  if (ids.includes(trimmed)) return { status: 'resolved', id: trimmed };
-  const prefixed = ids.filter((id) => id.startsWith(trimmed));
-  if (prefixed.length === 1) return { status: 'resolved', id: prefixed[0] };
-  if (prefixed.length > 1) return { status: 'ambiguous', candidates: prefixed };
+  const forms = (id: string): string[] => {
+    const stripped = rawSessionId(id);
+    return stripped !== id ? [id, stripped] : [id];
+  };
+  // Exact match in either form on either side.
+  for (const id of ids) {
+    for (const form of forms(id)) {
+      if (form === input || (rawInput && form === rawInput)) return { status: 'resolved', id };
+    }
+  }
+  // Prefix match: the input (or its bare form) as a prefix of a known id
+  // (or its bare form) — the device-truncated echo in both rosters' shapes.
+  let match: string | null = null;
+  const candidates = new Set<string>();
+  const prefixes = rawInput && rawInput !== input ? [input, rawInput] : [input];
+  for (const id of ids) {
+    for (const form of forms(id)) {
+      for (const p of prefixes) {
+        if (p && form.startsWith(p)) {
+          candidates.add(id);
+          match = id;
+        }
+      }
+    }
+  }
+  if (candidates.size === 1) return { status: 'resolved', id: match as string };
+  if (candidates.size > 1) return { status: 'ambiguous', candidates: [...candidates] };
   // Not live: keep the caller's spelling, normalized to the bare key form.
-  return { status: 'resolved', id: rawSessionId(trimmed) };
+  return { status: 'resolved', id: rawSessionId(input) };
 }
 
 /**

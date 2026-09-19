@@ -18,7 +18,7 @@ import {
   resolveSessionOrderTarget,
   parseSessionOrderWeight,
 } from '../session-order-store.js';
-import { foldCodexSessionsForDisplay, sortSessions } from '@agentdeck/shared';
+import { foldCodexSessionsForDisplay, sortSessions, rawSessionId } from '@agentdeck/shared';
 
 const tmpDirs: string[] = [];
 
@@ -202,6 +202,25 @@ describe('resolveSessionOrderTarget', () => {
       .toEqual({ status: 'resolved', id: 'zzzz-not-live' });
     expect(resolveSessionOrderTarget('plain-uuid', roster))
       .toEqual({ status: 'resolved', id: 'plain-uuid' });
+  });
+
+  it('cross-form: an observed-form reference resolves against a BARE-id roster (Swift shape)', () => {
+    // Swift's observed rows carry the bare uuid. A prefix copied from the
+    // Node world (`observed:claude:512d…`) must still resolve — before this
+    // it fell through to the truncated uuid and the pin never applied.
+    const bareRoster = roster.map(rawSessionId);
+    expect(resolveSessionOrderTarget('observed:claude:aaaa1111-0000-0000-0', bareRoster))
+      .toEqual({ status: 'resolved', id: 'aaaa1111-0000-0000-0000-000000000000' });
+    expect(resolveSessionOrderTarget('observed:codex:cccc3333-0000-0000-0000-000000000000', bareRoster))
+      .toEqual({ status: 'resolved', id: 'cccc3333-0000-0000-0000-000000000000' });
+  });
+
+  it('cross-form: a bare reference resolves against an observed-form roster, ambiguity still named', () => {
+    expect(resolveSessionOrderTarget('aaaa1111-0000-0000-0000-000000000000', roster))
+      .toEqual({ status: 'resolved', id: roster[0] });
+    // Bare agent-ambiguous prefix: two observed:claude: rows share it.
+    const result = resolveSessionOrderTarget('aaaa', ['observed:claude:aaaa1', 'observed:codex:aaaa2']);
+    expect(result.status).toBe('ambiguous');
   });
 });
 

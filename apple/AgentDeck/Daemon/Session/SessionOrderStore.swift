@@ -71,16 +71,46 @@ enum SessionOrderRules {
     /// Resolve a user-supplied session reference against the live observed
     /// roster: exact id wins, a prefix must match exactly ONE live id (the
     /// 31-char device echo case), anything else passes through in bare form
-    /// (pinning a not-currently-live id is legal — the pin waits).
-    /// Mirrors `resolveSessionOrderTarget` (Node).
+    /// (pinning a not-currently-live id is legal — the pin waits). Both the
+    /// input and every known id are tried in raw AND bare form: the Node
+    /// daemon addresses observed sessions as `observed:claude:<uuid>` while
+    /// Swift's rows carry the bare `<uuid>`, so a reference copied from one
+    /// daemon's world must resolve against the other's roster (found live
+    /// 2026-09-19: an `observed:claude:` prefix keyed a pin on the truncated
+    /// uuid here and never applied). Mirrors `resolveSessionOrderTarget`.
     static func resolveTarget(_ raw: String, knownIds: [String]) -> SessionOrderTarget {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        let input = raw.trimmingCharacters(in: .whitespaces)
+        let rawInput = ObservedAgentRules.rawSessionId(input)
         let ids = knownIds.filter { !$0.isEmpty }
-        if ids.contains(trimmed) { return .resolved(id: trimmed) }
-        let prefixed = ids.filter { $0.hasPrefix(trimmed) }
-        if prefixed.count == 1 { return .resolved(id: prefixed[0]) }
-        if prefixed.count > 1 { return .ambiguous(candidates: prefixed) }
-        return .resolved(id: ObservedAgentRules.rawSessionId(trimmed))
+
+        func forms(_ id: String) -> [String] {
+            let stripped = ObservedAgentRules.rawSessionId(id)
+            return stripped != id ? [id, stripped] : [id]
+        }
+
+        // Exact match in either form on either side.
+        for id in ids {
+            for form in forms(id) where form == input || (!rawInput.isEmpty && form == rawInput) {
+                return .resolved(id: id)
+            }
+        }
+
+        // Prefix match: the input (or its bare form) as a prefix of a known
+        // id (or its bare form) — the truncated echo in both rosters' shapes.
+        var candidates: Set<String> = []
+        var match: String?
+        let prefixes = !rawInput.isEmpty && rawInput != input ? [input, rawInput] : [input]
+        for id in ids {
+            for form in forms(id) {
+                for p in prefixes where !p.isEmpty && form.hasPrefix(p) {
+                    candidates.insert(id)
+                    match = id
+                }
+            }
+        }
+        if candidates.count == 1, let match { return .resolved(id: match) }
+        if candidates.count > 1 { return .ambiguous(candidates: candidates.sorted()) }
+        return .resolved(id: rawInput)
     }
 }
 
