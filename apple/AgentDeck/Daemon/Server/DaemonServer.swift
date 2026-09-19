@@ -2349,7 +2349,7 @@ final class DaemonServer {
         }
 
         // Serial (ESP32)
-        let serial: SerialModule? = posture.allowsModule("serial") ? SerialModule() : nil
+        let serial: SerialModule? = posture.allowsModule("serial") ? SerialModule(daemonPort: portInt) : nil
         if let serial {
             self.serialModule = serial
             moduleManager.register(serial)
@@ -3346,6 +3346,52 @@ final class DaemonServer {
         await httpServer.post("/stand-down") { [weak self] _ in
             Task { @DaemonActor in self?.onStandDownRequested?() }
             return .json(["status": "standing_down"])
+        }
+
+        // Serial suspend / resume (USB flashing) — Node parity with
+        // daemon-server.ts. The sandboxed Swift daemon cannot read
+        // `~/.agentdeck`'s flash-lease file, so this HTTP pair is the only
+        // channel a flashing CLI has to stop THIS daemon opening or
+        // DTR-resetting boards mid-write (#327: a Swift fallback holding
+        // serial while the Node lease only binds Node is what corrupted two
+        // flashes at load 600–800). The lease lives in memory with expiry
+        // enforced on read, so a CLI killed mid-flash recovers with nothing
+        // running. Same-machine callers pass the normal auth gate.
+        await httpServer.post("/esp32/serial/suspend") { [weak self] request in
+            guard let self else {
+                return .json(["ok": false, "error": "daemon unavailable"], status: 500)
+            }
+            var seconds = 120
+            var reason = "usb flash"
+            if let body = request.body,
+               let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] {
+                if let s = json["seconds"] as? Int { seconds = s }
+                if let r = json["reason"] as? String, !r.isEmpty { reason = r }
+            }
+            let moduleHolder: SerialModule? = await DaemonActor.run { [weak self] in self?.serialModule }
+            guard let serial = moduleHolder else {
+                // No module → no ports to release; answer ok so a caller's
+                // sweep does not treat an inactive serial layer as a refusal.
+                return .json([
+                    "ok": true, "seconds": seconds, "released": 0,
+                    "note": "serial module inactive",
+                ] as [String: Any])
+            }
+            let (until, released) = await serial.suspend(seconds: seconds, reason: reason)
+            return .json([
+                "ok": true,
+                "until": until.timeIntervalSince1970 * 1000,
+                "seconds": seconds,
+                "released": released,
+            ] as [String: Any])
+        }
+        await httpServer.post("/esp32/serial/resume") { [weak self] _ in
+            guard let self else {
+                return .json(["ok": false, "error": "daemon unavailable"], status: 500)
+            }
+            let resumeModule: SerialModule? = await DaemonActor.run { [weak self] in self?.serialModule }
+            let was = await resumeModule?.resume() ?? false
+            return .json(["ok": true, "wasSuspended": was])
         }
 
         // WiFi OTA push to a connected ESP32 board (Node parity:

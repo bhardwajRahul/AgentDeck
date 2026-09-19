@@ -114,6 +114,103 @@ actor ESP32Serial {
     /// a dead module that nobody will ever stop again (each daemon restart cycle
     /// stranded another generation of readers holding the port's FD).
     private var isStopped = false
+
+    // MARK: - Sibling ownership guard (#327)
+    //
+    // The 2026-09-13 incident: the Node daemon went latency-silent under host
+    // load 600–800, the macOS app promoted a fallback daemon on 9121 and opened
+    // the same USB boards — two readers on one TTY steal each other's bytes
+    // instead of failing cleanly, and two flashes corrupted. Two gates below,
+    // re-checked on every 10 s poll cycle so ownership self-heals in both
+    // directions without coordination:
+    //
+    //   1. suspension — the Swift twin of bridge/src/esp32-flash-lease.ts. The
+    //      sandboxed daemon cannot read `~/.agentdeck`, so the lease arrives
+    //      over HTTP (`/esp32/serial/suspend`) and lives in memory. Expiry is
+    //      enforced on read, never by a timer (same rule as the Node lease
+    //      file: a timer on a sleeping laptop fires late and extends the
+    //      suspension past what was promised).
+    //   2. sibling deferral — the LOWEST live daemon port in the window owns
+    //      serial. A fallback daemon (this app on 9121 while a Node daemon
+    //      answers on 9120) keeps its hub but never touches a serial port the
+    //      incumbent may hold, and releases its own if the incumbent returned
+    //      while we held ports. Symmetric on both daemons, no handshake.
+
+    /// In-memory lease: serial stays closed until this instant.
+    private var suspendedUntil: Date?
+    /// This daemon's HTTP port; 0 = unknown → the sibling gate is skipped.
+    private var ownDaemonPort = 0
+
+    enum SerialOwnershipDecision: Equatable {
+        /// Lease active — ports stay closed.
+        case suspended
+        /// A live sibling daemon on a lower port owns serial.
+        case deferToSibling
+        /// Open/poll as usual.
+        case own
+    }
+
+    /// The truth table as a pure function so the policy is unit-testable
+    /// without ports, probes or actors.
+    static func ownershipDecision(
+        ownPort: Int,
+        siblingPort: Int?,
+        suspendedUntil: Date?,
+        now: Date = Date()
+    ) -> SerialOwnershipDecision {
+        if let until = suspendedUntil, now < until { return .suspended }
+        if let siblingPort, ownPort > 0, siblingPort < ownPort { return .deferToSibling }
+        return .own
+    }
+
+    func setOwnDaemonPort(_ port: Int) {
+        ownDaemonPort = port
+    }
+
+    private func currentOwnershipDecision() async -> SerialOwnershipDecision {
+        // Expired-on-read: a stale lease stops being true without anything
+        // running to end it (a CLI killed mid-flash recovers on its own).
+        if let until = suspendedUntil, Date() >= until { suspendedUntil = nil }
+        var siblingPort: Int?
+        if ownDaemonPort > 0 {
+            siblingPort = await SessionRegistry.shared.scanForDaemonPort(excluding: [ownDaemonPort])
+        }
+        return Self.ownershipDecision(
+            ownPort: ownDaemonPort,
+            siblingPort: siblingPort,
+            suspendedUntil: suspendedUntil
+        )
+    }
+
+    /// Suspend serial ownership: close every port NOW and keep them closed
+    /// until `seconds` elapse. Ports this daemon already holds still block a
+    /// flasher, so refusing to OPEN is only half of it (the Node lease
+    /// releases its ports for the same reason). A second suspension never
+    /// shortens a live one.
+    func suspendSerial(seconds: Int, reason: String) -> (until: Date, released: Int) {
+        let clamped = max(1, min(900, seconds))
+        let until = Date().addingTimeInterval(TimeInterval(clamped))
+        let effective = max(suspendedUntil ?? .distantPast, until)
+        suspendedUntil = effective
+        let released = connections.count
+        if released > 0 {
+            DaemonLogger.shared.info("ESP32 serial suspended (\(reason)) — released \(released) port(s) until \(effective)")
+        } else {
+            DaemonLogger.shared.info("ESP32 serial suspended (\(reason)) until \(effective)")
+        }
+        closeAllConnections()
+        return (effective, released)
+    }
+
+    /// Idempotent by contract: resuming when nothing is suspended is a
+    /// success (the CLI calls this from a `finally`).
+    func resumeSerial() -> Bool {
+        let was = suspendedUntil != nil
+        suspendedUntil = nil
+        if was { DaemonLogger.shared.info("ESP32 serial resumed — ownership re-check on next poll") }
+        return was
+    }
+
     private var provisionFingerprintsByPort: [String: String] = [:]
     private let statusShadow = SerialStatusShadow()
     private static let permanentBlockDuration: TimeInterval = 300  // 5 minutes
@@ -488,7 +585,23 @@ actor ESP32Serial {
         return 2
     }
 
-    private func pollForDevices() {
+    private func pollForDevices() async {
+        // Ownership gate (#327) — decided BEFORE any port is touched. When a
+        // sibling daemon on a lower port is alive, or a suspension is in
+        // force, ports we already hold are also released: the incumbent
+        // (lower port) owns the boards, and a lease means a flasher does.
+        switch await currentOwnershipDecision() {
+        case .suspended, .deferToSibling:
+            if !connections.isEmpty || !openingPorts.isEmpty {
+                DaemonLogger.shared.info("ESP32 releasing serial ports — another daemon owns them or a flash lease is active")
+                closeAllConnections()
+            }
+            publishStatusShadow()
+            return
+        case .own:
+            break
+        }
+
         // Prune disconnected. Retire each one explicitly rather than just
         // dropping the struct: the read loop holds the FileHandle strongly for
         // its whole lifetime, so `closeOnDealloc` cannot fire while the loop
