@@ -1715,7 +1715,17 @@ actor OpenClawAdapter {
             ],
             "role": defaultRole,
             "scopes": scopes,
-            "caps": ["tool-events"],
+            // `approvals` is not decorative: since openclaw 2026.9.x the
+            // Gateway delivers `exec.approval.requested`/`resolved` (and the
+            // plugin equivalents) only to connections whose handshake
+            // advertises an approvals cap or a known approval-client id
+            // (canDeliverApprovals). Without it the scopes above grant the
+            // RPCs while the push events go only to the TUI/mobile apps, and
+            // the daemon learns an approval exists solely through the
+            // handshake catch-up — a PERM raised while the link stayed up
+            // never reached any deck (measured 2026-09-19 against openclaw
+            // 2026.9.4; mirrors the Node adapter).
+            "caps": ["tool-events", "approvals"],
         ]
 
         // Pull in a rotated token from the bookmarked openclaw.json (if the
