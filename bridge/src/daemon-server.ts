@@ -2341,10 +2341,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           pid: typeof body.pid === 'number' ? body.pid : undefined,
           board: typeof body.board === 'string' ? body.board : undefined,
         });
-        // Refusing to OPEN is only half of it — a port this daemon already
-        // holds still blocks the flasher, and two readers on one TTY steal
-        // each other's bytes instead of failing cleanly.
-        const released = releaseESP32SerialPorts(`flash lease (${lease.board ?? 'usb flash'})`);
+        // The lease file is the authority and it is already on disk, so the
+        // ack does NOT wait for the release: every poll cycle checks the
+        // lease before opening, so no port can be re-opened in the gap. The
+        // #327 phase-4 run measured a suspend call starved past its whole
+        // 10 s budget under host load ~400 with the ack queued BEHIND the
+        // release work — the flasher timed out, the release landed anyway,
+        // and the ports sat released with nobody tracking a resume. Ack
+        // first, release on the next tick.
+        const released = esp32ConnectionCount();
+        setImmediate(() => {
+          releaseESP32SerialPorts(`flash lease (${lease.board ?? 'usb flash'})`);
+        });
         return { ok: true, until: lease.until, seconds, released };
       })().then((result) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
