@@ -313,6 +313,60 @@ describe('usage tiles — scoped caps and the three-key strip budget', () => {
   });
 });
 
+describe('usage tiles — z.ai provider windows', () => {
+  const zaiRateLimits = {
+    planType: 'max',
+    limitId: 'standard',
+    capturedAt: new Date().toISOString(),
+    primary: { usedPercent: 3, windowMinutes: 300, resetsAt: '2099-01-01T00:00:00Z' },
+    secondary: { usedPercent: 100, windowMinutes: 43200, resetsAt: '2099-01-01T00:00:00Z' },
+  };
+
+  function stripText(extra: Record<string, unknown>): string {
+    const deck = buildSessionDeck(
+      { state: 'IDLE', allSessions: [], zaiRateLimits, ...extra } as any,
+      { mode: 'list', showUsage: true } as any,
+      positions(15),
+    );
+    return [...deck.values()].map((c) => c?.svg ?? '').join('|');
+  }
+
+  it('renders a lone z.ai plan with a text identity and a length-derived 30D label', () => {
+    const text = stripText({});
+    // No upstream z.ai mark ships in design/brand/ — identity is a text tag,
+    // never a redrawn logo.
+    expect(text).toContain('z.ai');
+    // The monthly MCP window labels by its own length, not its slot.
+    expect(text).toContain('>30D<');
+    expect(text).toContain('>3<');
+    expect(text).toContain('>100<');
+  });
+
+  it('compacts all three providers into pair tiles — six windows, nothing dropped', () => {
+    const text = stripText({
+      fiveHourPercent: 32,
+      sevenDayPercent: 64,
+      codexRateLimits: {
+        primary: { usedPercent: 55, windowMinutes: 300 },
+        secondary: { usedPercent: 20, windowMinutes: 10080 },
+      },
+    });
+    // Every provider's readings survive on the three-key strip.
+    expect(text).toContain('>32<');
+    expect(text).toContain('>64<');
+    expect(text).toContain('>55<');
+    expect(text).toContain('>20<');
+    expect(text).toContain('>30D<');
+    expect(text).toContain('>100<');
+  });
+
+  it('emits no z.ai tiles for a windowless (retired or payg) block', () => {
+    const text = stripText({ zaiRateLimits: { limitId: 'payg' } });
+    expect(text).not.toContain('z.ai');
+    expect(text).not.toContain('>30D<');
+  });
+});
+
 describe('VOICE tile — hold-to-talk contract', () => {
   // The capture is started and stopped by the key's own keydown/keyUp in the
   // Ulanzi plugin, NOT by pressing the tile twice. It was a tap toggle until

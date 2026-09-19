@@ -233,6 +233,7 @@ data class BridgeEvent (
     val tokenStatus: TokenStatus? = null,
     val toolCalls: Double? = null,
     val usageStale: Boolean? = null,
+    val zaiRateLimits: ZaiRateLimits? = null,
     val status: BridgeEventStatus? = null,
 
     /**
@@ -1608,3 +1609,37 @@ enum class VoiceAssistantState(val value: String) {
         }
     }
 }
+
+/**
+ * Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's monitor
+ * endpoint with the account's coding-plan key — an active account query like the Claude
+ * OAuth usage read, not a passive local-file snapshot. Same slot grammar as
+ * `CodexRateLimits`: `primary` is the 5-hour credits window, `secondary` the long window
+ * when the plan reports one (weekly credits on the credit schema, or the monthly MCP tool
+ * quota on the standard schema — `limitId` says which quantity the number belongs to, the
+ * same "which limit" axis Codex carries).
+ */
+data class ZaiRateLimits (
+    /**
+     * ISO-8601 instant this reading was fetched. Consumers derive age from it against their own
+     * clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches
+     * regularly, so an aged stamp means the poll is failing, and the reading dims rather than
+     * reading as live.
+     */
+    val capturedAt: String? = null,
+
+    /**
+     * Schema family the windows were read from: "standard" (TOKENS_LIMIT + TIME_LIMIT items) or
+     * "credit" (credit-only schema, lite-tier plans).
+     */
+    @Json(name = "limitId")
+    val limitID: String? = null,
+
+    /**
+     * Plan tier stamped into every snapshot ("lite" | "pro" | "max").
+     */
+    val planType: String? = null,
+
+    val primary: CodexRateLimitWindow? = null,
+    val secondary: CodexRateLimitWindow? = null
+)

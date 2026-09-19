@@ -4479,6 +4479,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         relayed: u,
         ownCodexRateLimits: core.lastBuiltCodexRateLimits,
         ownLiveFamilyAuthorityExpiresAtMs: core.lastBuiltCodexLiveFamilyAuthorityExpiresAtMs,
+        ownZaiRateLimits: core.lastBuiltZaiQuota ?? undefined,
         buildOwnUsage: () => core.buildUsage() as UsageEvent,
       }), ollamaStatus: core.cachedOllamaStatus ?? undefined,
       mlxModels: core.cachedMlxModels ?? [], mlxResidency: core.cachedMlxResidency });
@@ -6842,6 +6843,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   core.startGatewayHealthCheck();
   core.startUsageTick();
   core.startApiUsagePolling(60_000, () => fetchUsageRelayed(port));
+  // z.ai GLM Coding Plan — an independent provider-account poll; no-ops as a
+  // no-op when no key is configured (#348).
+  core.startZaiUsagePolling(60_000);
   core.startSessionsListPolling();
 
   // APME: periodically pick up runs that session bridges closed but couldn't

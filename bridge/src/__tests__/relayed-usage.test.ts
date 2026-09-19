@@ -288,3 +288,34 @@ describe('resolveRelayedUsageEvent — Codex block reconciliation (#253)', () =>
     expect(out.codexRateLimits.primary.usedPercent).toBe(42);
   });
 });
+
+describe('resolveRelayedUsageEvent — z.ai provider block', () => {
+  const zaiBlock = {
+    planType: 'max',
+    capturedAt: '2099-01-01T00:00:00Z',
+    primary: { usedPercent: 3, windowMinutes: 300 },
+  } as import('../types.js').ZaiRateLimits;
+
+  it('re-attaches the daemon\'s remembered z.ai block onto a Claude-bearing relay', () => {
+    const relayed = { type: 'usage_update', fiveHourPercent: 63 };
+    const out = resolveRelayedUsageEvent({
+      relayed,
+      ownCodexRateLimits: null,
+      ownZaiRateLimits: zaiBlock,
+      buildOwnUsage: () => { throw new Error('must not build'); },
+    }) as any;
+    expect(out.zaiRateLimits).toBe(zaiBlock);
+    // The relayed object itself is not mutated.
+    expect('zaiRateLimits' in relayed).toBe(false);
+  });
+
+  it('keeps the identity return when there is no z.ai block to attach', () => {
+    const relayed = { type: 'usage_update', fiveHourPercent: 63, codexRateLimits: stamped('2026-08-23T00:00:00Z') };
+    const out = resolveRelayedUsageEvent({
+      relayed,
+      ownCodexRateLimits: stamped('2026-08-23T00:00:00Z'),
+      buildOwnUsage: () => { throw new Error('must not build'); },
+    });
+    expect(out).toBe(relayed as unknown as UsageEvent);
+  });
+});

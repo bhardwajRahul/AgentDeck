@@ -128,6 +128,7 @@ struct ADBridgeEvent: Codable, Equatable {
     var tokenStatus: ADTokenStatus?
     var toolCalls: Double?
     var usageStale: Bool?
+    var zaiRateLimits: ADZaiRateLimits?
     var status: ADBridgeEventStatus?
     /// Transcribed user speech
     var text: String?
@@ -240,6 +241,7 @@ struct ADBridgeEvent: Codable, Equatable {
         case tokenStatus = "tokenStatus"
         case toolCalls = "toolCalls"
         case usageStale = "usageStale"
+        case zaiRateLimits = "zaiRateLimits"
         case status = "status"
         case text = "text"
         case error = "error"
@@ -366,6 +368,7 @@ extension ADBridgeEvent {
         tokenStatus: ADTokenStatus?? = nil,
         toolCalls: Double?? = nil,
         usageStale: Bool?? = nil,
+        zaiRateLimits: ADZaiRateLimits?? = nil,
         status: ADBridgeEventStatus?? = nil,
         text: String?? = nil,
         error: String?? = nil,
@@ -472,6 +475,7 @@ extension ADBridgeEvent {
             tokenStatus: tokenStatus ?? self.tokenStatus,
             toolCalls: toolCalls ?? self.toolCalls,
             usageStale: usageStale ?? self.usageStale,
+            zaiRateLimits: zaiRateLimits ?? self.zaiRateLimits,
             status: status ?? self.status,
             text: text ?? self.text,
             error: error ?? self.error,
@@ -2946,6 +2950,86 @@ enum ADVoiceAssistantState: String, Codable, Equatable {
     case listening = "listening"
     case processing = "processing"
     case speaking = "speaking"
+}
+
+//
+// Hashable or Equatable:
+// The compiler will not be able to synthesize the implementation of Hashable or Equatable
+// for types that require the use of JSONAny, nor will the implementation of Hashable be
+// synthesized for types that have collections (such as arrays or dictionaries).
+
+/// Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's monitor
+/// endpoint with the account's coding-plan key — an active account query like the Claude
+/// OAuth usage read, not a passive local-file snapshot. Same slot grammar as
+/// `CodexRateLimits`: `primary` is the 5-hour credits window, `secondary` the long window
+/// when the plan reports one (weekly credits on the credit schema, or the monthly MCP tool
+/// quota on the standard schema — `limitId` says which quantity the number belongs to, the
+/// same "which limit" axis Codex carries).
+// MARK: - ADZaiRateLimits
+struct ADZaiRateLimits: Codable, Equatable {
+    /// ISO-8601 instant this reading was fetched. Consumers derive age from it against their own
+    /// clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches
+    /// regularly, so an aged stamp means the poll is failing, and the reading dims rather than
+    /// reading as live.
+    var capturedAt: String?
+    /// Schema family the windows were read from: "standard" (TOKENS_LIMIT + TIME_LIMIT items) or
+    /// "credit" (credit-only schema, lite-tier plans).
+    var limitId: String?
+    /// Plan tier stamped into every snapshot ("lite" | "pro" | "max").
+    var planType: String?
+    var primary: ADCodexRateLimitWindow?
+    var secondary: ADCodexRateLimitWindow?
+
+    enum CodingKeys: String, CodingKey {
+        case capturedAt = "capturedAt"
+        case limitId = "limitId"
+        case planType = "planType"
+        case primary = "primary"
+        case secondary = "secondary"
+    }
+}
+
+// MARK: ADZaiRateLimits convenience initializers and mutators
+
+extension ADZaiRateLimits {
+    init(data: Data) throws {
+        self = try newJSONDecoder().decode(ADZaiRateLimits.self, from: data)
+    }
+
+    init(_ json: String, using encoding: String.Encoding = .utf8) throws {
+        guard let data = json.data(using: encoding) else {
+            throw NSError(domain: "JSONDecoding", code: 0, userInfo: nil)
+        }
+        try self.init(data: data)
+    }
+
+    init(fromURL url: URL) throws {
+        try self.init(data: try Data(contentsOf: url))
+    }
+
+    func with(
+        capturedAt: String?? = nil,
+        limitId: String?? = nil,
+        planType: String?? = nil,
+        primary: ADCodexRateLimitWindow?? = nil,
+        secondary: ADCodexRateLimitWindow?? = nil
+    ) -> ADZaiRateLimits {
+        return ADZaiRateLimits(
+            capturedAt: capturedAt ?? self.capturedAt,
+            limitId: limitId ?? self.limitId,
+            planType: planType ?? self.planType,
+            primary: primary ?? self.primary,
+            secondary: secondary ?? self.secondary
+        )
+    }
+
+    func jsonData() throws -> Data {
+        return try newJSONEncoder().encode(self)
+    }
+
+    func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
+        return String(data: try self.jsonData(), encoding: encoding)
+    }
 }
 
 // MARK: - Helper functions for creating encoders and decoders

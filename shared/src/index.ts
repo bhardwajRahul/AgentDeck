@@ -15,6 +15,7 @@ export * from './timeline.js';
 export * from './subagent-activity.js';
 export * from './esp32-boards.js';
 export * from './model-provider.js';
+export * from './zai-quota.js';
 export * from './timeline-icons.js';
 export * from './timeline-label.js';
 export * from './timeline-task-display.js';

@@ -92,6 +92,11 @@ export function resolveRelayedUsageEvent(input: {
    *  event's clock: without a live reading there is no family authority here,
    *  and the tie falls back to recency. */
   ownLiveFamilyAuthorityExpiresAtMs?: number | null;
+  /** The daemon's remembered z.ai block, re-attached verbatim: session bridges
+   *  never poll the provider account, so a relayed event carrying Claude data
+   *  must not silently drop the provider's gauges for as long as the relay is
+   *  the louder broadcaster. Undefined = the daemon has nothing either. */
+  ownZaiRateLimits?: import('./types.js').ZaiRateLimits | null;
   /** Injectable clock. The family guard's authority decays with a reading's age,
    *  so a test that leaves this to the wall clock changes its answer as the
    *  fixtures age past it. */
@@ -102,6 +107,7 @@ export function resolveRelayedUsageEvent(input: {
     relayed,
     ownCodexRateLimits,
     ownLiveFamilyAuthorityExpiresAtMs = null,
+    ownZaiRateLimits,
     nowMs = Date.now(),
     buildOwnUsage,
   } = input;
@@ -119,7 +125,13 @@ export function resolveRelayedUsageEvent(input: {
   // Identity, not deep-equality: the picker returns one of its two arguments, so
   // an unchanged pick must leave the relayed event object untouched — including
   // an absent `codexRateLimits` key, which under retain-on-absent merging is
-  // "no information" and must not become an explicit `undefined`.
-  if (best === relayedCodex) return relayed as unknown as UsageEvent;
-  return { ...(relayed as unknown as UsageEvent), codexRateLimits: best ?? undefined };
+  // "no information" and must not become an explicit `undefined`. The z.ai
+  // re-attach is the one exception: the relayed event never carries it, and
+  // leaving it absent every relay tick would dim the provider gauges with age
+  // between the daemon's own (less frequent) full builds.
+  if (best === relayedCodex && !ownZaiRateLimits) return relayed as unknown as UsageEvent;
+  const merged: Record<string, unknown> = { ...relayed };
+  if (best !== relayedCodex) merged.codexRateLimits = best ?? undefined;
+  if (ownZaiRateLimits) merged.zaiRateLimits = ownZaiRateLimits;
+  return merged as unknown as UsageEvent;
 }

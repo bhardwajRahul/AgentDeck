@@ -22,6 +22,7 @@ import { buildDisplayStateEvent } from './display-dim.js';
 import { foldCodexSessionsForDisplay, loadMlxSettings, sortSessions } from '@agentdeck/shared';
 import { probeGateway, checkGatewayHealth } from './gateway-probe.js';
 import { fetchUsageFromApi, hasOAuthToken, getTokenStatus, type ApiUsageData, type UsageFetchResult } from './usage-api.js';
+import { fetchZaiQuota, zaiUsageConfigured, type ZaiUsageFetchResult } from './zai-usage.js';
 import { buildEnrichedSessionsList } from './session-aggregator.js';
 import { activityFor } from './session-activity.js';
 import {
@@ -188,6 +189,12 @@ export class BridgeCore {
   // State caches (public for caller access)
   cachedApiUsage: ApiUsageData | null = null;
   lastApiFetchTime = 0;
+
+  /** z.ai GLM Coding Plan quota — an independent provider-account reading
+   *  (never gated on Claude/Codex state). Null until the first fetch, so a
+   *  machine with no key configured omits the wire block entirely. */
+  cachedZaiQuota: import('./types.js').ZaiRateLimits | null = null;
+  lastZaiFetchTime = 0;
   oauthConnected: boolean;
   apiUsageStale = false;
   /** True when cachedApiUsage was synced from relay's already-adjusted values */
@@ -398,7 +405,7 @@ export class BridgeCore {
   }): BridgeEvent {
     const snapshot = opts.snapshot ?? this.stateMachine.getSnapshot();
     const codexAuth = readCodexAuthStatus();
-    const subscriptions = buildSubscriptions(codexAuth, this.cachedApiUsage, snapshot.billingType, this.cachedAntigravityStatus, this.claudeUsageStale);
+    const subscriptions = buildSubscriptions(codexAuth, this.cachedApiUsage, snapshot.billingType, this.cachedAntigravityStatus, this.claudeUsageStale, this.zaiQuotaForWire());
 
     // Compute promptType
     let promptType: 'yes_no' | 'yes_no_always' | 'multi_select' | 'diff_review' | undefined;
@@ -475,6 +482,11 @@ export class BridgeCore {
    */
   lastBuiltCodexRateLimits: CodexRateLimits | null = null;
 
+  /** The z.ai block from this daemon's last built usage event — the relay path
+   *  re-attaches it onto session-bridge events (which never poll the provider
+   *  themselves), the same way `lastBuiltCodexRateLimits` rides the codex half. */
+  lastBuiltZaiQuota: import('./types.js').ZaiRateLimits | null = null;
+
   /**
    * Whether a live `codex app-server` answer stands behind that block's limit
    * FAMILY — not whether the live snapshot itself was published. It is the
@@ -495,6 +507,19 @@ export class BridgeCore {
   private get claudeUsageStale(): boolean {
     return this.apiUsageStale ||
       (this.lastApiFetchTime > 0 && Date.now() - this.lastApiFetchTime > BridgeCore.USAGE_STALE_TTL);
+  }
+
+  /** The z.ai block for the wire, with display retirement applied at read time
+   *  (the Claude-quota rule, scoped to this block: an expired reading hides
+   *  its windows rather than reading as live — the plan/family axes survive so
+   *  surfaces can still name the provider row). Null means "never fetched /
+   *  not configured" and omits the block: no information. */
+  private zaiQuotaForWire(): import('./types.js').ZaiRateLimits | null {
+    if (!this.cachedZaiQuota) return null;
+    if (this.lastZaiFetchTime > 0 && Date.now() - this.lastZaiFetchTime > BridgeCore.USAGE_STALE_TTL) {
+      return { planType: this.cachedZaiQuota.planType, limitId: this.cachedZaiQuota.limitId };
+    }
+    return this.cachedZaiQuota;
   }
 
   /** Build and return a usage event */
@@ -535,10 +560,12 @@ export class BridgeCore {
       // keeps minting exactly such snapshots), and its freshness must not
       // suppress the live query that carries the only usable number.
       codexRateLimits,
+      this.zaiQuotaForWire(),
     );
     event.mlxModels = this.cachedMlxModels ?? [];
     event.mlxResidency = this.cachedMlxResidency;
     this.lastBuiltCodexRateLimits = event.codexRateLimits ?? null;
+    this.lastBuiltZaiQuota = event.zaiRateLimits ?? null;
     // "Is this block backed by a live answer", not "did the live answer win the
     // pick" — when the two agree on family the picker keeps the fresher rollout,
     // which is every build while Codex is working, and reading that as "no live
@@ -618,6 +645,36 @@ export class BridgeCore {
   /** Fetch usage from API and update cache. Returns true on a LIVE reading. */
   async fetchAndUpdateUsage(): Promise<boolean> {
     return this.applyUsageResult(await fetchUsageFromApi());
+  }
+
+  /**
+   * Apply a z.ai quota fetch — the provider-account counterpart of
+   * `applyUsageResult`. `fresh` alone advances the display-validity stamp, so
+   * a failing poll ages into the read-time retirement above instead of
+   * laundering a frozen reading as live. A null `data` (no key configured)
+   * keeps whatever cache exists; the TTL retires it on its own.
+   */
+  applyZaiUsageResult(result: ZaiUsageFetchResult): boolean {
+    if (result.data) {
+      this.cachedZaiQuota = result.data;
+      if (result.fresh) this.lastZaiFetchTime = Date.now();
+    }
+    this.broadcastUsage();
+    return result.fresh;
+  }
+
+  /** Start the z.ai provider-account poll. Daemon-side only — a session bridge
+   *  has no reason to hold a second provider credential. */
+  startZaiUsagePolling(intervalMs = 60_000): void {
+    // One immediate fetch so a freshly started daemon paints the provider row
+    // without waiting a full interval; subsequent ticks share the file cache.
+    if (zaiUsageConfigured()) {
+      fetchZaiQuota().then((r) => this.applyZaiUsageResult(r)).catch(() => {});
+    }
+    this.addInterval(setInterval(() => {
+      if (!this.hasClients() || !zaiUsageConfigured()) return;
+      fetchZaiQuota().then((r) => this.applyZaiUsageResult(r)).catch(() => {});
+    }, intervalMs));
   }
 
   /** Fetch usage if cache is stale or empty (best-effort, no throw) */

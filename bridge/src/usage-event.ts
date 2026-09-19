@@ -6,10 +6,11 @@ import {
   adjustUsagePercent,
   codexSnapshotMatchesAccountPlan,
   formatChatGptPlanName,
+  formatZaiPlanName,
   isCodexWindowStale,
 } from '@agentdeck/shared';
 import type { CodexAuthStatus } from './codex-auth.js';
-import type { AntigravityStatusInfo, BillingType, CodexRateLimits, CodexRateLimitWindow, ModelCatalogEntry, SubscriptionInfo } from './types.js';
+import type { AntigravityStatusInfo, BillingType, CodexRateLimits, CodexRateLimitWindow, ModelCatalogEntry, SubscriptionInfo, ZaiRateLimits } from './types.js';
 
 function formatClaudeSubscription(
   apiUsage?: ApiUsageData | null,
@@ -32,6 +33,7 @@ export function buildSubscriptions(
   billingType?: BillingType,
   antigravityStatus?: AntigravityStatusInfo | null,
   claudeStale = false,
+  zaiQuota?: ZaiRateLimits | null,
 ): SubscriptionInfo[] {
   const items: SubscriptionInfo[] = [];
   const chatgptName = formatChatGptPlanName(codexAuth?.planType);
@@ -45,6 +47,14 @@ export function buildSubscriptions(
   const claude = formatClaudeSubscription(apiUsage, billingType, claudeStale);
   if (claude) {
     items.push(claude);
+  }
+
+  // A subscription row needs live windows — a plan level alone (or a windowless
+  // retirement block) is quota-status metadata, not proof of an active plan.
+  // Same polarity as the Claude row above.
+  if (zaiQuota?.primary || zaiQuota?.secondary) {
+    const plan = formatZaiPlanName(zaiQuota.planType);
+    items.push({ name: plan ? `GLM Coding Plan · ${plan}` : 'GLM Coding Plan' });
   }
 
   if (antigravityStatus?.planName) {
@@ -131,6 +141,22 @@ function normalizeCodexRateLimits(
   return { ...rl, primary: normalizeCodexWindow(shortWindow), secondary: normalizeCodexWindow(longWindow) };
 }
 
+/**
+ * Normalize a z.ai quota block for the wire. The slot assignment itself is the
+ * SSOT's (`zaiQuotaFromLimits`); this applies the same per-window ended-window
+ * treatment Codex windows get — a `resetsAt` slid into the past drops the reset
+ * and flags `stale` — so every consumer shares one staleness grammar across
+ * providers.
+ */
+function normalizeZaiRateLimits(zai?: ZaiRateLimits | null): ZaiRateLimits | undefined {
+  if (!zai) return undefined;
+  return {
+    ...zai,
+    primary: normalizeCodexWindow(zai.primary),
+    secondary: normalizeCodexWindow(zai.secondary),
+  };
+}
+
 function isClaudeSubscriptionModel(modelName?: string | null): boolean {
   const raw = modelName?.trim().toLowerCase();
   if (!raw) return false;
@@ -196,6 +222,7 @@ export function buildUsageEvent(
   preAdjusted?: boolean,
   aggregateSubscriptionQuota?: boolean,
   codexRateLimits?: CodexRateLimits | null,
+  zaiQuota?: ZaiRateLimits | null,
 ): UsageEvent {
   const subscriptionQuotaApplies = !stale && (
     apiUsage?.inferredBillingType === 'subscription'
@@ -270,9 +297,13 @@ export function buildUsageEvent(
     codexSubscriptionActiveUntil: codexAuth?.subscriptionActiveUntil,
     codexLastRefreshAt: codexAuth?.lastRefreshAt,
     codexRateLimits: normalizeCodexRateLimits(codexRateLimits, codexAuth?.planType),
+    // A null/undefined zaiQuota omits the block (no provider configured — no
+    // information); a configured provider ALWAYS gets an object so retirement
+    // rides explicitly, never as an absent key (retain-on-absent rule).
+    zaiRateLimits: normalizeZaiRateLimits(zaiQuota),
     modelCatalog: modelCatalog && modelCatalog.length > 0 ? modelCatalog : undefined,
     mlxModels: mlxModels && mlxModels.length > 0 ? mlxModels : undefined,
-    subscriptions: buildSubscriptions(codexAuth, apiUsage, billingType, antigravityStatus, stale),
+    subscriptions: buildSubscriptions(codexAuth, apiUsage, billingType, antigravityStatus, stale, zaiQuota),
     antigravityStatus: antigravityStatus ?? undefined,
   };
   return event;
