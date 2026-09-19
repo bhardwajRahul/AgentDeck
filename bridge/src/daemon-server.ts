@@ -2180,7 +2180,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
             res.end(JSON.stringify({ error: 'sessionId required' }));
             return;
           }
-          const wantsClear = body.clear === true || body.weight === null || body.weight === 0;
+          // Byte-compatible with the Swift route: any valid zero spelling
+          // (number or numeric string) means "remove the pin" — 0 is the
+          // default sort band, so pinning it is a no-op spelled as a clear.
+          const wantsClear = body.clear === true || body.weight === null
+            || parseSessionOrderWeight(body.weight) === 0;
           let weight: number | undefined;
           if (!wantsClear) {
             weight = parseSessionOrderWeight(body.weight);
