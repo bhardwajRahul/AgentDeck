@@ -2273,12 +2273,27 @@ struct SettingsScreen: View {
                     .truncationMode(.middle)
             }
 
+            if let error = preferences.codexConfigError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
             HStack(spacing: 8) {
-                Button("Enable Codex Observation…") {
+                Button(preferences.codexConfigConsent == .accepted ? "Retry setup" : "Enable Codex Observation…") {
                     _ = CodexConfigInstaller.promptAndInstall()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(preferences.codexConfigConsent == .accepted && preferences.codexConfigInstalled)
+
+                if preferences.codexConfigConsent == .accepted {
+                    Button("Choose config.toml…") {
+                        _ = CodexConfigInstaller.promptAndInstall(chooseFile: true)
+                    }
+                    .buttonStyle(.bordered)
+                }
 
                 Button("Remove") {
                     CodexConfigInstaller.uninstallAndRevoke()
@@ -2296,7 +2311,7 @@ struct SettingsScreen: View {
         switch preferences.codexConfigConsent {
         case .unknown: return "Not configured"
         case .declined: return "Declined — click Enable to revisit"
-        case .accepted: return "Consent granted, not yet written"
+        case .accepted: return preferences.codexConfigError == nil ? "Setup incomplete — retry to finish" : "Setup needs attention"
         }
     }
     #endif

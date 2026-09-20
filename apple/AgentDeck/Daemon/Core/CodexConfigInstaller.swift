@@ -21,8 +21,9 @@
 //
 // Edits live inside a fenced block (see MiniToml) so user keys / comments /
 // profile tables / MCP server tables are preserved verbatim. Official user
-// lifecycle arrays can coexist with ours, while conflicting `[features]` or
-// non-array `[hooks]` tables abort cleanly.
+// lifecycle arrays and an explicit user-owned hooks = true can coexist
+// with ours; conflicting feature settings or non-array hook tables stop
+// with an actionable message.
 
 import AppKit
 import Foundation
@@ -31,6 +32,29 @@ import UniformTypeIdentifiers
 enum CodexConfigInstaller {
 
     private static let codexConfigFilename = "config.toml"
+
+    enum InstallError: LocalizedError {
+        case access, features, hooks, unreadable, write, changed, wrongFile
+
+        var errorDescription: String? {
+            switch self {
+            case .access: return "File access is unavailable. Choose config.toml again to renew access."
+            case .features: return "Existing [features] settings do not explicitly enable hooks. Add hooks = true in that section, then retry. Your settings have not been changed."
+            case .hooks: return "An existing [hooks] table conflicts with observation. AgentDeck has kept it unchanged. Use Codex lifecycle hook arrays before retrying."
+            case .unreadable: return "Could not read config.toml as UTF-8. Choose the file again and check its access permissions. No settings were written."
+            case .write: return "Could not save config.toml. Check that the file is writable, then choose it again and retry."
+            case .changed: return "config.toml changed during setup. Retry to use the latest settings."
+            case .wrongFile: return "Choose the Codex file named config.toml. No settings were written."
+            }
+        }
+    }
+
+    @MainActor
+    private static func reportFailure(_ error: Error) {
+        AppPreferences.shared.codexConfigInstalled = false
+        AppPreferences.shared.codexConfigError = error.localizedDescription
+        DaemonLogger.shared.info("Codex observation setup: \(error.localizedDescription)")
+    }
 
     /// Build the OTel exporter endpoint. The daemon port is dynamic
     /// (9120 → fallback within 9120-9139 when occupied), so we prefer
@@ -75,7 +99,7 @@ enum CodexConfigInstaller {
 
         guard let resolved = AppPreferences.shared.resolveCodexConfigURL() else {
             DaemonLogger.shared.info("Codex config skipped: no user-authorized config.toml bookmark")
-            AppPreferences.shared.codexConfigInstalled = false
+            reportFailure(InstallError.access)
             return
         }
 
@@ -86,61 +110,61 @@ enum CodexConfigInstaller {
 
         guard url.startAccessingSecurityScopedResource() else {
             DaemonLogger.shared.info("Codex config skipped: security-scoped resource unavailable at \(url.path)")
-            AppPreferences.shared.codexConfigInstalled = false
+            reportFailure(InstallError.access)
             return
         }
         defer { url.stopAccessingSecurityScopedResource() }
 
-        let original = readText(at: url)
-
-        // A user `[features]` table would duplicate ours. Official lifecycle
-        // arrays are intentionally additive in Codex and can coexist with
-        // AgentDeck; refuse only non-array hook tables.
-        if MiniToml.hasTableOutsideFence(in: original, table: "features") {
-            DaemonLogger.shared.info("Codex config: user-authored `[features]` present — observation not installed")
-            AppPreferences.shared.codexConfigInstalled = false
-            return
+        do {
+            try updateConfig(at: url) { try preparedConfig($0, daemonHttpPort: daemonHttpPort) }
+            AppPreferences.shared.codexConfigInstalled = true
+            AppPreferences.shared.codexConfigError = nil
+            DaemonLogger.shared.info("Codex observation installed")
+        } catch {
+            reportFailure(error)
         }
-        if MiniToml.hasIncompatibleHookTableOutsideFence(in: original) {
-            DaemonLogger.shared.info("Codex config: incompatible user-authored `[hooks]` table present — observation not installed")
-            AppPreferences.shared.codexConfigInstalled = false
-            return
-        }
+    }
 
+    /// Refuse conflicting user-owned settings instead of silently aborting.
+    static func preparedConfig(_ original: String, daemonHttpPort: Int? = nil) throws -> String {
+        let outside = MiniToml.removeManagedBlock(in: original)
+        let hasFeatures = MiniToml.hasTableOutsideFence(in: outside, table: "features")
+            || outside.components(separatedBy: "\n").contains {
+                $0.range(of: #"^\s*\[\s*features\s*\]\s*(?:#.*)?$"#, options: .regularExpression) != nil
+            }
+        if hasFeatures && !existingFeaturesEnableHooks(original) { throw InstallError.features }
+        if MiniToml.hasIncompatibleHookTableOutsideFence(in: original) { throw InstallError.hooks }
         let includeNotify = !MiniToml.hasTopLevelKeyOutsideFence(in: original, key: "notify")
         let includeOtel = !MiniToml.hasTableOutsideFence(in: original, table: "otel")
-        if !includeNotify {
-            DaemonLogger.shared.info("Codex config: user-authored `notify` present — installing lifecycle hooks without notify fallback")
-        }
-        if !includeOtel {
-            DaemonLogger.shared.info("Codex config: user-authored `[otel]` present — installing lifecycle hooks without OTel exporter")
-        }
-
-        let otelEndpoint = includeOtel ? buildOtelEndpoint(daemonHttpPort: daemonHttpPort) : nil
         let body = managedBlockBody(
-            includeNotify: includeNotify,
-            includeOtel: includeOtel,
-            otelEndpoint: otelEndpoint
+            includeNotify: includeNotify, includeOtel: includeOtel,
+            otelEndpoint: includeOtel ? buildOtelEndpoint(daemonHttpPort: daemonHttpPort) : nil,
+            includeFeatures: !hasFeatures
         )
-        let updated = MiniToml.applyManagedBlock(in: original, body: body)
-        if updated == original {
-            AppPreferences.shared.codexConfigInstalled = true
-            return
-        }
+        return MiniToml.applyManagedBlock(in: original, body: body)
+    }
 
-        if writeText(updated, to: url) {
-            AppPreferences.shared.codexConfigInstalled = true
-            DaemonLogger.shared.info("Codex observation installed → \(url.path)")
-        } else {
-            AppPreferences.shared.codexConfigInstalled = false
-            DaemonLogger.shared.info("Codex config write failed at \(url.path)")
+    /// Accept only an unambiguous existing opt-in. Never change a user-owned
+    /// false value or rewrite the table with a lossy TOML serializer.
+    static func existingFeaturesEnableHooks(_ text: String) -> Bool {
+        let outside = MiniToml.removeManagedBlock(in: text)
+        guard !outside.contains(String(repeating: "\"", count: 3)),
+              !outside.contains(String(repeating: "'", count: 3)) else { return false }
+        var inFeatures = false
+        for line in outside.components(separatedBy: "\n") {
+            let code = line.components(separatedBy: "#")[0].trimmingCharacters(in: .whitespaces)
+            if code.hasPrefix("[") { inFeatures = code.range(of: #"^\[\s*features\s*\]$"#, options: .regularExpression) != nil }
+            else if inFeatures, code.range(of: #"^hooks\s*=\s*true$"#, options: .regularExpression) != nil {
+                return true
+            }
         }
+        return false
     }
 
     @MainActor
     static func uninstall() {
         guard let resolved = AppPreferences.shared.resolveCodexConfigURL() else {
-            DaemonLogger.shared.info("Codex config uninstall skipped: no authorized config.toml bookmark")
+            AppPreferences.shared.codexConfigError = InstallError.access.localizedDescription
             return
         }
 
@@ -150,23 +174,27 @@ enum CodexConfigInstaller {
         }
 
         guard url.startAccessingSecurityScopedResource() else {
-            DaemonLogger.shared.info("Codex config uninstall skipped: security-scoped resource unavailable at \(url.path)")
+            AppPreferences.shared.codexConfigError = InstallError.access.localizedDescription
             return
         }
         defer { url.stopAccessingSecurityScopedResource() }
 
-        let original = readText(at: url)
-        let stripped = MiniToml.removeManagedBlock(in: original)
-        if stripped != original {
-            _ = writeText(stripped, to: url)
+        do {
+            try updateConfig(at: url) { MiniToml.removeManagedBlock(in: $0) }
+            AppPreferences.shared.codexConfigInstalled = false
+            AppPreferences.shared.codexConfigError = nil
+            DaemonLogger.shared.info("Codex observation removed")
+        } catch {
+            // Retain the bookmark and installed flag so removal can be retried.
+            AppPreferences.shared.codexConfigError = error.localizedDescription
         }
-        AppPreferences.shared.codexConfigInstalled = false
-        DaemonLogger.shared.info("Codex observation removed")
     }
 
     @MainActor
     static func uninstallAndRevoke() {
+        AppPreferences.shared.codexConfigError = nil
         uninstall()
+        guard AppPreferences.shared.codexConfigError == nil else { return }
         AppPreferences.shared.clearCodexConfigAccess()
         AppPreferences.shared.codexConfigConsent = .declined
         AppPreferences.shared.codexConfigInstalled = false
@@ -174,31 +202,32 @@ enum CodexConfigInstaller {
 
     @discardableResult
     @MainActor
-    static func promptAndInstall() -> Bool {
-        if AppPreferences.shared.codexConfigConsent == .accepted,
+    static func promptAndInstall(chooseFile: Bool = false) -> Bool {
+        if !chooseFile, AppPreferences.shared.codexConfigConsent == .accepted,
            AppPreferences.shared.resolveCodexConfigURL() != nil {
             installIfNeeded()
             return AppPreferences.shared.codexConfigInstalled
         }
 
-        let alert = NSAlert()
-        alert.messageText = "Enable Codex Observation?"
-        alert.informativeText = """
-            AgentDeck can register Codex lifecycle hooks in ~/.codex/config.toml so Codex turns and tool calls report state to the dashboard.
+        if AppPreferences.shared.codexConfigConsent != .accepted {
+            let alert = NSAlert()
+            alert.messageText = "Enable Codex Observation?"
+            alert.informativeText = """
+                AgentDeck can register Codex lifecycle hooks in ~/.codex/config.toml so Codex turns and tool calls report state to the dashboard.
 
-            You'll be asked to grant access to that file. AgentDeck only edits its own fenced block — your model, profiles, MCP server keys, and existing user-owned integrations are preserved.
+                You'll be asked to grant access to that file. AgentDeck only edits its own fenced block — your model, profiles, MCP server keys, and existing user-owned integrations are preserved.
 
-            Skip this if you don't use Codex.
-            """
-        alert.addButton(withTitle: "Continue")
-        alert.addButton(withTitle: "Not Now")
-        alert.alertStyle = .informational
+                Skip this if you don't use Codex.
+                """
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Not Now")
+            alert.alertStyle = .informational
 
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else {
-            AppPreferences.shared.codexConfigConsent = .declined
-            DaemonLogger.shared.info("Codex config consent declined by user")
-            return false
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else {
+                DaemonLogger.shared.info("Codex config consent declined by user")
+                return false
+            }
         }
 
         let home = String(cString: getpwuid(getuid()).pointee.pw_dir)
@@ -206,7 +235,7 @@ enum CodexConfigInstaller {
 
         let panel = NSOpenPanel()
         panel.title = "Authorize Codex Config"
-        panel.message = "Select (or create) ~/.codex/config.toml so AgentDeck can install observation entries."
+        panel.message = "Select ~/.codex/config.toml so AgentDeck can install observation entries."
         panel.prompt = "Authorize"
         panel.directoryURL = codexDir
         panel.nameFieldStringValue = codexConfigFilename
@@ -224,12 +253,16 @@ enum CodexConfigInstaller {
         panel.treatsFilePackagesAsDirectories = false
 
         guard panel.runModal() == .OK, let url = panel.url else {
-            AppPreferences.shared.codexConfigConsent = .declined
             DaemonLogger.shared.info("Codex config consent declined — file picker cancelled")
             return false
         }
 
+        guard url.lastPathComponent == codexConfigFilename else {
+            reportFailure(InstallError.wrongFile)
+            return false
+        }
         guard AppPreferences.shared.storeCodexConfigBookmark(for: url) else {
+            reportFailure(InstallError.access)
             DaemonLogger.shared.info("Codex config consent: failed to persist security-scoped bookmark for \(url.path)")
             return false
         }
@@ -247,15 +280,15 @@ enum CodexConfigInstaller {
     static func managedBlockBody(
         includeNotify: Bool = true,
         includeOtel: Bool = true,
-        otelEndpoint: String? = nil
+        otelEndpoint: String? = nil,
+        includeFeatures: Bool = true
     ) -> String {
         var lines: [String] = [
             "# Codex lifecycle hooks. Command hooks receive JSON on stdin;",
             "# each snippet forwards that stdin body unchanged to AgentDeck.",
-            "[features]",
-            "hooks = true",
         ]
 
+        if includeFeatures { lines.append(contentsOf: ["[features]", "hooks = true"]) }
         lines.append("")
         lines.append(contentsOf: buildLifecycleHookTables())
 
@@ -375,25 +408,16 @@ enum CodexConfigInstaller {
 
     // MARK: - File I/O
 
-    private static func readText(at url: URL) -> String {
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else {
-            return ""
-        }
-        return text
-    }
-
-    @discardableResult
-    private static func writeText(_ text: String, to url: URL) -> Bool {
-        let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        guard let data = text.data(using: .utf8) else { return false }
-        do {
-            try data.write(to: url, options: .atomic)
-            return true
-        } catch {
-            return false
-        }
+    /// Failed reads must never become empty configurations and overwrite data.
+    static func updateConfig(at url: URL, transform: (String) throws -> String) throws {
+        let data: Data
+        do { data = try Data(contentsOf: url) } catch { throw InstallError.unreadable }
+        guard let original = String(data: data, encoding: .utf8) else { throw InstallError.unreadable }
+        let updated = try transform(original)
+        guard updated != original else { return }
+        guard (try? Data(contentsOf: url)) == data else { throw InstallError.changed }
+        do { try Data(updated.utf8).write(to: url, options: .atomic) }
+        catch { throw InstallError.write }
     }
 }
 #endif
