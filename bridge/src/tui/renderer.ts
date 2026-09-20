@@ -676,6 +676,35 @@ function renderCodexLimitLines(
   return lines;
 }
 
+/** z.ai GLM Coding Plan usage lines (#348) — same gauge grammar. The secondary
+ *  window labels by its QUANTITY ("MCP" for tool calls), never a length. */
+function renderZaiLimitLines(
+  u: NonNullable<DashboardState['usage']>, gaugeW: number, inlineReset: boolean,
+): string[] {
+  const lines: string[] = [];
+  const zr = u.zaiRateLimits;
+  if (!zr) return lines;
+  const windows: Array<{ w: typeof zr.primary; label: string }> = [];
+  if (zr.primary) windows.push({ w: zr.primary, label: 'Z.AI 5h' });
+  if (zr.secondary) {
+    const isMcp = (zr.secondary as { quantity?: string }).quantity === 'mcp';
+    windows.push({ w: zr.secondary, label: isMcp ? 'Z.AI MCP' : 'Z.AI 7d' });
+  }
+  for (const { w, label } of windows) {
+    if (!w) continue;
+    const pct = Math.round(w.usedPercent);
+    const gauge = blockGauge(pct, gaugeW, w.stale === true);
+    const reset = w.stale === true ? 'stale' : resetTimeStr(w.resetsAt);
+    if (inlineReset) {
+      lines.push(` ${label} [${gauge}] ${pct}%${reset ? ` ${colors.dim}${reset}${RESET}` : ''}`);
+    } else {
+      lines.push(` ${label} [${gauge}] ${pct}%`);
+      if (reset) lines.push(`${colors.dim}    ${reset}${RESET}`);
+    }
+  }
+  return lines;
+}
+
 function renderStatusLimitsLines(state: DashboardState, width: number): string[] {
   const lines: string[] = [];
   const u = state.usage;
@@ -695,6 +724,7 @@ function renderStatusLimitsLines(state: DashboardState, width: number): string[]
   }
   lines.push(...renderScopedLimitLines(u, gaugeW, false));
   lines.push(...renderCodexLimitLines(u, gaugeW, false));
+  lines.push(...renderZaiLimitLines(u, gaugeW, false));
   if (state.currentTool) {
     lines.push(` ${colors.tool}${truncText(state.currentTool, width - 2)}${RESET}`);
   }
@@ -728,6 +758,7 @@ function renderStatusLines(state: DashboardState, width: number): string[] {
     }
     lines.push(...renderScopedLimitLines(u, gaugeW, true));
     lines.push(...renderCodexLimitLines(u, gaugeW, true));
+    lines.push(...renderZaiLimitLines(u, gaugeW, true));
   }
   if (state.currentTool) lines.push(` ${colors.tool}Tool: ${truncText(state.currentTool, width - 8)}${RESET}`);
   if (state.modelName) lines.push(`${colors.dim} Model: ${state.modelName}${RESET}`);
