@@ -283,6 +283,7 @@ export class SessionSlotManager {
   // z.ai GLM Coding Plan windows (#348) — same snapshot grammar as Codex.
   private _zaiPrimary: CodexWindowSnapshot | null = null;
   private _zaiSecondary: CodexWindowSnapshot | null = null;
+  private _zaiSecondaryIsMcp = false;
   private _codexLunaReserve: CodexLunaReserve | undefined;
   /** When the Codex snapshot behind both windows was written (see
    *  `CodexRateLimits.capturedAt`). Freshness is derived per repaint from this,
@@ -429,6 +430,7 @@ export class SessionSlotManager {
     this._zaiSecondary = zr?.secondary
       ? { percent: zr.secondary.usedPercent, resetsAt: zr.secondary.resetsAt, windowMinutes: zr.secondary.windowMinutes, stale: zr.secondary.stale === true }
       : null;
+    this._zaiSecondaryIsMcp = zr?.secondary?.quantity === 'mcp';
 
     const cx = usage.codexRateLimits;
     this._codexPrimary = cx?.primary
@@ -530,12 +532,15 @@ export class SessionSlotManager {
     if (scopedGauge && scoped?.active !== true) gauges.push(scopedGauge);
     // z.ai GLM Coding Plan (#348) — same per-window grammar. The secondary
     // window is labeled by its QUANTITY ("MCP" for tool calls), never a length,
-    // so it can never read as token usage.
+    // so it can never read as token usage. Agent identity is 'zai' — the
+    // renderer keys the brand mark off this field, and 'codex' dressed the
+    // z.ai gauges in Codex branding (the SD+ encoder got it right; the keypad
+    // didn't).
     for (const w of [this._zaiPrimary, this._zaiSecondary]) {
       if (!w) continue;
       gauges.push({
-        agent: 'codex', window: usageWindowKind(w.windowMinutes),
-        label: w === this._zaiSecondary && w.windowMinutes === 43200 ? 'MCP' : (usageWindowLabel(w.windowMinutes) || '5H'),
+        agent: 'zai', window: usageWindowKind(w.windowMinutes),
+        label: w === this._zaiSecondary && this._zaiSecondaryIsMcp ? 'MCP' : (usageWindowLabel(w.windowMinutes) || '5H'),
         percent: w.percent, resetsAt: w.resetsAt,
         known: true, color: ZAI_USAGE_COLOR,
       });

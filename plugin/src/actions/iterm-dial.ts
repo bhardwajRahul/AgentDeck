@@ -45,16 +45,17 @@ let hasReceivedData = false;
 let currentView: UsageView = 'both';
 
 /**
- * E3's provider page (#349): touch-tap cycles providers, rotation cycles the
- * views of the current page, press refreshes. Re-anchored to a live provider
- * when the current one loses its data.
+ * E3's provider page (#349) — the user's STICKY "what do I want to watch" dial.
+ * Touch-tap cycles through all available providers; rotation cycles the views
+ * of the current page; press refreshes. The page only re-anchors when the
+ * current provider loses its data entirely — E2 re-selections never move it.
  */
 function anchoredProvider(): UsageProviderId {
   const data = getUsageModeData();
   const available = availableUsageProviders(data);
   const current = getUsageDialSelections().e3;
   if (available.includes(current)) return current;
-  // Prefer a page E2 is not showing, mirroring the never-same-provider rule.
+  // Data loss: re-anchor to any live page (prefer one E2 is not on).
   const next = available.find((p) => p !== getUsageDialSelections().e2) ?? available[0];
   const anchored = next ?? 'codex';
   setE3UsageProvider(anchored);

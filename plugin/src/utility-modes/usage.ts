@@ -337,9 +337,20 @@ export function noteUsageProviderActivity(
 }
 
 /**
- * The auto-selection for E2: the most-recently-used upstream among providers
- * that currently have a page. `avoid` is E3's current provider — when the
- * choice is not forced, E2 and E3 show different providers (#349).
+ * The auto-selection for E2 — the "what am I using now" dial (#349/#348).
+ *
+ * E2 follows the user's most-recently-used upstream automatically. E3 is the
+ * user's sticky "what do I want to watch" dial (touch-tap to pin). The two
+ * roles are deliberately asymmetric:
+ *
+ * - E2 AUTO-adapts (no interaction): it re-selects on every roster tick and
+ *   avoids E3's current page when the ranking allows, so the two dials show
+ *   different providers by default — but E2 is the one that yields, not E3.
+ * - E3 is STICKY (user-chosen): once the user touch-taps to a provider page,
+ *   it stays there through E2 re-selections. Only the user's next tap moves it.
+ *
+ * When both would land on the same provider and no alternative exists, both
+ * show it — better one useful page than one forced-empty.
  */
 export function pickAutoUsageProvider(data: UsageModeData, avoid?: UsageProviderId): UsageProviderId {
   const available = availableUsageProviders(data);
@@ -349,6 +360,7 @@ export function pickAutoUsageProvider(data: UsageModeData, avoid?: UsageProvider
     if (proc !== 0) return proc;
     return (providerActivity[b] ?? 0) - (providerActivity[a] ?? 0);
   });
+  // E2 yields to E3: avoid the sticky dial's page when an alternative exists.
   if (avoid && ranked.length > 1 && ranked[0] === avoid) return ranked[1];
   return ranked[0];
 }
