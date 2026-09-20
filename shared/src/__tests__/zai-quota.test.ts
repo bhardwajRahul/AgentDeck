@@ -18,7 +18,7 @@ import {
   zaiKeyLooksPayAsYouGo,
   zaiQuotaFromLimits,
 } from '../zai-quota.js';
-import { emitSwift } from '../../../scripts/generate-zai-quota-rules.mjs';
+import { emitKotlin, emitSwift } from '../../../scripts/generate-zai-quota-rules.mjs';
 
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const vectors = JSON.parse(
@@ -28,8 +28,12 @@ const vectors = JSON.parse(
   paygKeys: Array<{ note: string; key: string | null; payg: boolean }>;
 };
 
-/** One mirror per producer platform — Kotlin consumes the wire only. */
-const MIRROR_PATHS = ['apple/AgentDeck/Model/ZaiQuotaRules.generated.swift'];
+/** Swift produces the wire snapshot; Kotlin formats plan names on the consumer
+ *  side (the ChatGPTPlan precedent) — both mirrors are byte-gated. */
+const MIRRORS: Array<[string, (rules: unknown) => string]> = [
+  ['apple/AgentDeck/Model/ZaiQuotaRules.generated.swift', emitSwift],
+  ['android/app/src/main/kotlin/dev/agentdeck/util/ZaiQuotaRules.generated.kt', emitKotlin],
+];
 
 const rules = {
   sessionWindowMinutes: ZAI_SESSION_WINDOW_MINUTES,
@@ -60,10 +64,10 @@ describe('zai pay-as-you-go key detection', () => {
 });
 
 describe('generated mirrors in sync', () => {
-  for (const rel of MIRROR_PATHS) {
+  for (const [rel, emit] of MIRRORS) {
     it(`${rel} matches the SSOT`, () => {
       const onDisk = readFileSync(`${repoRoot}${rel}`, 'utf8');
-      expect(onDisk).toBe(emitSwift(rules));
+      expect(onDisk).toBe(emit(rules));
     });
   }
 

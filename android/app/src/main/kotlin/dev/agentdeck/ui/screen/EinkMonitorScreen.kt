@@ -61,7 +61,7 @@ import dev.agentdeck.state.TimelineStore
 import dev.agentdeck.ui.component.AgentDeckMark
 import dev.agentdeck.ui.component.BrandIcon
 import dev.agentdeck.ui.monitor.subscriptionTrailing
-import dev.agentdeck.util.codexLimitRows
+import dev.agentdeck.util.providerLimitRows
 import java.time.Instant
 import dev.agentdeck.ui.eink.EinkAgentPanel
 import dev.agentdeck.ui.eink.EinkAttentionPanel
@@ -446,7 +446,7 @@ private fun buildEinkLimitRows(state: DashboardState, now: Instant = Instant.now
     // stale window keeps its last-known percent and is flagged with a trailing
     // "!" instead of disappearing. The leading brand mark identifies the provider,
     // so labels stay plain 5h/7d.
-    codexLimitRows(state.codexRateLimits).forEach {
+    providerLimitRows(state.codexRateLimits, state.zaiRateLimits).forEach {
         rows.add(EinkLimitLine(label = it.label, percent = it.percent, agentType = it.agentType, stale = it.stale))
     }
     // Subscription expiry rows — show "<provider> → M D" when the plan carries an

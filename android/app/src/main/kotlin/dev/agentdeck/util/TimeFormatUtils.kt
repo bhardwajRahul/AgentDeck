@@ -143,6 +143,17 @@ fun codexLimitRows(limits: CodexRateLimits?, nowMs: Long = System.currentTimeMil
 }
 
 /**
+ * Codex + z.ai usage rows in one display list — every LIMITS surface renders
+ * THIS so the two providers' order cannot drift between surfaces (#348).
+ * Codex keeps the established seat, z.ai follows.
+ */
+fun providerLimitRows(
+    codex: CodexRateLimits?,
+    zai: ZaiRateLimits?,
+    nowMs: Long = System.currentTimeMillis(),
+): List<ProviderLimitRow> = codexLimitRows(codex, nowMs) + zaiLimitRows(zai, nowMs)
+
+/**
  * z.ai (GLM Coding Plan) usage rows — the same window grammar as the Codex
  * rows. The `agentType` "zai" resolves to the upstream z.ai mark in the
  * BrandIcon registry (design/brand/zai.svg), so these gauges carry the real

@@ -51,6 +51,7 @@ import dev.agentdeck.net.AgentState
 import dev.agentdeck.net.CodexRateLimits
 import dev.agentdeck.net.ModelCatalogEntry
 import dev.agentdeck.net.OllamaStatus
+import dev.agentdeck.net.ZaiRateLimits
 import dev.agentdeck.state.DashboardState
 import dev.agentdeck.terrarium.TerrariumColors
 import dev.agentdeck.ui.component.AgentDeckMark
@@ -59,6 +60,8 @@ import dev.agentdeck.util.ChatGPTPlan
 import dev.agentdeck.util.DeviceProfileHolder
 import dev.agentdeck.util.codexLimitRows
 import dev.agentdeck.util.formatResetTime
+import dev.agentdeck.util.ZaiQuotaRules
+import dev.agentdeck.util.zaiLimitRows
 import java.time.Instant
 
 import androidx.compose.runtime.*
@@ -124,6 +127,7 @@ fun TopologyRail(
     val discovered = buildList {
         if (state.oauthConnected == true || consumersFor(ProviderKey.CLAUDE, state).isNotEmpty()) add("claude")
         if (state.codexRateLimits != null || state.usage.codexPlanType != null) add("codex")
+        if (state.zaiRateLimits != null) add("zai")
         if (state.gatewayConnected == true) add("openclaw")
         if (state.mlxModels.isNotEmpty()) add("mlx")
         if (state.ollamaStatus != null) add("ollama")
@@ -403,6 +407,20 @@ private fun UpstreamRows(state: DashboardState, scale: MonitorLayoutScale, visib
                     state.subscriptions.firstOrNull { it.name == chatGptPlanLabel(codexPlan) }?.until, now),
                 consumers = consumersFor(ProviderKey.CODEX, state),
                 rateLimits = codexRateLimits,
+            )
+        }
+
+        // z.ai GLM Coding Plan — a direct provider-account reading, independent
+        // of every harness that may use the plan (#348). A windowless block
+        // (PAYG key, display retirement) keeps the row but drops the chips.
+        if ("zai" in visible) {
+            val zai = state.zaiRateLimits
+            ProviderRow(
+                name = "z.ai",
+                status = if (zai?.primary != null || zai?.secondary != null) LEDStatus.OK else LEDStatus.DIM,
+                subtitle = zaiSubtitle(zai),
+                consumers = emptyList(),
+                rateLimits = buildZaiRateChips(zai),
             )
         }
 
@@ -865,6 +883,31 @@ private fun buildCodexRateChips(limits: CodexRateLimits?): List<RateChip> =
 private fun chatGptPlanLabel(raw: String?): String? {
     val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     return ChatGPTPlan.displayName(trimmed)
+}
+
+/**
+ * z.ai usage chips, mirroring the Codex chip grammar. The MCP tool-call quota
+ * labels by its QUANTITY ("mcp") — the shared zaiLimitRows owns that mapping
+ * so the rail and the e-ink surfaces cannot drift (#348).
+ */
+private fun buildZaiRateChips(limits: ZaiRateLimits?): List<RateChip> =
+    zaiLimitRows(limits).map { row ->
+        RateChip(
+            label = row.label,
+            percent = row.percent,
+            reset = row.footnote ?: row.resetIso?.let { formatResetTime(it) },
+            stale = row.stale || row.footnote != null,
+        )
+    }
+
+/**
+ * z.ai row subtitle: the plan tier from the raw `level` (unknown tiers render
+ * capitalized, never dropped — same polarity as the ChatGPT plan label).
+ * Mirrors iOS `zaiSubtitle`.
+ */
+private fun zaiSubtitle(limits: ZaiRateLimits?): String? {
+    val plan = ZaiQuotaRules.formatPlanName(limits?.planType) ?: return null
+    return "GLM Coding Plan $plan"
 }
 
 /**

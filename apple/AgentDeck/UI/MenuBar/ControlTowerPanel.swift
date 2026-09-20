@@ -937,7 +937,32 @@ struct ControlTowerPanel: View {
                     .foregroundStyle(TerrariumHUD.subtext)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            if !hasClaude && !hasCodex {
+            // z.ai GLM Coding Plan (#348) — same compact grammar. The MCP
+            // window labels by its QUANTITY, never its length.
+            let zai = stateHolder.state.zaiRateLimits
+            let hasZai = zai?.primary?.usedPercent != nil || zai?.secondary?.usedPercent != nil
+            if hasZai {
+                usageProviderHeader(agentType: "zai", title: "z.ai")
+                if let primary = zai?.primary, let percent = primary.usedPercent {
+                    compactGauge(
+                        label: TopologyRail.windowLabel(primary.windowMinutes),
+                        percent: percent,
+                        resetTime: primary.resetsAt,
+                        stale: primary.stale == true,
+                        footnote: CodexUsageFreshness.footnote(stale: primary.stale == true, capturedAt: zai?.capturedAt)
+                    )
+                }
+                if let secondary = zai?.secondary, let percent = secondary.usedPercent {
+                    compactGauge(
+                        label: secondary.quantity == "mcp" ? "MCP" : TopologyRail.windowLabel(secondary.windowMinutes),
+                        percent: percent,
+                        resetTime: secondary.resetsAt,
+                        stale: secondary.stale == true,
+                        footnote: CodexUsageFreshness.footnote(stale: secondary.stale == true, capturedAt: zai?.capturedAt)
+                    )
+                }
+            }
+            if !hasClaude && !hasCodex && !hasZai {
                 Text("Quota data appears when a provider reports it.")
                     .font(.system(size: 10))
                     .foregroundStyle(TerrariumHUD.subtext)
