@@ -4494,7 +4494,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         relayed: u,
         ownCodexRateLimits: core.lastBuiltCodexRateLimits,
         ownLiveFamilyAuthorityExpiresAtMs: core.lastBuiltCodexLiveFamilyAuthorityExpiresAtMs,
-        ownZaiRateLimits: core.lastBuiltZaiQuota ?? undefined,
+        ownZaiRateLimits: core.zaiQuotaForWire() ?? undefined,
         buildOwnUsage: () => core.buildUsage() as UsageEvent,
       }), ollamaStatus: core.cachedOllamaStatus ?? undefined,
       mlxModels: core.cachedMlxModels ?? [], mlxResidency: core.cachedMlxResidency });
