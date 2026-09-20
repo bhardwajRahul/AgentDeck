@@ -397,6 +397,18 @@ export function prepareForSerial(event: BridgeEvent, _conn?: Pick<SerialConnecti
             : undefined,
         }
       : undefined;
+    // z.ai GLM Coding Plan (#348) — same compact shape; `quantity` rides the
+    // secondary so the firmware can label the MCP window by its quantity.
+    const zr = e.zaiRateLimits
+      ? {
+          primary: e.zaiRateLimits.primary
+            ? { usedPercent: e.zaiRateLimits.primary.usedPercent, resetsAt: formatResetTime(e.zaiRateLimits.primary.resetsAt), stale: e.zaiRateLimits.primary.stale }
+            : undefined,
+          secondary: e.zaiRateLimits.secondary
+            ? { usedPercent: e.zaiRateLimits.secondary.usedPercent, resetsAt: formatResetTime(e.zaiRateLimits.secondary.resetsAt), stale: e.zaiRateLimits.secondary.stale, quantity: e.zaiRateLimits.secondary.quantity }
+            : undefined,
+        }
+      : undefined;
     // Subscriptions carry an ISO `until`; a serial device has no reliable
     // clock, so pre-format to a short "~M/D" the panel can render as-is.
     const subs = Array.isArray(e.subscriptions)
@@ -421,6 +433,7 @@ export function prepareForSerial(event: BridgeEvent, _conn?: Pick<SerialConnecti
       estimatedCostUsd: e.estimatedCostUsd,
       usageStale: e.usageStale,
       ...(cx ? { codexRateLimits: cx } : {}),
+      ...(zr ? { zaiRateLimits: zr } : {}),
       ...(subs ? { subscriptions: subs } : {}),
       ...(ag ? { antigravityStatus: ag } : {}),
     } as BridgeEvent;
