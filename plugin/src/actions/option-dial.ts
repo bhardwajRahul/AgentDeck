@@ -39,6 +39,7 @@ import {
   getUsageModeData,
   fireUsageRefresh,
   buildProviderUsageEncoder,
+  availableUsageViews,
   getUsageDialSelections,
   pickAutoUsageProvider,
   pickWorstScopedLimit,
@@ -86,7 +87,8 @@ function autoProvider(data: UsageModeData): UsageProviderId {
 /** The dial-rotation view list, built dynamically: 'triple' default, the two
  *  single-window zooms, one zoom per live scoped model, then 'session'. */
 function usageViews(data: UsageModeData, provider: UsageProviderId): string[] {
-  const views = ['triple', '5h', '7d'];
+  const views: string[] = availableUsageViews(buildProviderUsageEncoder(provider, data, hasReceivedData))
+    .filter((view) => view !== 'session').map((view) => view === 'both' ? 'triple' : view);
   liveScopedLimits(data, provider).forEach((_, i) => views.push(`scoped:${i}`));
   views.push('session');
   return views;

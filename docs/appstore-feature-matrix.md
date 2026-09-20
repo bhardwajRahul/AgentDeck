@@ -7,8 +7,8 @@ locale: en
 canonical: true
 status: required
 owner: Apple product maintainers
-reviewed: 2026-08-28
-revision: 2026-08-28
+reviewed: 2026-09-21
+revision: 2026-09-21
 source_of_truth: docs/appstore-feature-matrix.md
 validators: [bash apple/scripts/verify-appstore-archive.sh]
 ---
@@ -88,6 +88,7 @@ All surfaces follow the same rule:
 | Claude per-model scoped caps (weekly) | Relay only | Yes | The `/api/oauth/usage` `limits[]` array's per-model `weekly_scoped` caps (e.g. a "Fable" cap that binds while 5h/7d read low). **Direct OAuth acquisition stays in the Node daemon**; the Swift/App Store path consumes `scopedLimits` only through the generated protocol + daemon relay (`DaemonServer.parseRelayedUsage` / the shared usage cache the Node daemon writes) — it never parses `limits[]` itself. Renders when `isUsingExternalDaemon` is true, exactly like the 5h/7d row. |
 | Codex rate limits (passive rollout read) | Yes | Yes | User grants a security-scoped bookmark to `~/.codex`. Both tiers reconcile the snapshot against the live account tier in `auth.json` and **void** one minted under a plan the account no longer holds — neither freshness axis can retire it, since a lapsed plan's weekly window stays future-dated (`codexSnapshotMatchesAccountPlan`, mirrored to Swift as the generated `CodexPlanRules`). Voiding rides the wire as a windowless block, so Tier 1's own daemon retracts the gauge rather than leaving a client to guess |
 | Codex account usage (live) | Yes | Yes | Swift uses a bounded native HTTPS GET of Codex's account usage endpoint, with credentials from the user-granted Codex folder. It polls every 30 seconds independently of rollout activity, so coupon resets do not wait for a new turn. No subprocess or token refresh is performed. Node retains its existing throttled app-server reader. |
+| z.ai GLM Coding Plan usage | Yes | Yes | Provider-account quota via bounded native HTTPS; credit and MCP tool-call windows remain distinct. Standalone macOS stores an optional key in Keychain and refreshes only this provider after edits. Node uses its own provider configuration; companion/external-daemon mode consumes the active daemon’s readings and does not offer an ineffective local key editor. Cross-daemon key sharing and sibling usage relay are not implemented. |
 | Anthropic Admin API usage | Yes | Yes | User supplies the API key |
 | Terminal status-line token and cost telemetry | Hook-only | Yes (compatibility) | Corrected 2026-09-12: the daemon-first gap is narrower than "no replacement". Tokens and context percent are derived from the transcript by `passive-observer` and already reach the wire and the deck on both tiers; `/usage` quota has first-class daemon clients. Terminal-only: turn **duration** (one feed, the status-line parse) and the status-line text itself. Lifecycle correctness still comes from hooks/events, never terminal scraping. Measured in [managed-replacement-inventory.md](managed-replacement-inventory.md) §2.3; tracked in #273 |
 

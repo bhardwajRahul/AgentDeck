@@ -2133,7 +2133,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           const confirmed = [
             ...(core.oauthConnected ? ['claude'] : []),
             ...(core.lastBuiltCodexRateLimits ? ['codex'] : []),
-            ...(core.cachedZaiQuota ? ['zai'] : []),
+            ...(core.cachedZaiQuota?.primary || core.cachedZaiQuota?.secondary ? ['zai'] : []),
             ...(core.cachedGatewayConnected ? ['openclaw'] : []),
             ...((core.cachedMlxModels?.length ?? 0) > 0 ? ['mlx'] : []),
             ...(core.cachedOllamaStatus ? ['ollama'] : []),
@@ -6026,6 +6026,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       return;
     }
     if (cmd.type === 'query_usage') {
+      void core.refreshZaiUsage().catch(() => {});
       fetchUsageRelayed(port).then((result) => core.applyUsageResult(result));
     }
   };
