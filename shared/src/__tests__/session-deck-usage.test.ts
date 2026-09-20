@@ -180,7 +180,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
         planType: 'plus',
       },
     };
-    const deck = buildSessionDeck(baseState(2, codex), { mode: 'list', showUsage: true }, POS);
+    const deck = buildSessionDeck(baseState(12, codex), { mode: 'list', showUsage: true }, POS);
     expect(usageCells(deck)).toHaveLength(3);
     // Labels are short ("5H"/"7D") on both agents; the agent is conveyed by the
     // provider LOGO — terracotta-tinted Claude mark, blue Codex mark.
@@ -207,7 +207,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
     const onlyPrimary = {
       codexRateLimits: { primary: { usedPercent: 25, windowMinutes: 300 } },
     };
-    const deck = buildSessionDeck(baseState(2, onlyPrimary), { mode: 'list', showUsage: true }, POS);
+    const deck = buildSessionDeck(baseState(12, onlyPrimary), { mode: 'list', showUsage: true }, POS);
     // 3 tiles (Claude 5H/7D + Codex 5H) → the strip fills exactly.
     expect(deck.get(STRIP_R)!.svg).toContain(CODEX_MARK);
     expect(deck.get(STRIP_R)!.svg).toContain('>25<');
@@ -224,7 +224,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
     const weeklyOnly = {
       codexRateLimits: { primary: { usedPercent: 4, windowMinutes: 10080 }, planType: 'plus' },
     };
-    const deck = buildSessionDeck(baseState(2, weeklyOnly), { mode: 'list', showUsage: true }, POS);
+    const deck = buildSessionDeck(baseState(12, weeklyOnly), { mode: 'list', showUsage: true }, POS);
     expect(usageCells(deck)).toHaveLength(3);
     expect(deck.get(STRIP_L)!.svg).toContain('5H');   // Claude 5H
     expect(deck.get(STRIP_L)!.svg).toContain(CLAUDE_MARK);
@@ -246,7 +246,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
         credits: { hasCredits: false, unlimited: false, balance: '0' },
       },
     };
-    const deck = buildSessionDeck(baseState(2, credits), { mode: 'list', showUsage: true }, POS);
+    const deck = buildSessionDeck(baseState(12, credits), { mode: 'list', showUsage: true }, POS);
     // No Codex windows → a single credits readout takes the strip's right key,
     // carrying the limit label + balance + Codex logo.
     const tile = deck.get(STRIP_R)!.svg;
@@ -261,7 +261,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
     const credits = {
       codexRateLimits: { limitId: 'premium', credits: { hasCredits: true, unlimited: true } },
     };
-    const deck = buildSessionDeck(baseState(2, credits), { mode: 'list', showUsage: true }, POS);
+    const deck = buildSessionDeck(baseState(12, credits), { mode: 'list', showUsage: true }, POS);
     expect(deck.get(STRIP_R)!.svg).toContain('∞');
   });
 
@@ -277,7 +277,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
         lunaReserve: { usedPercent: 32, regularResetsAt: '2099-01-01T00:00:00Z', available: true },
       },
     };
-    const deck = buildSessionDeck(baseState(2, withLuna), { mode: 'list', showUsage: true }, POS);
+    const deck = buildSessionDeck(baseState(12, withLuna), { mode: 'list', showUsage: true }, POS);
     // 3 tiles: Claude 5H/7D + LUNA — no Codex pair, no fourth reading.
     expect(usageCells(deck)).toHaveLength(3);
     expect(deck.get(STRIP_L)!.svg).toContain('5H');
@@ -293,7 +293,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
     expect(all).not.toContain('>30<');
     expect(all).not.toContain('>10<');
     // An exhausted reserve reads EMPTY, not a zero gauge.
-    const empty = buildSessionDeck(baseState(2, {
+    const empty = buildSessionDeck(baseState(12, {
       codexRateLimits: { ...withLuna.codexRateLimits, lunaReserve: { usedPercent: 100, available: true } },
     }), { mode: 'list', showUsage: true }, POS);
     expect(usageCells(empty)).toHaveLength(3);
@@ -304,7 +304,7 @@ describe('buildSessionDeck list-view usage tiles', () => {
     const withoutLuna = {
       codexRateLimits: { ...withLuna.codexRateLimits, lunaReserve: undefined },
     };
-    const restored = buildSessionDeck(baseState(2, withoutLuna), { mode: 'list', showUsage: true }, POS);
+    const restored = buildSessionDeck(baseState(12, withoutLuna), { mode: 'list', showUsage: true }, POS);
     expect(usageCells(restored)).toHaveLength(3);
     expect(usageCells(restored)[2].svg).toContain('>30<');
     expect(usageCells(restored)[2].svg).toContain('>10<');
@@ -352,7 +352,7 @@ describe('buildSessionDeck scoped cap within the fixed usage strip', () => {
   const codexFree = { codexRateLimits: { planType: 'free' } };
 
   const svgs = (state: Record<string, unknown>) =>
-    usageCells(buildSessionDeck(baseState(2, state), { mode: 'list', showUsage: true }, POS))
+    usageCells(buildSessionDeck(baseState(12, state), { mode: 'list', showUsage: true }, POS))
       .map((c) => c.svg);
 
   it('gives the key Codex vacated to the scoped cap on a free ChatGPT tier', () => {
@@ -437,7 +437,7 @@ describe('buildSessionDeck scoped cap within the fixed usage strip', () => {
     // digit puts the literal "5H" inside the Claude brand mark, so a substring
     // assertion on the markup passes for a tile that draws no such label.
     const strip = (over: Record<string, unknown>) => usageCells(buildSessionDeck(
-      { ...baseState(2), ...over }, { mode: 'list', showUsage: true }, POS,
+      { ...baseState(12), ...over }, { mode: 'list', showUsage: true }, POS,
     )).map((c) => [...c.svg.matchAll(/<text[^>]*>([^<]*)</g)].map((m) => m[1]).join(' '));
 
     const sevenOnly = strip({ fiveHourPercent: undefined, sevenDayPercent: 17 });

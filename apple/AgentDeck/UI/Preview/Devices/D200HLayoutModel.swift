@@ -24,7 +24,7 @@
 // against; `scripts/check-preview-mirror-sync.mjs` verifies they match the
 // current `git hash-object` of each file and fails CI when the origin drifts
 // ahead of this mirror. Update them whenever you re-port.
-// SYNC-HASH shared/src/d200h-layout.ts 5a83a63ad2a5da57483f31d581cf5aa4f5bf3b4c
+// SYNC-HASH shared/src/d200h-layout.ts a701cb9f42956ba2fa40e4b99cde7c5807b3f6e3
 // SYNC-HASH shared/src/session-utils.ts 9b6eebeba19a0bb6ffe7c633d98c83dcee9e55cf
 //
 // INTENTIONALLY OMITTED (not needed by a read-only preview):
@@ -495,13 +495,21 @@ public enum D200HLayoutModel {
         // trailing positions for strip keys the user didn't place. Never reserve
         // more than the strip is wide, nor more than slots.count - 1 so at least
         // one key stays for sessions. Same-provider pairs compact before reserve.
+        // When the roster leaves keys free, the budget grows into them (#349):
+        // one window per key instead of compacted pairs — the growth never takes
+        // a key from a session (`spare` is computed after the roster).
         var usageHere: [String: (D200HSlotKind, String, String)] = [:]
         if view.showUsage, let usage = input.usage {
-            let usageTiles = buildUsageTiles(usage)
+            let stripTiles = buildUsageTiles(usage)
             let maxReserve = max(0, slots.count - 1)
             let preferred = sortPositions(usagePreferredPositions.filter { slots.contains($0) })
-            let reserveCount = min(usageTiles.count, usagePreferredPositions.count, maxReserve)
-            let pinned = Array(preferred.suffix(reserveCount))
+            let stripCount = min(stripTiles.count, usagePreferredPositions.count, maxReserve)
+            let afterStrip = slots.count - stripCount
+            let spare = sessions.count > afterStrip ? 0 : afterStrip - sessions.count
+            let budget = spare > 0 ? min(stripTiles.count + spare, maxReserve) : usagePreferredPositions.count
+            let usageTiles = spare > 0 ? buildUsageTiles(usage, budget: budget) : stripTiles
+            let reserveCount = min(usageTiles.count, budget, maxReserve)
+            let pinned = Array(preferred.suffix(min(reserveCount, preferred.count)))
             let rest = slots.filter { !pinned.contains($0) }
             let fallbackCount = max(0, reserveCount - pinned.count)
             let fallback = Array(rest.suffix(fallbackCount))
@@ -753,7 +761,10 @@ public enum D200HLayoutModel {
     /// Every tile is hide-if-absent (TS 208b1afc): Claude 5H/7D appear only
     /// when that window's quota is actually known, so fewer (or zero) tiles are
     /// reserved and the freed slots flow to session tiles.
-    private static func buildUsageTiles(_ usage: D200HUsage) -> [(D200HSlotKind, String, String)] {
+    private static func buildUsageTiles(
+        _ usage: D200HUsage,
+        budget: Int = usagePreferredPositions.count
+    ) -> [(D200HSlotKind, String, String)] {
         var claudeTiles: [(D200HSlotKind, String, String)] = []
         var claudePair: [D200HUsagePairWindow] = []
         if usage.known, let p = usage.fiveHourPercent {
@@ -842,15 +853,15 @@ public enum D200HLayoutModel {
         }
         let logicalCount = claudeTiles.count + codexTiles.count + zaiTiles.count
             + (scopedTile == nil ? 0 : 1) + (lunaTile == nil ? 0 : 1)
-        let compactCodex = logicalCount > usagePreferredPositions.count && codexPair.count == 2
-        let stillOverflows = logicalCount - (compactCodex ? 1 : 0) > usagePreferredPositions.count
+        let compactCodex = logicalCount > budget && codexPair.count == 2
+        let stillOverflows = logicalCount - (compactCodex ? 1 : 0) > budget
         let pairScopedWith7D = stillOverflows && scopedPair != nil && claudePair.count == 2
         let compactClaude = stillOverflows && !pairScopedWith7D && claudePair.count == 2
         // Third step of the same cascade (TS #348): with all three providers
         // live the strip is six readings on three keys and z.ai compacts to a
         // pair tile too — nothing dropped.
         let afterClaude = logicalCount - (compactCodex ? 1 : 0) - ((compactClaude || pairScopedWith7D) ? 1 : 0)
-        let compactZai = afterClaude > usagePreferredPositions.count && zaiPair.count == 2
+        let compactZai = afterClaude > budget && zaiPair.count == 2
         func cells(_ agent: String, _ tiles: [(D200HSlotKind, String, String)], _ pair: [D200HUsagePairWindow], compact: Bool) -> [(D200HSlotKind, String, String)] {
             compact ? [(.usagePair(agent: agent, windows: pair), pair.map(\.label).joined(separator: " · "), agent)] : tiles
         }

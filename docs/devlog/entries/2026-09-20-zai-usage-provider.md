@@ -67,3 +67,15 @@ token chain; the D200H usage tile, the Pixoo HUD row and the Android usage
 card carry the mark (dot-matrix masks regenerated); the brand-assets contract
 test pins the geometry to both vector registries and RESOURCES.md records the
 source and trademark holder.
+
+**Free-space usage expansion (#349, owner direction).** When the session
+roster leaves keys free, the usage area grows into them — one window per key
+instead of compacted pairs — and never at the cost of a session key: `spare`
+is computed after the roster (overflow ⇒ no spare by construction), and the
+compaction cascade re-runs at the larger budget so partial spare relaxes
+compaction exactly as far as it fits. The strip-contract tests keep their
+compaction intent by filling their rosters; the new free-space suite pins the
+expansion (six windows on six keys), the sessions-win invariant, and the
+no-spare shape. Hardware verification stays a main-checkout step: the plugin
+link from a worktree is refused by the install guard (the Stream Deck
+dark-key incident), and the DRM marketplace loop is external by nature.

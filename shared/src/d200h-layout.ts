@@ -508,8 +508,13 @@ export function renderCreditsTile(data: { limitId?: string; balance?: string; un
  * to session tiles instead of leaving reserved "—" ghost gauges behind.
  * Credit-based plans (null windows) get a single credits readout tile instead.
  * Each tile re-fetches quota on press.
+ *
+ * `budget` is how many keys usage may occupy: the strip's three, plus — when
+ * the session roster leaves keys free — the leftover keys (#349: remaining
+ * button space hosts usage efficiently, one window per key instead of
+ * compacted pairs).
  */
-function buildUsageTiles(state: DashState): SessionDeckCell[] {
+function buildUsageTiles(state: DashState, budget: number = USAGE_PREFERRED_POS.length): SessionDeckCell[] {
   const action: DeckAction = { kind: 'command', command: { type: 'query_usage' } };
   const known = state.usageKnown !== false;
   const claudeWindows: UsageTankData[] = [];
@@ -594,9 +599,9 @@ function buildUsageTiles(state: DashState): SessionDeckCell[] {
     : undefined;
   const logicalCount = claudeWindows.length + codexWindowData.length + zaiWindowData.length
     + (scopedTile ? 1 : 0) + (creditsTile ? 1 : 0) + (lunaTile ? 1 : 0);
-  const compactCodex = logicalCount > USAGE_PREFERRED_POS.length && codexWindowData.length === 2;
+  const compactCodex = logicalCount > budget && codexWindowData.length === 2;
   const afterCodex = logicalCount - (compactCodex ? 1 : 0);
-  const stillOverflows = afterCodex > USAGE_PREFERRED_POS.length;
+  const stillOverflows = afterCodex > budget;
   // WHICH Claude readings share a key when the strip is one short. 5H is the
   // window that actually moves during a session — it is the reading a user
   // glances at — while 7D and the per-model weekly cap are both weekly and are
@@ -608,7 +613,7 @@ function buildUsageTiles(state: DashState): SessionDeckCell[] {
   // 6 logical readings on 3 keys, and every provider compacts to one pair tile
   // — nothing is dropped, each key keeps one provider's two windows.
   const afterClaude = afterCodex - ((compactClaude || pairScopedWith7D) ? 1 : 0);
-  const compactZai = afterClaude > USAGE_PREFERRED_POS.length && zaiWindowData.length === 2;
+  const compactZai = afterClaude > budget && zaiWindowData.length === 2;
   const cellsFor = (agent: 'claude' | 'codex' | 'zai', windows: UsageTankData[], compact: boolean): SessionDeckCell[] => {
     if (compact && windows.length === 2) {
       return [{ svg: renderUsagePairGauge(agent, [windows[0], windows[1]]), action }];
@@ -1013,14 +1018,27 @@ function buildList(
   // unavailable for sessions.
   const usageHere = new Map<string, SessionDeckCell>();
   if (view.showUsage) {
-    const usageTiles = buildUsageTiles(state);
+    // Stage 1 — the compacted strip tiles, to learn how many keys the roster
+    // leaves free. Stage 2 (#349) grows the budget into those free keys: one
+    // window per key instead of compacted pairs. The growth never takes a key
+    // from a session — `spare` is computed AFTER the roster, and when sessions
+    // overflow there is no spare by construction.
+    const stripTiles = buildUsageTiles(state);
     const maxReserve = Math.max(0, slots.length - 1);
     const preferred = sortPositions(USAGE_PREFERRED_POS.filter((p) => slots.includes(p)));
-    const reserveCount = Math.min(usageTiles.length, USAGE_PREFERRED_POS.length, maxReserve);
+    const stripCount = Math.min(stripTiles.length, USAGE_PREFERRED_POS.length, maxReserve);
+    const afterStrip = slots.length - stripCount;
+    const spare = sessions.length > afterStrip ? 0 : afterStrip - sessions.length;
+    const budget = spare > 0
+      ? Math.min(stripTiles.length + spare, maxReserve)
+      : USAGE_PREFERRED_POS.length;
+    const usageTiles = spare > 0 ? buildUsageTiles(state, budget) : stripTiles;
+    const reserveCount = Math.min(usageTiles.length, budget, maxReserve);
     // Fill the strip from its RIGHT end so a missing tile frees the LEFTMOST key
     // (which flows back to sessions) and the gauges stay flush against the clock
-    // — never a hole mid-strip.
-    const pinned = preferred.slice(Math.max(0, preferred.length - reserveCount));
+    // — never a hole mid-strip. Expansion keys ride the trailing fallback, so
+    // they land after the sessions' region rather than punching into it.
+    const pinned = preferred.slice(Math.max(0, preferred.length - Math.min(reserveCount, preferred.length)));
     // Tiles whose strip key the user didn't place fall back to trailing keys.
     const rest = slots.filter((p) => !pinned.includes(p));
     const fallback = rest.slice(rest.length - Math.max(0, reserveCount - pinned.length));
