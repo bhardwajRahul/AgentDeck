@@ -24,7 +24,7 @@ interface CodexWindowSnapshot {
 
 /** Per-agent water-tank usage gauge spec for the pinned bottom-row tiles. */
 export interface UsageGauge {
-  agent: 'claude' | 'codex';
+  agent: 'claude' | 'codex' | 'zai';
   window: '5h' | '7d';
   label: string;
   percent: number;
@@ -50,6 +50,7 @@ const MAX_USAGE_RESERVE = 4;
 
 const CLAUDE_USAGE_COLOR = Brand.claudeCode;
 const CODEX_USAGE_COLOR = Brand.codex;
+const ZAI_USAGE_COLOR = Brand.zai;
 
 export interface PresetAction {
   label: string;
@@ -79,7 +80,7 @@ export interface SessionSlotConfig {
   usagePercent?: number;
   usageColor?: string;
   usageKnown?: boolean;
-  usageAgent?: 'claude' | 'codex';
+  usageAgent?: 'claude' | 'codex' | 'zai';
   usageWindow?: '5h' | '7d';
   usageResetsAt?: string;
   usageFootnote?: string;
@@ -279,6 +280,9 @@ export class SessionSlotManager {
   private _sevenDayKnown = false;
   private _codexPrimary: CodexWindowSnapshot | null = null;
   private _codexSecondary: CodexWindowSnapshot | null = null;
+  // z.ai GLM Coding Plan windows (#348) — same snapshot grammar as Codex.
+  private _zaiPrimary: CodexWindowSnapshot | null = null;
+  private _zaiSecondary: CodexWindowSnapshot | null = null;
   private _codexLunaReserve: CodexLunaReserve | undefined;
   /** When the Codex snapshot behind both windows was written (see
    *  `CodexRateLimits.capturedAt`). Freshness is derived per repaint from this,
@@ -404,6 +408,7 @@ export class SessionSlotManager {
     sevenDayResetsAt?: string;
     usageStale?: boolean;
     codexRateLimits?: CodexRateLimits;
+    zaiRateLimits?: import('@agentdeck/shared').ZaiRateLimits;
     scopedLimits?: ScopedUsageLimit[];
   }): void {
     const stale = usage.usageStale === true;
@@ -416,6 +421,14 @@ export class SessionSlotManager {
     // source or went stale.
     this._fiveHourKnown = !stale && usage.fiveHourPercent != null;
     this._sevenDayKnown = !stale && usage.sevenDayPercent != null;
+
+    const zr = usage.zaiRateLimits;
+    this._zaiPrimary = zr?.primary
+      ? { percent: zr.primary.usedPercent, resetsAt: zr.primary.resetsAt, windowMinutes: zr.primary.windowMinutes, stale: zr.primary.stale === true }
+      : null;
+    this._zaiSecondary = zr?.secondary
+      ? { percent: zr.secondary.usedPercent, resetsAt: zr.secondary.resetsAt, windowMinutes: zr.secondary.windowMinutes, stale: zr.secondary.stale === true }
+      : null;
 
     const cx = usage.codexRateLimits;
     this._codexPrimary = cx?.primary
@@ -515,6 +528,18 @@ export class SessionSlotManager {
       });
     }
     if (scopedGauge && scoped?.active !== true) gauges.push(scopedGauge);
+    // z.ai GLM Coding Plan (#348) — same per-window grammar. The secondary
+    // window is labeled by its QUANTITY ("MCP" for tool calls), never a length,
+    // so it can never read as token usage.
+    for (const w of [this._zaiPrimary, this._zaiSecondary]) {
+      if (!w) continue;
+      gauges.push({
+        agent: 'codex', window: usageWindowKind(w.windowMinutes),
+        label: w === this._zaiSecondary && w.windowMinutes === 43200 ? 'MCP' : (usageWindowLabel(w.windowMinutes) || '5H'),
+        percent: w.percent, resetsAt: w.resetsAt,
+        known: true, color: ZAI_USAGE_COLOR,
+      });
+    }
     return gauges;
   }
 

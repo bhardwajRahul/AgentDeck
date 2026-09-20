@@ -151,17 +151,16 @@ export class UsageDialAction extends SingletonAction {
       void openAgentDeckAppOrGitHub().catch(() => {});
       return;
     }
-    // Touch-tap cycles the provider page (#349). The cycle skips E2's current
-    // provider whenever another page exists, so the two dials never show the
-    // same provider at once; with a single page the tap is a no-op re-anchor.
+    // Touch-tap cycles the provider page (#349) through ALL available providers.
+    // The never-same-provider preference is the ANCHOR default, not a cycle
+    // restriction: excluding E2's provider from the cycle made it impossible
+    // to reach z.ai when E2 was anchored there and only codex+z.ai were live
+    // (the filtered list was length 1 — a no-op cycle).
     const available = availableUsageProviders(getUsageModeData());
     if (available.length < 2) return;
-    const e2 = getUsageDialSelections().e2;
-    const cycle = available.filter((p) => p !== e2);
-    const list = cycle.length > 0 ? cycle : available;
     const current = getUsageDialSelections().e3;
-    const at = list.indexOf(current);
-    const next = list[((at < 0 ? 0 : at) + 1) % list.length];
+    const at = available.indexOf(current);
+    const next = available[((at < 0 ? 0 : at) + 1) % available.length];
     setE3UsageProvider(next);
     dlog('UsageDial', `touch-tap → provider=${next}`);
     refreshUsageDials();
