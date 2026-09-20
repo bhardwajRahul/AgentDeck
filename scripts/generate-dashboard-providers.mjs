@@ -7,7 +7,10 @@ const source = fs.readFileSync(path.join(root, 'bridge/src/dashboard-providers.t
 const ids = [...source.match(/DASHBOARD_PROVIDER_IDS = \[([^\]]+)\]/s)[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
 const list = `[${ids.map(id => JSON.stringify(id)).join(', ')}]`;
 const targets = [
-  ['apple/AgentDeck/Daemon/Server/DaemonServer.swift', /let allowed = \["claude"[^\n]+\]/, `let allowed = ${list}`],
+  // The Swift resolver's vocabulary (DashboardProviders.swift) and the menu
+  // order; providerDisplayResponse routes through the resolver, so the old
+  // local `let allowed` slot in DaemonServer is gone.
+  ['apple/AgentDeck/Daemon/Server/DashboardProviders.swift', /static let providerIds: \[String\] = \[[^\n]+\]/, `static let providerIds: [String] = ${list}`],
   ['apple/AgentDeck/UI/Monitor/TopologyRail.swift', /private let providerOrder = \[[^\n]+\]/, `private let providerOrder = ${list}`],
 ];
 let drift = false;

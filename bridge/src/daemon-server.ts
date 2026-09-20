@@ -2127,7 +2127,22 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     if (pathname === '/dashboard/providers' && (req.method === 'GET' || req.method === 'POST')) {
       void (async () => {
         try {
-          const providers = dashboardProviders(req.method === 'POST' ? await readJsonBody(req, 4096) : undefined);
+          // The additive join (#351) is gated on CONFIRMED providers — ids the
+          // daemon can currently see live — so a never-offered id joins the
+          // saved list only when it actually has something to show.
+          const confirmed = [
+            ...(core.oauthConnected ? ['claude'] : []),
+            ...(core.lastBuiltCodexRateLimits ? ['codex'] : []),
+            ...(core.cachedZaiQuota ? ['zai'] : []),
+            ...(core.cachedGatewayConnected ? ['openclaw'] : []),
+            ...((core.cachedMlxModels?.length ?? 0) > 0 ? ['mlx'] : []),
+            ...(core.cachedOllamaStatus ? ['ollama'] : []),
+            ...(core.cachedAntigravityStatus?.planName ? ['antigravity'] : []),
+          ];
+          const providers = dashboardProviders(
+            req.method === 'POST' ? await readJsonBody(req, 4096) : undefined,
+            confirmed,
+          );
           res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify({ providers: Array.isArray(providers) ? providers : null }));
         } catch (error) {

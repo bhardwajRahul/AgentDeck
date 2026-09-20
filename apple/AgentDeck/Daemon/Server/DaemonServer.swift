@@ -9505,25 +9505,59 @@ final class DaemonServer {
     }
 
     /// Persist the shared display list without altering provider observation.
+    /// The decision itself is the cross-daemon mirror `DashboardProviders.resolve`
+    /// (#351): a never-offered CONFIRMED provider joins the saved list once, a
+    /// deliberate later hide always wins.
     private func providerDisplayResponse(_ update: [String: Any]?) -> HTTPServer.HTTPResponse {
         let url = AgentDeckPaths.settingsJson
         var root = ((try? Data(contentsOf: url)).flatMap {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         }) ?? [:]
+        let before = DashboardProviders.Prefs(
+            providers: root["dashboardProviders"] as? [String],
+            seen: root["dashboardProvidersSeen"] as? [String]
+        )
+        // The additive join is gated on CONFIRMED providers — ids this daemon
+        // can currently see live — so a never-offered id joins only when it
+        // actually has something to show.
+        var confirmed: [String] = []
+        if effectiveOauthConnected() { confirmed.append("claude") }
+        if usageAPI.codexRateLimits(accountPlan: codexAuthStatusSnapshot()?.planType) != nil ||
+            codexAuthStatusSnapshot()?.planType != nil { confirmed.append("codex") }
+        if ZaiUsageClient.shared.cached() != nil { confirmed.append("zai") }
+        if cachedGatewayConnected { confirmed.append("openclaw") }
+        if !cachedMlxModels.isEmpty { confirmed.append("mlx") }
+        if cachedOllamaStatus != nil { confirmed.append("ollama") }
+        if cachedAntigravityStatus?.planName != nil { confirmed.append("antigravity") }
+
+        let parsedUpdate: DashboardProviders.Update?
         if let update {
-            let allowed = ["claude", "codex", "zai", "openclaw", "mlx", "ollama", "antigravity"]
-            guard let values = update["providers"] as? [String], values.allSatisfy(allowed.contains) else {
+            guard let values = update["providers"] as? [Any] else {
                 return .json(["error": "Invalid providers"], status: 400)
             }
-            if update["initialize"] as? Bool != true || root["dashboardProviders"] as? [String] == nil {
-                root["dashboardProviders"] = allowed.filter(values.contains)
-                do {
-                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try JSONSerialization.data(withJSONObject: root).write(to: url, options: .atomic)
-                } catch { return .json(["error": "Unable to save providers"], status: 500) }
-            }
+            parsedUpdate = DashboardProviders.Update(
+                providers: values,
+                initialize: update["initialize"] as? Bool == true
+            )
+        } else {
+            parsedUpdate = nil
         }
-        return .json(["providers": root["dashboardProviders"] as? [String] as Any? ?? NSNull()])
+
+        let after: DashboardProviders.Prefs
+        do {
+            after = try DashboardProviders.resolve(before, update: parsedUpdate, confirmed: confirmed)
+        } catch {
+            return .json(["error": "Invalid providers"], status: 400)
+        }
+        if after != before {
+            root["dashboardProviders"] = after.providers
+            root["dashboardProvidersSeen"] = after.seen
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try JSONSerialization.data(withJSONObject: root).write(to: url, options: .atomic)
+            } catch { return .json(["error": "Unable to save providers"], status: 500) }
+        }
+        return .json(["providers": after.providers as Any? ?? NSNull()])
     }
 
     /// Read the `displaySleepDim` object from settings.json into
