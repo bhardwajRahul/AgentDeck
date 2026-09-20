@@ -16,7 +16,7 @@
  * 200×100 Stream Deck+ encoder LCD views (`renderUsageEncoderBoth`,
  * `renderUsageEncoderSingle`).
  */
-import { Brand, Tide, UI, CLAUDE_LOGO_PATH, CODEX_LOGO_PATH } from '@agentdeck/shared';
+import { Brand, Tide, UI, CLAUDE_LOGO_PATH, CODEX_LOGO_PATH, ZAI_LOGO_PATHS, ZAI_LOGO_VIEWBOX } from '@agentdeck/shared';
 import type { CodexLunaReserve } from '@agentdeck/shared';
 import { formatResetTime, splitResetTwoLine, formatScopedLabel } from '../utility-modes/usage.js';
 
@@ -32,31 +32,40 @@ const HEADLINE = '#ffffff';
 const COUNTDOWN = '#ffffff';
 
 /** Agent brand colour, used to tint the provider logo (NOT the fill — fill is severity). */
-const BRAND_COLOR: Record<'claude' | 'codex', string> = {
+const BRAND_COLOR: Record<'claude' | 'codex' | 'zai', string> = {
   claude: Brand.claudeCode, // #C07058
   codex: Brand.codex,       // #6166E0
+  zai: Brand.zai,           // #1F63EC
 };
 
-/** Canonical provider brand mark (viewBox 0 0 24 24). Replaces the old identity dot. */
-const BRAND_LOGO_PATH: Record<'claude' | 'codex', string> = {
-  claude: CLAUDE_LOGO_PATH,
-  codex: CODEX_LOGO_PATH,
+/** Canonical provider brand marks. viewBox is 24 except z.ai's upstream mark. */
+const BRAND_LOGO_PATHS: Record<'claude' | 'codex' | 'zai', string[]> = {
+  claude: [CLAUDE_LOGO_PATH],
+  codex: [CODEX_LOGO_PATH],
+  zai: ZAI_LOGO_PATHS,
+};
+const BRAND_LOGO_VIEWBOX: Record<'claude' | 'codex' | 'zai', number> = {
+  claude: 24,
+  codex: 24,
+  zai: ZAI_LOGO_VIEWBOX,
 };
 
 /**
  * Provider brand mark for the top-right corner (the agent identity, replacing
- * the old dot). The 24-unit path is scaled to `size` and centred on (cx,cy),
+ * the old dot). The path set is scaled to `size` and centred on (cx,cy),
  * filled with the brand colour, over a subtle dark scrim circle so it stays
  * legible even when a ~100% fill colours the whole tile. `dim` greys it for the
  * unknown tile.
  */
-function brandLogo(agent: 'claude' | 'codex', cx: number, cy: number, size: number, dim = false): string {
-  const s = size / 24;
+function brandLogo(agent: 'claude' | 'codex' | 'zai', cx: number, cy: number, size: number, dim = false): string {
+  const box = BRAND_LOGO_VIEWBOX[agent];
+  const s = size / box;
   const color = dim ? LABEL_DIM : BRAND_COLOR[agent];
   return (
     `<circle cx="${cx}" cy="${cy}" r="${(size / 2 + 3).toFixed(1)}" fill="${CHIP}" opacity="0.55"/>` +
-    `<g transform="translate(${cx},${cy}) scale(${s.toFixed(3)}) translate(-12,-12)">` +
-    `<path d="${BRAND_LOGO_PATH[agent]}" fill="${color}" fill-rule="evenodd"/></g>`
+    `<g transform="translate(${cx},${cy}) scale(${s.toFixed(3)}) translate(${-box / 2},${-box / 2})">` +
+    BRAND_LOGO_PATHS[agent].map((p) => `<path d="${p}" fill="${color}" fill-rule="evenodd"/>`).join('') +
+    `</g>`
   );
 }
 
@@ -89,7 +98,7 @@ function rampColor(used: number, stale = false, inactive = false): { fill: strin
 }
 
 export interface UsageGaugeData {
-  agent: 'claude' | 'codex';
+  agent: 'claude' | 'codex' | 'zai';
   /** Which rolling window this tile represents (drives the clip id + fallback). */
   window: '5h' | '7d';
   /** Tile label, e.g. "5H", "7D". Agent identity rides the brand dot, not a prefix. */
@@ -161,7 +170,7 @@ function clampPct(p: number): number {
 export function renderUsageGauge(data: UsageGaugeData): string {
   if (data.luna) return renderLunaReserveGauge(data.luna);
   const known = data.known !== false;
-  const agent = data.agent === 'codex' ? 'codex' : 'claude';
+  const agent = data.agent;
   const label = data.label || data.window.toUpperCase();
   const clipId = `ug-${agent}-${data.window}`;
   const clip = `<defs><clipPath id="${clipId}"><rect x="0" y="0" width="${W}" height="${H}" rx="${RX}"/></clipPath></defs>`;
@@ -267,7 +276,7 @@ export interface UsageEncoderSideCard {
 }
 
 export interface UsageEncoderData {
-  agent: 'claude' | 'codex';
+  agent: 'claude' | 'codex' | 'zai';
   /** Top-left title, e.g. "CLAUDE" / "CODEX". */
   title: string;
   fiveHour: UsageEncoderTank;
@@ -307,7 +316,7 @@ function encSvgWrap(inner: string): string {
 /** Readable provider identity plus the canonical brand mark. Claude and Codex
  * otherwise share the same 5H/7D layout and are easy to confuse at a glance. */
 function encHeader(data: UsageEncoderData, muted = false): string {
-  const agent = data.agent === 'codex' ? 'codex' : 'claude';
+  const agent = data.agent;
   return (
     `<text x="5" y="13" font-family="JetBrains Mono, monospace" font-size="10" font-weight="bold" fill="${muted ? LABEL_DIM : HEADLINE}">${esc(data.title)}</text>`
     + brandLogo(agent, 188, 11, 14, muted)
@@ -395,7 +404,7 @@ function encPanel(
  *  tiny corner logo next to stark floating text, which read as "broken" when a
  *  single provider had no data. */
 function encNote(data: UsageEncoderData): string {
-  const agent = data.agent === 'codex' ? 'codex' : 'claude';
+  const agent = data.agent;
   const logoSize = 30;
   // brandLogo's x/y are the mark's CENTRE (see encHeader), so centre it on the
   // canvas: title above, mark in the middle, status line beneath.
