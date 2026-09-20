@@ -100,6 +100,7 @@ export function updateSlotUsage(usage: {
   sevenDayResetsAt?: string;
   usageStale?: boolean;
   codexRateLimits?: CodexRateLimits;
+  zaiRateLimits?: import('@agentdeck/shared').ZaiRateLimits;
   scopedLimits?: ScopedUsageLimit[];
 }): void {
   manager.updateUsage(usage);
