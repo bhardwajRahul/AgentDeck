@@ -149,6 +149,17 @@ final class ZaiUsageClient: @unchecked Sendable {
 
     private let state = ZaiUsageState()
 
+    /// Keychain reads can block on `mach_msg2_trap` while macOS shows the ACL
+    /// approval prompt (a first-run access from a newly signed build). The
+    /// daemon actor must never wait on that — the whole daemon (health
+    /// included) shares the actor — so availability checks hop to a detached
+    /// task. Same idiom as SettingsScreen's Keychain reads.
+    static func hasKeyOffActor() async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            ZaiUsageApiKeyStore.loadKey() != nil
+        }.value
+    }
+
     func hasKey() -> Bool { ZaiUsageApiKeyStore.loadKey() != nil }
 
     /// The cached reading and when it was fetched, if any.
@@ -157,9 +168,13 @@ final class ZaiUsageClient: @unchecked Sendable {
     }
 
     /// Fetch the quota. Returns a not-fresh cached reading on failure, and
-    /// `{data: nil, fresh: false}` only when no key is configured.
+    /// `{data: nil, fresh: false}` only when no key is configured. The key
+    /// read happens off the caller's actor (see `hasKeyOffActor`).
     func fetch() async -> ZaiUsageResult {
-        guard let key = ZaiUsageApiKeyStore.loadKey() else {
+        let key = await Task.detached(priority: .userInitiated) {
+            ZaiUsageApiKeyStore.loadKey()
+        }.value
+        guard let key else {
             return ZaiUsageResult(data: nil, fresh: false)
         }
         if state.cacheFresh(now: Date(), ttl: Self.cacheTTL, slack: Self.cacheSlack) {
@@ -239,13 +254,14 @@ final class ZaiUsageClient: @unchecked Sendable {
 
     /// Map a classified window onto the wire window shape (stale marking is
     /// the payload layer's job, same as Codex).
-    private func wireWindow(_ window: ZaiQuotaRules.Window?) -> CodexRateLimitWindow? {
+    private func wireWindow(_ window: ZaiQuotaRules.Window?) -> ZaiWindow? {
         guard let window else { return nil }
-        return CodexRateLimitWindow(
+        return ZaiWindow(
             usedPercent: Double(window.usedPercent),
             windowMinutes: window.windowMinutes,
             resetsAt: window.resetsAtIso,
-            stale: nil
+            stale: nil,
+            quantity: window.quantity
         )
     }
 

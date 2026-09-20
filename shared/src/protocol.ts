@@ -202,8 +202,8 @@ export interface CodexRateLimits {
  *  schema — `limitId` says which quantity the number belongs to, the same
  *  "which limit" axis Codex carries). */
 export interface ZaiRateLimits {
-  primary?: CodexRateLimitWindow;
-  secondary?: CodexRateLimitWindow;
+  primary?: ZaiWindow;
+  secondary?: ZaiWindow;
   /** Plan tier stamped into every snapshot ("lite" | "pro" | "max"). */
   planType?: string;
   /** Schema family the windows were read from: "standard" (TOKENS_LIMIT +
@@ -214,6 +214,15 @@ export interface ZaiRateLimits {
    *  an active poll re-fetches regularly, so an aged stamp means the poll is
    *  failing, and the reading dims rather than reading as live. */
   capturedAt?: string;
+}
+
+/** A z.ai quota window — the shared window shape plus WHICH QUANTITY it
+ *  meters: token/credits windows (`tokens`) or the MCP tool-call quota
+ *  (`mcp`). They are different kinds of usage rendered side by side, and a
+ *  surface must never present an MCP gauge as token usage (or vice versa);
+ *  the label follows the quantity ("5h" vs "MCP"). */
+export interface ZaiWindow extends CodexRateLimitWindow {
+  quantity?: 'tokens' | 'mcp';
 }
 
 // ===== Bridge → Plugin (State Updates) =====

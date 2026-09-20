@@ -12,6 +12,7 @@ final class ZaiQuotaRulesVectorsTests: XCTestCase {
         let usedPercent: Int
         let windowMinutes: Int
         let resetsAt: String?
+        let quantity: String?
     }
     private struct QuotaVector: Decodable {
         let note: String
@@ -93,7 +94,7 @@ final class ZaiQuotaRulesVectorsTests: XCTestCase {
     }
 
     private func wire(_ w: ZaiQuotaRules.Window) -> Window {
-        Window(usedPercent: w.usedPercent, windowMinutes: w.windowMinutes, resetsAt: w.resetsAtIso)
+        Window(usedPercent: w.usedPercent, windowMinutes: w.windowMinutes, resetsAt: w.resetsAtIso, quantity: w.quantity)
     }
 
     func testPaygKeyVectorsMatch() throws {

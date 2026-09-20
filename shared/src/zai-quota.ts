@@ -26,7 +26,7 @@
  *     lite tier: unit=3/number=5 session + unit=6/number=1 weekly)
  */
 
-import type { CodexRateLimitWindow, ZaiRateLimits } from './protocol.js';
+import type { ZaiRateLimits } from './protocol.js';
 
 /** 5-hour rolling credits window (`TOKENS_LIMIT`, or `CREDIT_LIMIT unit=3`). */
 export const ZAI_SESSION_WINDOW_MINUTES = 300;
@@ -174,9 +174,12 @@ export function zaiQuotaFromLimits(limits: unknown, level: unknown): ZaiQuotaWin
     kind === 'weekly' ? ZAI_WEEKLY_WINDOW_MINUTES
       : kind === 'mcp' ? ZAI_MCP_WINDOW_MINUTES
         : ZAI_SESSION_WINDOW_MINUTES;
-  const toWindow = (r: ZaiWindowReading): CodexRateLimitWindow => ({
+  const toWindow = (r: ZaiWindowReading): import('./protocol.js').ZaiWindow => ({
     usedPercent: Math.round(r.usedPercent),
     windowMinutes: windowMinutesFor(r.kind),
+    // The quantity a surface must not conflate: MCP meters tool CALLS, the
+    // others meter token credits.
+    quantity: r.kind === 'mcp' ? 'mcp' : 'tokens',
     ...(r.resetsAtMs != null ? { resetsAt: new Date(r.resetsAtMs).toISOString() } : {}),
   });
 

@@ -24,6 +24,7 @@ import dev.agentdeck.ui.eink.formatDuration
 import dev.agentdeck.ui.eink.formatDurationLong
 import dev.agentdeck.ui.theme.AgentDeckColors
 import dev.agentdeck.util.codexLimitRows
+import dev.agentdeck.util.zaiLimitRows
 
 /**
  * Compact usage summary card for DashboardScreen.

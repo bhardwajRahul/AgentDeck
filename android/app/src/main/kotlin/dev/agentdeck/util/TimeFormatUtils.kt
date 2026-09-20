@@ -1,6 +1,8 @@
 package dev.agentdeck.util
 
 import dev.agentdeck.net.CodexRateLimits
+import dev.agentdeck.net.ZaiRateLimits
+import dev.agentdeck.net.ZaiWindow
 import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -142,23 +144,25 @@ fun codexLimitRows(limits: CodexRateLimits?, nowMs: Long = System.currentTimeMil
 
 /**
  * z.ai (GLM Coding Plan) usage rows — the same window grammar as the Codex
- * rows. The `agentType` stays "zai", which is deliberately ABSENT from the
- * BrandIcon allow-list: no upstream z.ai brand mark ships in design/brand/
- * (marks are upstream SVGs, never redrawn), so these gauges carry no icon
- * while [codexLimitRows] carry the Codex mark — the unknown-agent rule
- * rendering as nothing is exactly the wanted neutral identity. Labels derive
- * from each window's length (300 → "5h", 43200 → "30d"). NOT gated by Claude's
- * `usageStale`; each window carries its own stale flag (#348).
+ * rows. The `agentType` "zai" resolves to the upstream z.ai mark in the
+ * BrandIcon registry (design/brand/zai.svg), so these gauges carry the real
+ * provider logo like [codexLimitRows] carries the Codex mark. The MCP
+ * tool-call quota labels by its QUANTITY ("mcp"), never its length. NOT gated
+ * by Claude's `usageStale`; each window carries its own stale flag (#348).
  */
 fun zaiLimitRows(limits: ZaiRateLimits?, nowMs: Long = System.currentTimeMillis()): List<ProviderLimitRow> {
     if (limits == null) return emptyList()
     return buildList {
+        // The MCP tool-call quota is labeled by its QUANTITY, not its length —
+        // "MCP" must never read as token usage.
+        fun label(w: ZaiWindow): String =
+            if (w.quantity == "mcp") "mcp" else windowLabel(w.windowMinutes)
         limits.primary?.let { p ->
             val pct = p.usedPercent
             if (pct != null) {
                 add(
                     ProviderLimitRow(
-                        "zai", windowLabel(p.windowMinutes), pct, p.resetsAt, p.stale == true,
+                        "zai", label(p), pct, p.resetsAt, p.stale == true,
                         CodexFreshnessRules.footnote(p.stale == true, limits.capturedAt, nowMs),
                     ),
                 )
@@ -169,7 +173,7 @@ fun zaiLimitRows(limits: ZaiRateLimits?, nowMs: Long = System.currentTimeMillis(
             if (pct != null) {
                 add(
                     ProviderLimitRow(
-                        "zai", windowLabel(s.windowMinutes), pct, s.resetsAt, s.stale == true,
+                        "zai", label(s), pct, s.resetsAt, s.stale == true,
                         CodexFreshnessRules.footnote(s.stale == true, limits.capturedAt, nowMs),
                     ),
                 )

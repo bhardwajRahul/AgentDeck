@@ -8644,14 +8644,17 @@ final class DaemonServer {
 
         // z.ai GLM Coding Plan — provider-account poll (#348). No-ops with no
         // key pasted; independent of every harness that might use the plan.
+        // Key availability is read OFF the actor: a Keychain ACL prompt must
+        // never gate daemon startup (it wedged /health on the first signed
+        // relaunch — the SettingsScreen Keychain trap, daemon-side).
         zaiUsagePollTask = Task { [weak self] in
-            if ZaiUsageClient.shared.hasKey() {
+            if await ZaiUsageClient.hasKeyOffActor() {
                 _ = await self?.refreshZaiUsage()
             }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.zaiUsagePollInterval))
                 guard let self else { break }
-                guard ZaiUsageClient.shared.hasKey() else { continue }
+                guard await ZaiUsageClient.hasKeyOffActor() else { continue }
                 guard await self.wsServer.hasClients() else { continue }
                 _ = await self.refreshZaiUsage()
             }
@@ -9797,11 +9800,11 @@ final class DaemonServer {
     }
 
     /// Refresh the z.ai GLM Coding Plan reading (#348). The client owns the
-    /// cache and freshness semantics; the daemon just triggers it and
-    /// broadcasts. A not-fresh result keeps the aged reading — read-time
-    /// retirement handles the display bound.
+    /// cache and freshness semantics (key reads stay off this actor); the
+    /// daemon just triggers it and broadcasts. A not-fresh result keeps the
+    /// aged reading — read-time retirement handles the display bound.
     private func refreshZaiUsage() async {
-        guard ZaiUsageClient.shared.hasKey() else { return }
+        guard await ZaiUsageClient.hasKeyOffActor() else { return }
         _ = await ZaiUsageClient.shared.fetch()
         broadcastUsage()
     }
@@ -10152,9 +10155,10 @@ final class DaemonServer {
         now: Date = Date()
     ) -> [String: Any]? {
         guard let cached else { return nil }
-        func window(_ w: CodexRateLimitWindow?) -> [String: Any]? {
+        func window(_ w: ZaiWindow?) -> [String: Any]? {
             guard let w else { return nil }
             var d: [String: Any] = ["usedPercent": w.usedPercent ?? 0, "windowMinutes": w.windowMinutes ?? 0]
+            if let quantity = w.quantity { d["quantity"] = quantity }
             if isCodexWindowStale(w.resetsAt) {
                 d["stale"] = true
             } else if let resetsAt = w.resetsAt {

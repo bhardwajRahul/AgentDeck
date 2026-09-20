@@ -24,7 +24,7 @@
 // against; `scripts/check-preview-mirror-sync.mjs` verifies they match the
 // current `git hash-object` of each file and fails CI when the origin drifts
 // ahead of this mirror. Update them whenever you re-port.
-// SYNC-HASH shared/src/d200h-layout.ts f26297e8c6320ad3a46b3088c6f77750f4032a4a
+// SYNC-HASH shared/src/d200h-layout.ts 3cea2f0d5a42b29702e71380bf0526817727dd28
 // SYNC-HASH shared/src/session-utils.ts 9b6eebeba19a0bb6ffe7c633d98c83dcee9e55cf
 //
 // INTENTIONALLY OMITTED (not needed by a read-only preview):
@@ -218,11 +218,14 @@ public struct D200HUsage: Equatable, Sendable {
     public var zaiPrimaryPercent: Double?
     public var zaiPrimaryWindowMinutes: Int?
     public var zaiPrimaryStale: Bool
+    public var zaiPrimaryIsMcp: Bool
     /// z.ai long window (weekly credits or the monthly MCP quota — the wire's
-    /// `limitId` says which). nil → tile omitted.
+    /// `quantity` says which; an MCP window labels "MCP", never its length).
+    /// nil → tile omitted.
     public var zaiSecondaryPercent: Double?
     public var zaiSecondaryWindowMinutes: Int?
     public var zaiSecondaryStale: Bool
+    public var zaiSecondaryIsMcp: Bool
     /// ISO-8601 instant the z.ai reading was fetched (`ZaiRateLimits.capturedAt`).
     public var zaiCapturedAt: String?
     /// Luna-only reserve pool. Non-nil → the Codex 5H/7D tiles are replaced by
@@ -244,9 +247,11 @@ public struct D200HUsage: Equatable, Sendable {
         zaiPrimaryPercent: Double? = nil,
         zaiPrimaryWindowMinutes: Int? = nil,
         zaiPrimaryStale: Bool = false,
+        zaiPrimaryIsMcp: Bool = false,
         zaiSecondaryPercent: Double? = nil,
         zaiSecondaryWindowMinutes: Int? = nil,
         zaiSecondaryStale: Bool = false,
+        zaiSecondaryIsMcp: Bool = false,
         zaiCapturedAt: String? = nil,
         lunaReserve: D200HLunaReserve? = nil
     ) {
@@ -264,9 +269,11 @@ public struct D200HUsage: Equatable, Sendable {
         self.zaiPrimaryPercent = zaiPrimaryPercent
         self.zaiPrimaryWindowMinutes = zaiPrimaryWindowMinutes
         self.zaiPrimaryStale = zaiPrimaryStale
+        self.zaiPrimaryIsMcp = zaiPrimaryIsMcp
         self.zaiSecondaryPercent = zaiSecondaryPercent
         self.zaiSecondaryWindowMinutes = zaiSecondaryWindowMinutes
         self.zaiSecondaryStale = zaiSecondaryStale
+        self.zaiSecondaryIsMcp = zaiSecondaryIsMcp
         self.zaiCapturedAt = zaiCapturedAt
         self.lunaReserve = lunaReserve
     }
@@ -811,14 +818,16 @@ public enum D200HLayoutModel {
         // window's own length, so the monthly MCP window reads "30D".
         var zaiTiles: [(D200HSlotKind, String, String)] = []
         var zaiPair: [D200HUsagePairWindow] = []
+        // MCP windows label by their QUANTITY ("MCP"), never their length —
+        // they meter tool calls, not tokens (TS #348).
         if let p = usage.zaiPrimaryPercent {
-            let label = usageWindowLabel(usage.zaiPrimaryWindowMinutes)
+            let label = usage.zaiPrimaryIsMcp ? "MCP" : usageWindowLabel(usage.zaiPrimaryWindowMinutes)
             let footnote = codexFootnote(stale: usage.zaiPrimaryStale, capturedAt: usage.zaiCapturedAt)
             zaiTiles.append((.usageGauge(agent: "zai", window: usageWindowKind(usage.zaiPrimaryWindowMinutes), percent: p, known: true, stale: usage.zaiPrimaryStale, inactive: false, footnote: footnote), label, "zai"))
             zaiPair.append(.init(label: label, percent: p, stale: usage.zaiPrimaryStale, footnote: footnote))
         }
         if let s = usage.zaiSecondaryPercent {
-            let label = usageWindowLabel(usage.zaiSecondaryWindowMinutes)
+            let label = usage.zaiSecondaryIsMcp ? "MCP" : usageWindowLabel(usage.zaiSecondaryWindowMinutes)
             let footnote = codexFootnote(stale: usage.zaiSecondaryStale, capturedAt: usage.zaiCapturedAt)
             zaiTiles.append((.usageGauge(agent: "zai", window: usageWindowKind(usage.zaiSecondaryWindowMinutes), percent: s, known: true, stale: usage.zaiSecondaryStale, inactive: false, footnote: footnote), label, "zai"))
             zaiPair.append(.init(label: label, percent: s, stale: usage.zaiSecondaryStale, footnote: footnote))

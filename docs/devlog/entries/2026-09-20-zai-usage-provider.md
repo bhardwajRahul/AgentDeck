@@ -47,3 +47,23 @@ design/brand/, and marks are never redrawn — identity is text until one does).
 Deferred to #348 phase 3: Stream Deck usage action (new UUID — marketplace
 decision), ESP32 firmware parse+render (fleet-gated OTA), model/tool-usage
 timeseries detail, cross-daemon z.ai relay over the sibling `/usage` path.
+
+**MCP is a different quantity, and now says so (owner direction, same day).**
+The 30d window meters MCP TOOL CALLS, not tokens, and rendering it with the
+window-length grammar let it read as token usage. The wire windows now carry
+`quantity: "tokens" | "mcp"` (SSOT-classified, vectors replayed by both
+suites), and every surface labels the MCP gauge by its quantity — "MCP" —
+never by its length. A first cut of measured 24h token volume
+(`tokensUsed24h` from the provider's `model-usage` report) shipped and was
+then withdrawn at owner direction — the credits windows are the signal; the
+extra request per poll bought a number nobody read.
+
+**The real z.ai mark (owner direction).** The upstream logo
+(z-cdn.chatglm.cn/z-ai/static/logo.svg, captured 2026-09-20) ships as
+`design/brand/zai.svg`: the Z's three strokes verbatim, mark without the
+app-icon plate, matching the mark-without-background convention of every
+other file there. Brand.zai (#1F63EC, measured from the same asset) joins the
+token chain; the D200H usage tile, the Pixoo HUD row and the Android usage
+card carry the mark (dot-matrix masks regenerated); the brand-assets contract
+test pins the geometry to both vector registries and RESOURCES.md records the
+source and trademark holder.

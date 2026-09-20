@@ -475,27 +475,31 @@ struct TopologyRail: View {
         return "GLM Coding Plan \(plan)"
     }
 
-    /// z.ai usage chips, mirroring the Codex window grammar. Labels derive from
-    /// each window's length, so the monthly MCP quota reads "30d".
+    /// z.ai usage chips, mirroring the Codex window grammar. The MCP tool-call
+    /// quota is labeled by its QUANTITY, not its length — "MCP" must never
+    /// read as token usage; the countdown carries the horizon.
     private var zaiRateLimitChips: [RateChip] {
         guard let limits = stateHolder.state.zaiRateLimits else { return [] }
         var chips: [RateChip] = []
+        func label(_ w: ZaiWindow) -> String {
+            w.quantity == "mcp" ? "MCP" : Self.windowLabel(w.windowMinutes)
+        }
         if let p = limits.primary, let pct = p.usedPercent {
             chips.append(.init(
-                label: Self.windowLabel(p.windowMinutes),
+                label: label(p),
                 percent: pct,
                 reset: formatResetTime(p.resetsAt),
                 stale: p.stale == true,
-                footnote: CodexUsageFreshness.footnote(window: p, capturedAt: limits.capturedAt)
+                footnote: CodexUsageFreshness.footnote(stale: p.stale == true, capturedAt: limits.capturedAt)
             ))
         }
         if let s = limits.secondary, let pct = s.usedPercent {
             chips.append(.init(
-                label: Self.windowLabel(s.windowMinutes),
+                label: label(s),
                 percent: pct,
                 reset: formatResetTime(s.resetsAt),
                 stale: s.stale == true,
-                footnote: CodexUsageFreshness.footnote(window: s, capturedAt: limits.capturedAt)
+                footnote: CodexUsageFreshness.footnote(stale: s.stale == true, capturedAt: limits.capturedAt)
             ))
         }
         return chips

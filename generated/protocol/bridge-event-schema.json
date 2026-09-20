@@ -2142,12 +2142,45 @@
           "type": "string"
         },
         "primary": {
-          "$ref": "#/definitions/CodexRateLimitWindow"
+          "$ref": "#/definitions/ZaiWindow"
         },
         "secondary": {
-          "$ref": "#/definitions/CodexRateLimitWindow"
+          "$ref": "#/definitions/ZaiWindow"
         }
       },
+      "type": "object"
+    },
+    "ZaiWindow": {
+      "additionalProperties": false,
+      "description": "A z.ai quota window — the shared window shape plus WHICH QUANTITY it meters: token/credits windows (`tokens`) or the MCP tool-call quota (`mcp`). They are different kinds of usage rendered side by side, and a surface must never present an MCP gauge as token usage (or vice versa); the label follows the quantity (\"5h\" vs \"MCP\").",
+      "properties": {
+        "quantity": {
+          "enum": [
+            "tokens",
+            "mcp"
+          ],
+          "type": "string"
+        },
+        "resetsAt": {
+          "description": "ISO-8601 reset instant (converted from the rollout's unix `resets_at`).",
+          "type": "string"
+        },
+        "stale": {
+          "description": "True when this window's snapshot has expired (its `resets_at` slid into the past with no fresher Codex activity). The passive rollout read is frozen, so the percent is last-known-only — renderers should dim the gauge and show a \"stale\" marker instead of a misleading \"now\" countdown. Set centrally in `buildUsageEvent`; `resetsAt` is cleared at the same time so no formatter prints \"now\".\n\nThis is the HARD signal — slot-based consumers (Pixoo renderers, ESP32 firmware) drop the gauge entirely on it. A merely OLD snapshot of a still- live window must therefore never set it; that rides `capturedAt` instead.",
+          "type": "boolean"
+        },
+        "usedPercent": {
+          "type": "number"
+        },
+        "windowMinutes": {
+          "description": "Rolling window length in minutes (primary ≈ 300 = 5h, secondary ≈ 10080 = 7d).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "usedPercent",
+        "windowMinutes"
+      ],
       "type": "object"
     }
   }

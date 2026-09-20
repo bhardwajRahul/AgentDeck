@@ -86,6 +86,7 @@ object DesignTokens {
         val opencode = Color(0xFF3A3A3A)
         val antigravity = Color(0xFF5F6368)
         val kiro = Color(0xFF7C3AED)
+        val zai = Color(0xFF1F63EC)
     }
 
     // === Type stack ===

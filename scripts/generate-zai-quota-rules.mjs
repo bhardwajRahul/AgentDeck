@@ -96,6 +96,10 @@ ${Object.entries(rules.planNames)
         let usedPercent: Int
         let windowMinutes: Int
         let resetsAtMs: Double?
+        /// Which quantity this window meters — "mcp" (tool calls) vs "tokens"
+        /// (credits). A surface must never present one as the other; the label
+        /// follows the quantity ("MCP" vs "5h").
+        let quantity: String
 
         /// ISO-8601 with milliseconds, byte-identical to the TS SSOT's
         /// \`new Date(ms).toISOString()\` — both suites replay the same vectors
@@ -193,7 +197,8 @@ ${Object.entries(rules.planNames)
             Window(
                 usedPercent: Int(r.usedPercent.rounded()),
                 windowMinutes: minutes,
-                resetsAtMs: r.resetsAtMs
+                resetsAtMs: r.resetsAtMs,
+                quantity: r.kind == .mcp ? "mcp" : "tokens"
             )
         }
         if let session { out.primary = toWindow(session, minutes: sessionWindowMinutes) }

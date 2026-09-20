@@ -739,10 +739,8 @@ function drawUsageHUD(
   if (!usageEvent) return;
   type Window = { percent: number; resetsAt?: string };
   type Provider = {
-    /** Official mark, or `zaiText` while no upstream z.ai mark ships in
-     *  design/brand/ (marks are upstream SVGs, never redrawn — a letterform
-     *  carries the identity instead). */
-    glyph: OfficialDotGlyphName | 'zaiText'; brand: RGB;
+    /** Official mark from design/brand/*.svg (upstream SVGs, never redrawn). */
+    glyph: OfficialDotGlyphName; brand: RGB;
     primary?: Window; secondary?: Window;
     subscriptionUntil?: string;
   };
@@ -779,7 +777,7 @@ function drawUsageHUD(
   const zaiSecondaryWindow = freshCodexWindow(usageEvent.zaiRateLimits?.secondary);
   if (zaiPrimaryWindow || zaiSecondaryWindow) {
     providers.push({
-      glyph: 'zaiText', brand: [78, 201, 176],
+      glyph: 'zai', brand: [31, 99, 236],  // Brand.zai (#1F63EC), measured from the upstream mark
       primary: zaiPrimaryWindow,
       secondary: zaiSecondaryWindow,
     });
@@ -795,10 +793,6 @@ function drawUsageHUD(
   const firstY = seatedProviders.length > 1 ? 50 : 57;
 
   function drawCreatureMarker(provider: Provider, rowY: number): void {
-    if (provider.glyph === 'zaiText') {
-      drawText(buf, 'Z', 8, rowY + 1, provider.brand);
-      return;
-    }
     const mask = OFFICIAL_DOT_GLYPHS[provider.glyph];
     const sourceSize = OFFICIAL_DOT_GLYPH_SIZE;
     // Sample the canonical square canvas instead of cropping its occupied

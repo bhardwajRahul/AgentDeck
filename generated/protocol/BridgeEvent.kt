@@ -37,6 +37,7 @@ private val klaxon = Klaxon()
     .convert(TokenStatus::class,         { TokenStatus.fromValue(it.string!!) },         { "\"${it.value}\"" })
     .convert(Type::class,                { Type.fromValue(it.string!!) },                { "\"${it.value}\"" })
     .convert(VoiceAssistantState::class, { VoiceAssistantState.fromValue(it.string!!) }, { "\"${it.value}\"" })
+    .convert(Quantity::class,            { Quantity.fromValue(it.string!!) },            { "\"${it.value}\"" })
 
 /**
  * Bridge → clients — fires when a run completes evaluation (layer 1 or 2).
@@ -1640,6 +1641,54 @@ data class ZaiRateLimits (
      */
     val planType: String? = null,
 
-    val primary: CodexRateLimitWindow? = null,
-    val secondary: CodexRateLimitWindow? = null
+    val primary: ZaiWindow? = null,
+    val secondary: ZaiWindow? = null
 )
+
+/**
+ * A z.ai quota window — the shared window shape plus WHICH QUANTITY it meters:
+ * token/credits windows (`tokens`) or the MCP tool-call quota (`mcp`). They are different
+ * kinds of usage rendered side by side, and a surface must never present an MCP gauge as
+ * token usage (or vice versa); the label follows the quantity ("5h" vs "MCP").
+ */
+data class ZaiWindow (
+    val quantity: Quantity? = null,
+
+    /**
+     * ISO-8601 reset instant (converted from the rollout's unix `resets_at`).
+     */
+    val resetsAt: String? = null,
+
+    /**
+     * True when this window's snapshot has expired (its `resets_at` slid into the past with no
+     * fresher Codex activity). The passive rollout read is frozen, so the percent is
+     * last-known-only — renderers should dim the gauge and show a "stale" marker instead of a
+     * misleading "now" countdown. Set centrally in `buildUsageEvent`; `resetsAt` is cleared at
+     * the same time so no formatter prints "now".
+     *
+     * This is the HARD signal — slot-based consumers (Pixoo renderers, ESP32 firmware) drop the
+     * gauge entirely on it. A merely OLD snapshot of a still- live window must therefore never
+     * set it; that rides `capturedAt` instead.
+     */
+    val stale: Boolean? = null,
+
+    val usedPercent: Double,
+
+    /**
+     * Rolling window length in minutes (primary ≈ 300 = 5h, secondary ≈ 10080 = 7d).
+     */
+    val windowMinutes: Double
+)
+
+enum class Quantity(val value: String) {
+    MCP("mcp"),
+    Tokens("tokens");
+
+    companion object {
+        public fun fromValue(value: String): Quantity = when (value) {
+            "mcp"    -> MCP
+            "tokens" -> Tokens
+            else     -> throw IllegalArgumentException()
+        }
+    }
+}

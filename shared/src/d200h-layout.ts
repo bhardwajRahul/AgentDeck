@@ -25,10 +25,10 @@ import {
 } from './svg-renderers/index.js';
 import { State, type PromptOption } from './states.js';
 import { sortSessions, foldCodexSessionsForDisplay } from './session-utils.js';
-import type { SessionInfo, SubscriptionInfo, CodexRateLimits, CodexRateLimitWindow, CodexLunaReserve, ScopedUsageLimit, ZaiRateLimits } from './protocol.js';
+import type { SessionInfo, SubscriptionInfo, CodexRateLimits, CodexRateLimitWindow, CodexLunaReserve, ScopedUsageLimit, ZaiRateLimits, ZaiWindow } from './protocol.js';
 import { Brand, Tide, UI } from './design-tokens.js';
 import { PASSIVE_OFFLINE_LABEL, OPEN_AGENTDECK_LABEL } from './connection-status.js';
-import { CLAUDE_LOGO_PATH, CODEX_LOGO_PATH } from './svg-renderers/agent-logos.js';
+import { CLAUDE_LOGO_PATH, CODEX_LOGO_PATH, ZAI_LOGO_PATHS, ZAI_LOGO_VIEWBOX } from './svg-renderers/agent-logos.js';
 import { formatScopedLabel, codexUsageFootnote, scopedLimitClaimsUsageKey, codexWindowsBeside } from './format-utils.js';
 
 /** Command dispatched when a key is pressed. `null` = inert tile (info/empty). */
@@ -289,39 +289,44 @@ export function renderLunaReserveTile(reserve: CodexLunaReserve): string {
     + `</svg>`;
 }
 
-/** Agent brand colours (Brand tokens) used to tint the provider logo. z.ai has
- *  no Brand token yet — no upstream mark ships in design/brand/, and a brand
- *  colour is not something to guess — so its tiles carry a text identity tag
- *  instead (see `usageBrandLogo`). */
+/** Agent brand colours (Brand tokens) used to tint the provider logo. */
 const USAGE_BRAND_COLOR: Partial<Record<'claude' | 'codex' | 'zai', string>> = {
   claude: Brand.claudeCode,
   codex: Brand.codex,
+  zai: Brand.zai,
 };
 
-/** Canonical provider brand mark (viewBox 0 0 24 24) per agent. */
-const USAGE_BRAND_LOGO: Partial<Record<'claude' | 'codex' | 'zai', string>> = {
-  claude: CLAUDE_LOGO_PATH,
-  codex: CODEX_LOGO_PATH,
+/** Canonical provider brand mark paths per agent. viewBox is 24 except z.ai,
+ *  whose upstream mark (design/brand/zai.svg) carries its own 30-unit box. */
+const USAGE_BRAND_LOGO: Partial<Record<'claude' | 'codex' | 'zai', string[]>> = {
+  claude: [CLAUDE_LOGO_PATH],
+  codex: [CODEX_LOGO_PATH],
+  zai: ZAI_LOGO_PATHS,
+};
+
+const USAGE_BRAND_VIEWBOX: Record<'claude' | 'codex' | 'zai', number> = {
+  claude: 24,
+  codex: 24,
+  zai: ZAI_LOGO_VIEWBOX,
 };
 
 /**
- * Provider brand mark for the top-right corner (the agent identity). 24-unit
- * path scaled to `size`, centred on (cx,cy), filled with the brand colour, over
+ * Provider brand mark for the top-right corner (the agent identity). Path set
+ * scaled to `size`, centred on (cx,cy), filled with the brand colour, over
  * a subtle dark scrim circle so it survives a ~100% fill. `dim` greys it.
- * A provider with no shipped upstream mark (z.ai today) falls back to a text
- * tag — brand marks are upstream SVGs, never redrawn.
+ * Every mark is the upstream geometry (design/brand/*.svg) — never redrawn.
  */
 function usageBrandLogo(agent: 'claude' | 'codex' | 'zai', cx: number, cy: number, size: number, dim: boolean): string {
-  const logoPath = USAGE_BRAND_LOGO[agent];
+  const logoPaths = USAGE_BRAND_LOGO[agent];
   const brandColor = USAGE_BRAND_COLOR[agent];
-  if (!logoPath || !brandColor) {
-    return `<text x="${cx}" y="${cy + Math.max(3, Math.round(size * 0.16))}" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="${Math.max(10, Math.round(size * 0.44))}" font-weight="bold" fill="${dim ? '#64748b' : Tide.s50}">z.ai</text>`;
-  }
-  const s = size / 24;
+  if (!logoPaths || !brandColor) return '';
+  const box = USAGE_BRAND_VIEWBOX[agent];
+  const s = size / box;
   const color = dim ? '#64748b' : brandColor;
   return `<circle cx="${cx}" cy="${cy}" r="${(size / 2 + 3).toFixed(1)}" fill="#0b1220" opacity="0.55"/>`
-    + `<g transform="translate(${cx},${cy}) scale(${s.toFixed(3)}) translate(-12,-12)">`
-    + `<path d="${USAGE_BRAND_LOGO[agent]}" fill="${color}" fill-rule="evenodd"/></g>`;
+    + `<g transform="translate(${cx},${cy}) scale(${s.toFixed(3)}) translate(${-box / 2},${-box / 2})">`
+    + logoPaths.map((p) => `<path d="${p}" fill="${color}"/>`).join('')
+    + `</g>`;
 }
 
 /** Severity ramp by USED percent: <=50 green, 50–80 amber, >80 red. */
@@ -563,15 +568,16 @@ function buildUsageTiles(state: DashState): SessionDeckCell[] {
     footnote: codexUsageFootnote(w, cx?.capturedAt)?.text,
   }));
 
-  // z.ai windows ride the same tank grammar — labels come from each window's
-  // own length, so the monthly MCP quota reads "30D", weekly credits "7D".
+  // z.ai windows ride the same tank grammar — the MCP tool-call quota is
+  // labeled by its QUANTITY ("MCP"), never by its length, so it can never
+  // read as token usage; token windows label by their own length ("5H"/"7D").
   const zr = state.zaiRateLimits;
   const zaiWindowData: UsageTankData[] = [zr?.primary, zr?.secondary]
-    .filter((w): w is CodexRateLimitWindow => w != null)
+    .filter((w): w is ZaiWindow => w != null)
     .map((w) => ({
       agent: 'zai' as const,
       window: usageWindowKind(w.windowMinutes),
-      label: usageWindowLabel(w.windowMinutes) || '5H',
+      label: w.quantity === 'mcp' ? 'MCP' : (usageWindowLabel(w.windowMinutes) || '5H'),
       usedPercent: w.usedPercent,
       resetsAt: w.resetsAt,
       known: true,

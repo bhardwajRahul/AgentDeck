@@ -53,6 +53,7 @@
     opencode: '#3a3a3a',
     antigravity: '#5F6368',
     kiro: '#7C3AED',
+    zai: '#1F63EC',
   };
 
   window.DT = { Tide, Ink, Kelp, Coral, Amber, Status, UI, Brand };

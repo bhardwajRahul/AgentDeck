@@ -15,6 +15,7 @@ import dev.agentdeck.net.SessionInfo
 import dev.agentdeck.net.SubscriptionInfo
 import dev.agentdeck.net.AntigravityStatusInfo
 import dev.agentdeck.net.CodexRateLimits
+import dev.agentdeck.net.ZaiRateLimits
 import dev.agentdeck.net.StateUpdate
 import dev.agentdeck.net.UsageUpdate
 import dev.agentdeck.net.VoiceState

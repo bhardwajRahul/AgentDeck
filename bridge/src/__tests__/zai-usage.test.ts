@@ -82,8 +82,8 @@ describe('fetchZaiQuota', () => {
     expect(first.fresh).toBe(true);
     expect(first.data?.planType).toBe('max');
     expect(first.data?.limitId).toBe('standard');
-    expect(first.data?.primary).toEqual({ usedPercent: 1, windowMinutes: 300, resetsAt: '2026-09-19T19:10:00.174Z' });
-    expect(first.data?.secondary).toEqual({ usedPercent: 100, windowMinutes: 43200, resetsAt: '2026-09-28T09:48:08.997Z' });
+    expect(first.data?.primary).toEqual({ usedPercent: 1, windowMinutes: 300, resetsAt: '2026-09-19T19:10:00.174Z', quantity: 'tokens' });
+    expect(first.data?.secondary).toEqual({ usedPercent: 100, windowMinutes: 43200, resetsAt: '2026-09-28T09:48:08.997Z', quantity: 'mcp' });
     expect(first.data?.capturedAt).toBeTruthy();
 
     // Within the TTL the shared file cache answers without the network.

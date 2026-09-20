@@ -2977,8 +2977,8 @@ struct ADZaiRateLimits: Codable, Equatable {
     var limitId: String?
     /// Plan tier stamped into every snapshot ("lite" | "pro" | "max").
     var planType: String?
-    var primary: ADCodexRateLimitWindow?
-    var secondary: ADCodexRateLimitWindow?
+    var primary: ADZaiWindow?
+    var secondary: ADZaiWindow?
 
     enum CodingKeys: String, CodingKey {
         case capturedAt = "capturedAt"
@@ -3011,8 +3011,8 @@ extension ADZaiRateLimits {
         capturedAt: String?? = nil,
         limitId: String?? = nil,
         planType: String?? = nil,
-        primary: ADCodexRateLimitWindow?? = nil,
-        secondary: ADCodexRateLimitWindow?? = nil
+        primary: ADZaiWindow?? = nil,
+        secondary: ADZaiWindow?? = nil
     ) -> ADZaiRateLimits {
         return ADZaiRateLimits(
             capturedAt: capturedAt ?? self.capturedAt,
@@ -3030,6 +3030,92 @@ extension ADZaiRateLimits {
     func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
         return String(data: try self.jsonData(), encoding: encoding)
     }
+}
+
+//
+// Hashable or Equatable:
+// The compiler will not be able to synthesize the implementation of Hashable or Equatable
+// for types that require the use of JSONAny, nor will the implementation of Hashable be
+// synthesized for types that have collections (such as arrays or dictionaries).
+
+/// A z.ai quota window — the shared window shape plus WHICH QUANTITY it meters:
+/// token/credits windows (`tokens`) or the MCP tool-call quota (`mcp`). They are different
+/// kinds of usage rendered side by side, and a surface must never present an MCP gauge as
+/// token usage (or vice versa); the label follows the quantity ("5h" vs "MCP").
+// MARK: - ADZaiWindow
+struct ADZaiWindow: Codable, Equatable {
+    var quantity: ADQuantity?
+    /// ISO-8601 reset instant (converted from the rollout's unix `resets_at`).
+    var resetsAt: String?
+    /// True when this window's snapshot has expired (its `resets_at` slid into the past with no
+    /// fresher Codex activity). The passive rollout read is frozen, so the percent is
+    /// last-known-only — renderers should dim the gauge and show a "stale" marker instead of a
+    /// misleading "now" countdown. Set centrally in `buildUsageEvent`; `resetsAt` is cleared at
+    /// the same time so no formatter prints "now".
+    ///
+    /// This is the HARD signal — slot-based consumers (Pixoo renderers, ESP32 firmware) drop the
+    /// gauge entirely on it. A merely OLD snapshot of a still- live window must therefore never
+    /// set it; that rides `capturedAt` instead.
+    var stale: Bool?
+    var usedPercent: Double
+    /// Rolling window length in minutes (primary ≈ 300 = 5h, secondary ≈ 10080 = 7d).
+    var windowMinutes: Double
+
+    enum CodingKeys: String, CodingKey {
+        case quantity = "quantity"
+        case resetsAt = "resetsAt"
+        case stale = "stale"
+        case usedPercent = "usedPercent"
+        case windowMinutes = "windowMinutes"
+    }
+}
+
+// MARK: ADZaiWindow convenience initializers and mutators
+
+extension ADZaiWindow {
+    init(data: Data) throws {
+        self = try newJSONDecoder().decode(ADZaiWindow.self, from: data)
+    }
+
+    init(_ json: String, using encoding: String.Encoding = .utf8) throws {
+        guard let data = json.data(using: encoding) else {
+            throw NSError(domain: "JSONDecoding", code: 0, userInfo: nil)
+        }
+        try self.init(data: data)
+    }
+
+    init(fromURL url: URL) throws {
+        try self.init(data: try Data(contentsOf: url))
+    }
+
+    func with(
+        quantity: ADQuantity?? = nil,
+        resetsAt: String?? = nil,
+        stale: Bool?? = nil,
+        usedPercent: Double? = nil,
+        windowMinutes: Double? = nil
+    ) -> ADZaiWindow {
+        return ADZaiWindow(
+            quantity: quantity ?? self.quantity,
+            resetsAt: resetsAt ?? self.resetsAt,
+            stale: stale ?? self.stale,
+            usedPercent: usedPercent ?? self.usedPercent,
+            windowMinutes: windowMinutes ?? self.windowMinutes
+        )
+    }
+
+    func jsonData() throws -> Data {
+        return try newJSONEncoder().encode(self)
+    }
+
+    func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
+        return String(data: try self.jsonData(), encoding: encoding)
+    }
+}
+
+enum ADQuantity: String, Codable, Equatable {
+    case mcp = "mcp"
+    case tokens = "tokens"
 }
 
 // MARK: - Helper functions for creating encoders and decoders

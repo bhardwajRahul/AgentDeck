@@ -248,6 +248,19 @@ data class CodexRateLimits(
     val capturedAt: String? = null,
 )
 
+/** A z.ai quota window — the shared window shape plus WHICH QUANTITY it
+ *  meters: token/credits windows ("tokens") or the MCP tool-call quota
+ *  ("mcp"). A surface must never present one as the other; the label follows
+ *  the quantity ("5h" vs "MCP"). */
+@Serializable
+data class ZaiWindow(
+    val usedPercent: Double? = null,
+    val windowMinutes: Int? = null,
+    val resetsAt: String? = null,
+    val stale: Boolean? = null,
+    val quantity: String? = null,
+)
+
 /** z.ai (GLM Coding Plan) usage limits — a direct provider-account reading
  *  (#348), independent of every harness that may use the plan. Same slot
  *  grammar as [CodexRateLimits]: `primary` = 5-hour credits window,
@@ -255,8 +268,8 @@ data class CodexRateLimits(
  *  the monthly MCP quota — [limitId] says which quantity). */
 @Serializable
 data class ZaiRateLimits(
-    val primary: CodexRateLimitWindow? = null,
-    val secondary: CodexRateLimitWindow? = null,
+    val primary: ZaiWindow? = null,
+    val secondary: ZaiWindow? = null,
     /** Plan tier stamped into every snapshot ("lite" | "pro" | "max"). */
     val planType: String? = null,
     /** Schema family the windows were read from: "standard" | "credit" | "payg". */

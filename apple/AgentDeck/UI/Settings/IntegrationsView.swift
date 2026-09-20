@@ -174,7 +174,8 @@ enum IntegrationCatalog {
         displayName: "z.ai GLM Coding Plan",
         kind: .apiKey,
         iconSystemName: "gauge.with.dots.needle.bottom.50percent",
-        iconTint: SessionBrand.color(for: "codex-cli"),
+        iconAgentType: "zai",
+        iconTint: SessionBrand.color(for: "zai"),
         oneLineHelp: "Remaining 5-hour and long-window credits for the GLM Coding Plan, read directly from your z.ai account.",
         connectInstructions: "Paste your z.ai coding-plan API key (z.ai/manage-apikey/apikey-list)."
     )
