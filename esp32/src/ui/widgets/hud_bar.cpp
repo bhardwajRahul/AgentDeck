@@ -1966,11 +1966,57 @@ void init(lv_obj_t* parent) {
         gaugeCx5hBox, gaugeCx5hFill, gaugeCx5hPct, gaugeCx5hPeriod, gaugeCx5hReset,
         gaugeCx7dBox, gaugeCx7dFill, gaugeCx7dPct, gaugeCx7dPeriod, gaugeCx7dReset);
     lv_obj_add_flag(codexGroup, LV_OBJ_FLAG_HIDDEN);
-    // z.ai (#350) — same tank grammar; the second gauge's period label flips
-    // to "MCP" at update time when the window meters tool calls.
-    zaiGroup = makeTankGroup(panelRight, "Z.AI", Theme::ZaiBlue,
-        gaugeZa5hBox, gaugeZa5hFill, gaugeZa5hPct, gaugeZa5hPeriod, gaugeZa5hReset,
-        gaugeZa7dBox, gaugeZa7dFill, gaugeZa7dPct, gaugeZa7dPeriod, gaugeZa7dReset);
+    // z.ai compact inline row (#350/#348) — a full third tank group would grow
+    // the panel past the screen bottom (3 groups × ~73px > most panels), so
+    // z.ai renders as a compact horizontal bar pair in the z.ai brand color
+    // (~22px added). The fill+label grammar is preserved at smaller scale.
+    zaiGroup = lv_obj_create(panelRight);
+    lv_obj_set_size(zaiGroup, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(zaiGroup, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(zaiGroup, 0, 0);
+    lv_obj_set_style_pad_all(zaiGroup, 0, 0);
+    lv_obj_set_style_pad_column(zaiGroup, 6, 0);
+    lv_obj_clear_flag(zaiGroup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(zaiGroup, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(zaiGroup, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    {
+        lv_obj_t* hdr = lv_label_create(zaiGroup);
+        lv_obj_set_style_text_font(hdr, &lv_font_montserrat_10, 0);
+        lv_label_set_recolor(hdr, true);
+        char h[32];
+        snprintf(h, sizeof(h), "#%06lX " LV_SYMBOL_BULLET "# ZAI#",
+                 (unsigned long)Theme::ZaiBlue);
+        lv_label_set_text(hdr, h);
+    }
+    for (int gi = 0; gi < 2; gi++) {
+        lv_obj_t* g = lv_obj_create(zaiGroup);
+        lv_obj_set_size(g, 52, 16);
+        lv_obj_set_style_bg_color(g, lv_color_hex(0x1a1a2e), 0);
+        lv_obj_set_style_bg_opa(g, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(g, 1, 0);
+        lv_obj_set_style_border_color(g, lv_color_hex(Theme::ZaiBlue), 0);
+        lv_obj_set_style_radius(g, 3, 0);
+        lv_obj_set_style_pad_all(g, 1, 0);
+        lv_obj_clear_flag(g, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t* fill = lv_bar_create(g);
+        lv_bar_set_range(fill, 0, 100);
+        lv_obj_set_size(fill, 48, 12);
+        lv_obj_align(fill, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_bg_color(fill, lv_color_hex(0x0a0a14), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(fill, lv_color_hex(Theme::ZaiBlue), LV_PART_INDICATOR);
+        lv_obj_set_style_radius(fill, 2, 0);
+        lv_obj_t* lbl = lv_label_create(g);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xE2E8F0), 0);
+        lv_label_set_text(lbl, "--");
+        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+        if (gi == 0) { gaugeZa5hFill = fill; gaugeZa5hPct = lbl; }
+        else { gaugeZa7dFill = fill; gaugeZa7dPct = lbl; }
+    }
+    gaugeZa7dPeriod = lv_label_create(zaiGroup);
+    lv_obj_set_style_text_font(gaugeZa7dPeriod, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(gaugeZa7dPeriod, lv_color_hex(0x8B99B0), 0);
+    lv_label_set_text(gaugeZa7dPeriod, "7d");
     lv_obj_add_flag(zaiGroup, LV_OBJ_FLAG_HIDDEN);
 
     // Stale indicator (only shown when data is stale, hidden by default)
@@ -2336,25 +2382,18 @@ void update() {
         if (codexGroup) { showCodex ? lv_obj_clear_flag(codexGroup, LV_OBJ_FLAG_HIDDEN) : lv_obj_add_flag(codexGroup, LV_OBJ_FLAG_HIDDEN); }
     }
 
-    // z.ai group (#350) — the second gauge's period label follows the QUANTITY:
-    // "MCP" when the window meters tool calls, never a window length.
-    updateGauge(gaugeZa5hFill, gaugeZa5hPct, gaugeZa5hReset, zaP5h, zaReset5h, false);
-    updateGauge(gaugeZa7dFill, gaugeZa7dPct, gaugeZa7dReset, zaP7d, zaReset7d, false);
+    // z.ai compact row (#350) — the mini gauges fill by percent; the secondary
+    // label flips to "MCP" by quantity. No per-gauge box hide (the compact row
+    // shows/hides as one unit).
+    if (gaugeZa5hFill && zaP5h >= 0.0f) {
+        lv_bar_set_value(gaugeZa5hFill, (int32_t)zaP5h, LV_ANIM_OFF);
+        if (gaugeZa5hPct) { char b[8]; snprintf(b, sizeof(b), "%d", (int)zaP5h); lv_label_set_text(gaugeZa5hPct, b); }
+    }
+    if (gaugeZa7dFill && zaP7d >= 0.0f) {
+        lv_bar_set_value(gaugeZa7dFill, (int32_t)zaP7d, LV_ANIM_OFF);
+        if (gaugeZa7dPct) { char b[8]; snprintf(b, sizeof(b), "%d", (int)zaP7d); lv_label_set_text(gaugeZa7dPct, b); }
+    }
     if (gaugeZa7dPeriod) lv_label_set_text(gaugeZa7dPeriod, zaIsMcp ? "MCP" : "7d");
-    if (gaugeZa5hBox) {
-        if (zaP5h >= 0.0f) {
-            lv_obj_clear_flag(lv_obj_get_parent(gaugeZa5hBox), LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(lv_obj_get_parent(gaugeZa5hBox), LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-    if (gaugeZa7dBox) {
-        if (zaP7d >= 0.0f) {
-            lv_obj_clear_flag(lv_obj_get_parent(gaugeZa7dBox), LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(lv_obj_get_parent(gaugeZa7dBox), LV_OBJ_FLAG_HIDDEN);
-        }
-    }
     {
         bool showZai = (zaP5h >= 0.0f || zaP7d >= 0.0f);
         if (zaiGroup) { showZai ? lv_obj_clear_flag(zaiGroup, LV_OBJ_FLAG_HIDDEN) : lv_obj_add_flag(zaiGroup, LV_OBJ_FLAG_HIDDEN); }
