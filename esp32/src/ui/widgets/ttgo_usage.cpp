@@ -18,10 +18,11 @@ struct Card {
     lv_obj_t *panel, *title, *value, *reset, *bar;
     char titleText[20], valueText[8], resetText[28];
 };
-// Six bounded cards are allocated by LVGL once per screen lifetime (Claude
-// 5h/7d + Codex 5h/7d + z.ai 5h/MCP — #350). Their label storage is static,
-// so changing telemetry never allocates/free text.
-static Card cards[6];
+// Five bounded cards are allocated by LVGL once per screen lifetime (Claude
+// 5h/7d + Codex 5h/7d + z.ai 5h — #350). z.ai shows the credits window only;
+// the MCP quota is hidden on this 135px screen. Label storage is static, so
+// changing telemetry never allocates/free text.
+static Card cards[5];
 static int previousMask = -1;
 
 bool active() { return selected; }
@@ -85,33 +86,29 @@ void update() {
     if (!root) return;
     if (!selected) { lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN); return; }
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
-    // Bounded snapshot; never retain the large dashboard on stack.
-    float values[6]; char resets[6][20];
+    // Bounded snapshot; never retain the large dashboard on stack. z.ai shows
+    // the 5h credits window only (#348) — the MCP quota is secondary at glance
+    // distance on this 135px screen.
+    float values[5]; char resets[5][20];
     lockState();
     values[0] = g_state.usageStale ? -1 : g_state.fiveHourPercent;
     values[1] = g_state.usageStale ? -1 : g_state.sevenDayPercent;
     values[2] = g_state.codexPrimaryPercent;
     values[3] = g_state.codexSecondaryPercent;
     values[4] = g_state.zaiPrimaryPercent;
-    values[5] = g_state.zaiSecondaryPercent;
     memcpy(resets[0], g_state.fiveHourReset, 20);
     memcpy(resets[1], g_state.sevenDayReset, 20);
     memcpy(resets[2], g_state.codexPrimaryReset, 20);
     memcpy(resets[3], g_state.codexSecondaryReset, 20);
     memcpy(resets[4], g_state.zaiPrimaryReset, 20);
-    memcpy(resets[5], g_state.zaiSecondaryReset, 20);
-    // The MCP label rides the state, not a second names table: the secondary
-    // window is "MCP" when it meters tool calls and never a window length.
-    char mcpLabel[12];
-    snprintf(mcpLabel, sizeof(mcpLabel), "Z.AI %s", g_state.zaiSecondaryIsMcp ? "MCP" : "7D");
     unlockState();
-    const char* names[6] = {"CLAUDE 5H", "CLAUDE 7D", "CODEX 5H", "CODEX 7D", "Z.AI 5H", mcpLabel};
+    const char* names[5] = {"CLAUDE 5H", "CLAUDE 7D", "CODEX 5H", "CODEX 7D", "Z.AI 5H"};
     int mask = 0, count = 0;
-    for (int i = 0; i < 6; ++i) if (hasWindow(values[i])) { mask |= 1 << i; ++count; }
+    for (int i = 0; i < 5; ++i) if (hasWindow(values[i])) { mask |= 1 << i; ++count; }
     if (count) lv_obj_add_flag(empty, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(empty, LV_OBJ_FLAG_HIDDEN);
     int slot = 0;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 5; ++i) {
         if (!(mask & (1 << i))) continue;
         auto& c = cards[slot];
         if (mask != previousMask) {
@@ -136,7 +133,7 @@ void update() {
         lv_bar_set_value(c.bar, boundedPercent(values[i]), LV_ANIM_OFF);
         ++slot;
     }
-    for (; slot < 6; ++slot) lv_obj_add_flag(cards[slot].panel, LV_OBJ_FLAG_HIDDEN);
+    for (; slot < 5; ++slot) lv_obj_add_flag(cards[slot].panel, LV_OBJ_FLAG_HIDDEN);
     previousMask = mask;
 }
 } }

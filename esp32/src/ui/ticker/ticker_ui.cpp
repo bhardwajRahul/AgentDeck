@@ -303,10 +303,8 @@ static void renderUsagePage() {
     take("Claude 7d", g_state.sevenDayPercent, g_state.sevenDayReset);
     take("Codex 5h", g_state.codexPrimaryPercent, g_state.codexPrimaryReset);
     take("Codex 7d", g_state.codexSecondaryPercent, g_state.codexSecondaryReset);
-    // z.ai (#350) — the MCP window labels by its quantity, never its length.
+    // z.ai (#350) — the 5h credits window only; MCP is secondary on this strip.
     take("Z.AI 5h", g_state.zaiPrimaryPercent, g_state.zaiPrimaryReset);
-    take(g_state.zaiSecondaryIsMcp ? "Z.AI MCP" : "Z.AI 7d",
-         g_state.zaiSecondaryPercent, g_state.zaiSecondaryReset);
     // Account subscriptions (usage_update subscriptions[]) — the "what am I
     // paying for" line other dashboards carry.
     {
