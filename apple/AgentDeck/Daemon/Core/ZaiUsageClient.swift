@@ -221,71 +221,19 @@ final class ZaiUsageClient: @unchecked Sendable {
                 envelope["limits"],
                 level: envelope["level"] as? String
             )
-            var reading = ZaiRateLimits(
+            let reading = ZaiRateLimits(
                 primary: wireWindow(windows.primary),
                 secondary: wireWindow(windows.secondary),
                 planType: windows.planType,
                 limitId: windows.limitId,
                 capturedAt: ISO8601DateFormatter().string(from: Date())
             )
-            // Measured usage (trailing 24h) rides the same block — the quota
-            // endpoint only answers percentages, so actual token volume comes
-            // from the model-usage report. Non-fatal: a failed report just
-            // omits the fields.
-            if let totals = await fetchModelUsageTotals(key: key) {
-                reading.tokensUsed24h = totals.tokens
-                reading.calls24h = totals.calls
-            }
             state.resetFailures()
             state.store(reading, at: Date())
             return ZaiUsageResult(data: reading, fresh: true)
         } catch {
             noteFailure(error.localizedDescription)
             return failResult()
-        }
-    }
-
-    /// Trailing-24h measured usage from the provider's model-usage report, or
-    /// nil on any failure (absent fields, never fabricated).
-    private func fetchModelUsageTotals(key: String) async -> (tokens: Double, calls: Double)? {
-        let now = Date()
-        let start = now.addingTimeInterval(-24 * 60 * 60)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        // The provider expects "YYYY-MM-DD HH:mm:ss" in UTC.
-        guard var components = URLComponents(
-            string: Self.quotaURL.absoluteString
-                .replacingOccurrences(of: "/quota/limit", with: "/model-usage")
-        ) else { return nil }
-        components.queryItems = [
-            URLQueryItem(name: "startTime", value: formatter.string(from: start)),
-            URLQueryItem(name: "endTime", value: formatter.string(from: now)),
-        ]
-        guard let url = components.url else { return nil }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(key, forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 10
-        do {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 10
-            configuration.urlCache = nil
-            configuration.httpCookieStorage = nil
-            let session = URLSession(configuration: configuration)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-            guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let total = ((body["data"] as? [String: Any])?["totalUsage"]) as? [String: Any],
-                  let tokens = (total["totalTokensUsage"] as? NSNumber)?.doubleValue,
-                  let calls = (total["totalModelCallCount"] as? NSNumber)?.doubleValue
-            else { return nil }
-            return (tokens, calls)
-        } catch {
-            return nil
         }
     }
 

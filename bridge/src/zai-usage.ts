@@ -162,36 +162,6 @@ function quotaUrl(): string {
 
 // ===== Fetch =====
 
-/** Trailing-24h measured usage from the provider's model-usage report, or null
- *  on any failure (absent fields, never fabricated). The caller passes the
- *  already-validated key. */
-async function fetchModelUsageTotals(key: string): Promise<{ tokens: number; calls: number } | null> {
-  if (!key) return null;
-  const now = new Date();
-  const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  // The provider expects "YYYY-MM-DD HH:mm:ss" in UTC.
-  const fmt = (d: Date): string => d.toISOString().slice(0, 19).replace('T', ' ');
-  const url = `${quotaUrl().replace(/\/quota\/limit$/, '')}/model-usage` +
-    `?startTime=${encodeURIComponent(fmt(start))}&endTime=${encodeURIComponent(fmt(now))}`;
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { Authorization: key, Accept: 'application/json' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const body = await res.json() as Record<string, any>;
-    if (body?.code !== 200 || !body?.data?.totalUsage) return null;
-    const tokens = Number(body.data.totalUsage.totalTokensUsage);
-    const calls = Number(body.data.totalUsage.totalModelCallCount);
-    if (!Number.isFinite(tokens) || !Number.isFinite(calls)) return null;
-    return { tokens, calls };
-  } catch {
-    return null;
-  }
-}
-
 export async function fetchZaiQuota(): Promise<ZaiUsageFetchResult> {
   if (inFlight) return inFlight;
   inFlight = fetchZaiQuotaOnce().finally(() => { inFlight = null; });
@@ -257,14 +227,6 @@ async function fetchZaiQuotaOnce(): Promise<ZaiUsageFetchResult> {
       ...windows,
       capturedAt: new Date().toISOString(),
     };
-    // Measured usage (trailing 24h) rides the same block: the quota endpoint
-    // only answers percentages, so the actual token volume comes from the
-    // model-usage report. Non-fatal — a failed report just omits the fields.
-    const measured = await fetchModelUsageTotals(source.key);
-    if (measured) {
-      data.tokensUsed24h = measured.tokens;
-      data.calls24h = measured.calls;
-    }
     if (consecutiveFailures > 0) {
       logTagged('usage', `z.ai usage fetch recovered after ${consecutiveFailures} failure(s)`);
     }

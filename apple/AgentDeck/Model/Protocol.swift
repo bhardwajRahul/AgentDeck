@@ -489,12 +489,6 @@ struct ZaiRateLimits: Codable, Sendable {
     /// ISO-8601 instant this reading was fetched. Consumers derive age from it
     /// against their own clock — same contract as `CodexRateLimits.capturedAt`.
     var capturedAt: String?
-    /// MEASURED token consumption over the trailing 24h (the provider's
-    /// model-usage report) — actual volume, not a window percentage. Absent
-    /// when the report fails; never fabricated.
-    var tokensUsed24h: Double?
-    /// Model calls over the same trailing-24h report.
-    var calls24h: Double?
 }
 
 /// Convenience over the generated `CodexUsageFreshness` (see

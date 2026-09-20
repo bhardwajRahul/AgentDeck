@@ -214,15 +214,6 @@ export interface ZaiRateLimits {
    *  an active poll re-fetches regularly, so an aged stamp means the poll is
    *  failing, and the reading dims rather than reading as live. */
   capturedAt?: string;
-  /** MEASURED token consumption over the trailing 24h (the provider's
-   *  model-usage report), not a window percentage — the credits windows are
-   *  the only percentage the quota endpoint exposes, so this is where actual
-   *  token volume comes from. Absent when the report fails (never fabricated).
-   *  The measurement window is fixed at 24h by the producers; the label a
-   *  surface prints must say so. */
-  tokensUsed24h?: number;
-  /** Model calls over the same trailing-24h report. */
-  calls24h?: number;
 }
 
 // ===== Bridge → Plugin (State Updates) =====

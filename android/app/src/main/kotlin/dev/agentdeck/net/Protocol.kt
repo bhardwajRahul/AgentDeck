@@ -264,11 +264,6 @@ data class ZaiRateLimits(
     /** ISO-8601 instant this reading was fetched (age derived at the consumer,
      *  same contract as [CodexRateLimits.capturedAt]). */
     val capturedAt: String? = null,
-    /** MEASURED token consumption over the trailing 24h (the provider's
-     *  model-usage report) — actual volume, not a window percentage. */
-    val tokensUsed24h: Long? = null,
-    /** Model calls over the same trailing-24h report. */
-    val calls24h: Long? = null,
 )
 
 @Serializable

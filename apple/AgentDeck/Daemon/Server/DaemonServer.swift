@@ -10166,8 +10166,6 @@ final class DaemonServer {
         if now.timeIntervalSince(cached.fetchedAt) <= usageStaleTTL {
             if let p = window(cached.data.primary) { payload["primary"] = p }
             if let s = window(cached.data.secondary) { payload["secondary"] = s }
-            if let tokens = cached.data.tokensUsed24h { payload["tokensUsed24h"] = tokens }
-            if let calls = cached.data.calls24h { payload["calls24h"] = calls }
         }
         if let plan = cached.data.planType { payload["planType"] = plan }
         if let limitId = cached.data.limitId { payload["limitId"] = limitId }

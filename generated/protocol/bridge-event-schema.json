@@ -2129,10 +2129,6 @@
       "additionalProperties": false,
       "description": "Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's monitor endpoint with the account's coding-plan key — an active account query like the Claude OAuth usage read, not a passive local-file snapshot. Same slot grammar as `CodexRateLimits`: `primary` is the 5-hour credits window, `secondary` the long window when the plan reports one (weekly credits on the credit schema, or the monthly MCP tool quota on the standard schema — `limitId` says which quantity the number belongs to, the same \"which limit\" axis Codex carries).",
       "properties": {
-        "calls24h": {
-          "description": "Model calls over the same trailing-24h report.",
-          "type": "number"
-        },
         "capturedAt": {
           "description": "ISO-8601 instant this reading was fetched. Consumers derive age from it against their own clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches regularly, so an aged stamp means the poll is failing, and the reading dims rather than reading as live.",
           "type": "string"
@@ -2150,10 +2146,6 @@
         },
         "secondary": {
           "$ref": "#/definitions/CodexRateLimitWindow"
-        },
-        "tokensUsed24h": {
-          "description": "MEASURED token consumption over the trailing 24h (the provider's model-usage report), not a window percentage — the credits windows are the only percentage the quota endpoint exposes, so this is where actual token volume comes from. Absent when the report fails (never fabricated). The measurement window is fixed at 24h by the producers; the label a surface prints must say so.",
-          "type": "number"
         }
       },
       "type": "object"

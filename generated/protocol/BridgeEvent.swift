@@ -2967,8 +2967,6 @@ enum ADVoiceAssistantState: String, Codable, Equatable {
 /// same "which limit" axis Codex carries).
 // MARK: - ADZaiRateLimits
 struct ADZaiRateLimits: Codable, Equatable {
-    /// Model calls over the same trailing-24h report.
-    var calls24H: Double?
     /// ISO-8601 instant this reading was fetched. Consumers derive age from it against their own
     /// clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches
     /// regularly, so an aged stamp means the poll is failing, and the reading dims rather than
@@ -2981,21 +2979,13 @@ struct ADZaiRateLimits: Codable, Equatable {
     var planType: String?
     var primary: ADCodexRateLimitWindow?
     var secondary: ADCodexRateLimitWindow?
-    /// MEASURED token consumption over the trailing 24h (the provider's model-usage report), not
-    /// a window percentage — the credits windows are the only percentage the quota endpoint
-    /// exposes, so this is where actual token volume comes from. Absent when the report fails
-    /// (never fabricated). The measurement window is fixed at 24h by the producers; the label a
-    /// surface prints must say so.
-    var tokensUsed24H: Double?
 
     enum CodingKeys: String, CodingKey {
-        case calls24H = "calls24h"
         case capturedAt = "capturedAt"
         case limitId = "limitId"
         case planType = "planType"
         case primary = "primary"
         case secondary = "secondary"
-        case tokensUsed24H = "tokensUsed24h"
     }
 }
 
@@ -3018,22 +3008,18 @@ extension ADZaiRateLimits {
     }
 
     func with(
-        calls24H: Double?? = nil,
         capturedAt: String?? = nil,
         limitId: String?? = nil,
         planType: String?? = nil,
         primary: ADCodexRateLimitWindow?? = nil,
-        secondary: ADCodexRateLimitWindow?? = nil,
-        tokensUsed24H: Double?? = nil
+        secondary: ADCodexRateLimitWindow?? = nil
     ) -> ADZaiRateLimits {
         return ADZaiRateLimits(
-            calls24H: calls24H ?? self.calls24H,
             capturedAt: capturedAt ?? self.capturedAt,
             limitId: limitId ?? self.limitId,
             planType: planType ?? self.planType,
             primary: primary ?? self.primary,
-            secondary: secondary ?? self.secondary,
-            tokensUsed24H: tokensUsed24H ?? self.tokensUsed24H
+            secondary: secondary ?? self.secondary
         )
     }
 
