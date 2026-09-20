@@ -31,7 +31,7 @@ import dev.agentdeck.ui.component.BrandIcon
 import dev.agentdeck.ui.monitor.rememberCurrentInstant
 import dev.agentdeck.ui.monitor.subscriptionTrailing
 import dev.agentdeck.util.ProviderLimitRow
-import dev.agentdeck.util.codexLimitRows
+import dev.agentdeck.util.providerLimitRows
 import dev.agentdeck.util.formatBytes
 import dev.agentdeck.util.formatResetTime
 import kotlin.math.roundToInt
@@ -109,7 +109,7 @@ private fun LimitsColumn(state: DashboardState) {
     val stale = if (usage.usageStale == true) "!" else ""
     // Codex (ChatGPT) rolling-window usage — independent of Claude billing/limits
     // (a user may run only Codex). Each window carries its own stale flag.
-    val codexRows = codexLimitRows(state.codexRateLimits)
+    val limitRows = providerLimitRows(state.codexRateLimits, state.zaiRateLimits)
 
     SectionLabel("LIMITS")
 
@@ -143,10 +143,10 @@ private fun LimitsColumn(state: DashboardState) {
 
     // Codex rows render after the Claude/API block; the brand mark distinguishes
     // them (labels stay 5h/7d).
-    codexRows.forEach { CodexGaugeRow(it) }
+    limitRows.forEach { CodexGaugeRow(it) }
 
     // Only collapse to the em-dash placeholder when no provider has anything.
-    if (!hasLimits && state.billingType != "api" && codexRows.isEmpty()) {
+    if (!hasLimits && state.billingType != "api" && limitRows.isEmpty()) {
         DataLine("—")
     }
 }

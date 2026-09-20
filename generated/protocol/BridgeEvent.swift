@@ -128,6 +128,7 @@ struct ADBridgeEvent: Codable, Equatable {
     var tokenStatus: ADTokenStatus?
     var toolCalls: Double?
     var usageStale: Bool?
+    var zaiRateLimits: ADZaiRateLimits?
     var status: ADBridgeEventStatus?
     /// Transcribed user speech
     var text: String?
@@ -240,6 +241,7 @@ struct ADBridgeEvent: Codable, Equatable {
         case tokenStatus = "tokenStatus"
         case toolCalls = "toolCalls"
         case usageStale = "usageStale"
+        case zaiRateLimits = "zaiRateLimits"
         case status = "status"
         case text = "text"
         case error = "error"
@@ -366,6 +368,7 @@ extension ADBridgeEvent {
         tokenStatus: ADTokenStatus?? = nil,
         toolCalls: Double?? = nil,
         usageStale: Bool?? = nil,
+        zaiRateLimits: ADZaiRateLimits?? = nil,
         status: ADBridgeEventStatus?? = nil,
         text: String?? = nil,
         error: String?? = nil,
@@ -472,6 +475,7 @@ extension ADBridgeEvent {
             tokenStatus: tokenStatus ?? self.tokenStatus,
             toolCalls: toolCalls ?? self.toolCalls,
             usageStale: usageStale ?? self.usageStale,
+            zaiRateLimits: zaiRateLimits ?? self.zaiRateLimits,
             status: status ?? self.status,
             text: text ?? self.text,
             error: error ?? self.error,
@@ -2946,6 +2950,172 @@ enum ADVoiceAssistantState: String, Codable, Equatable {
     case listening = "listening"
     case processing = "processing"
     case speaking = "speaking"
+}
+
+//
+// Hashable or Equatable:
+// The compiler will not be able to synthesize the implementation of Hashable or Equatable
+// for types that require the use of JSONAny, nor will the implementation of Hashable be
+// synthesized for types that have collections (such as arrays or dictionaries).
+
+/// Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's monitor
+/// endpoint with the account's coding-plan key — an active account query like the Claude
+/// OAuth usage read, not a passive local-file snapshot. Same slot grammar as
+/// `CodexRateLimits`: `primary` is the 5-hour credits window, `secondary` the long window
+/// when the plan reports one (weekly credits on the credit schema, or the monthly MCP tool
+/// quota on the standard schema — `limitId` says which quantity the number belongs to, the
+/// same "which limit" axis Codex carries).
+// MARK: - ADZaiRateLimits
+struct ADZaiRateLimits: Codable, Equatable {
+    /// ISO-8601 instant this reading was fetched. Consumers derive age from it against their own
+    /// clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches
+    /// regularly, so an aged stamp means the poll is failing, and the reading dims rather than
+    /// reading as live.
+    var capturedAt: String?
+    /// Schema family the windows were read from: "standard" (TOKENS_LIMIT + TIME_LIMIT items) or
+    /// "credit" (credit-only schema, lite-tier plans).
+    var limitId: String?
+    /// Plan tier stamped into every snapshot ("lite" | "pro" | "max").
+    var planType: String?
+    var primary: ADZaiWindow?
+    var secondary: ADZaiWindow?
+
+    enum CodingKeys: String, CodingKey {
+        case capturedAt = "capturedAt"
+        case limitId = "limitId"
+        case planType = "planType"
+        case primary = "primary"
+        case secondary = "secondary"
+    }
+}
+
+// MARK: ADZaiRateLimits convenience initializers and mutators
+
+extension ADZaiRateLimits {
+    init(data: Data) throws {
+        self = try newJSONDecoder().decode(ADZaiRateLimits.self, from: data)
+    }
+
+    init(_ json: String, using encoding: String.Encoding = .utf8) throws {
+        guard let data = json.data(using: encoding) else {
+            throw NSError(domain: "JSONDecoding", code: 0, userInfo: nil)
+        }
+        try self.init(data: data)
+    }
+
+    init(fromURL url: URL) throws {
+        try self.init(data: try Data(contentsOf: url))
+    }
+
+    func with(
+        capturedAt: String?? = nil,
+        limitId: String?? = nil,
+        planType: String?? = nil,
+        primary: ADZaiWindow?? = nil,
+        secondary: ADZaiWindow?? = nil
+    ) -> ADZaiRateLimits {
+        return ADZaiRateLimits(
+            capturedAt: capturedAt ?? self.capturedAt,
+            limitId: limitId ?? self.limitId,
+            planType: planType ?? self.planType,
+            primary: primary ?? self.primary,
+            secondary: secondary ?? self.secondary
+        )
+    }
+
+    func jsonData() throws -> Data {
+        return try newJSONEncoder().encode(self)
+    }
+
+    func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
+        return String(data: try self.jsonData(), encoding: encoding)
+    }
+}
+
+//
+// Hashable or Equatable:
+// The compiler will not be able to synthesize the implementation of Hashable or Equatable
+// for types that require the use of JSONAny, nor will the implementation of Hashable be
+// synthesized for types that have collections (such as arrays or dictionaries).
+
+/// A z.ai quota window — the shared window shape plus WHICH QUANTITY it meters:
+/// token/credits windows (`tokens`) or the MCP tool-call quota (`mcp`). They are different
+/// kinds of usage rendered side by side, and a surface must never present an MCP gauge as
+/// token usage (or vice versa); the label follows the quantity ("5h" vs "MCP").
+// MARK: - ADZaiWindow
+struct ADZaiWindow: Codable, Equatable {
+    var quantity: ADQuantity?
+    /// ISO-8601 reset instant (converted from the rollout's unix `resets_at`).
+    var resetsAt: String?
+    /// True when this window's snapshot has expired (its `resets_at` slid into the past with no
+    /// fresher Codex activity). The passive rollout read is frozen, so the percent is
+    /// last-known-only — renderers should dim the gauge and show a "stale" marker instead of a
+    /// misleading "now" countdown. Set centrally in `buildUsageEvent`; `resetsAt` is cleared at
+    /// the same time so no formatter prints "now".
+    ///
+    /// This is the HARD signal — slot-based consumers (Pixoo renderers, ESP32 firmware) drop the
+    /// gauge entirely on it. A merely OLD snapshot of a still- live window must therefore never
+    /// set it; that rides `capturedAt` instead.
+    var stale: Bool?
+    var usedPercent: Double
+    /// Rolling window length in minutes (primary ≈ 300 = 5h, secondary ≈ 10080 = 7d).
+    var windowMinutes: Double
+
+    enum CodingKeys: String, CodingKey {
+        case quantity = "quantity"
+        case resetsAt = "resetsAt"
+        case stale = "stale"
+        case usedPercent = "usedPercent"
+        case windowMinutes = "windowMinutes"
+    }
+}
+
+// MARK: ADZaiWindow convenience initializers and mutators
+
+extension ADZaiWindow {
+    init(data: Data) throws {
+        self = try newJSONDecoder().decode(ADZaiWindow.self, from: data)
+    }
+
+    init(_ json: String, using encoding: String.Encoding = .utf8) throws {
+        guard let data = json.data(using: encoding) else {
+            throw NSError(domain: "JSONDecoding", code: 0, userInfo: nil)
+        }
+        try self.init(data: data)
+    }
+
+    init(fromURL url: URL) throws {
+        try self.init(data: try Data(contentsOf: url))
+    }
+
+    func with(
+        quantity: ADQuantity?? = nil,
+        resetsAt: String?? = nil,
+        stale: Bool?? = nil,
+        usedPercent: Double? = nil,
+        windowMinutes: Double? = nil
+    ) -> ADZaiWindow {
+        return ADZaiWindow(
+            quantity: quantity ?? self.quantity,
+            resetsAt: resetsAt ?? self.resetsAt,
+            stale: stale ?? self.stale,
+            usedPercent: usedPercent ?? self.usedPercent,
+            windowMinutes: windowMinutes ?? self.windowMinutes
+        )
+    }
+
+    func jsonData() throws -> Data {
+        return try newJSONEncoder().encode(self)
+    }
+
+    func jsonString(encoding: String.Encoding = .utf8) throws -> String? {
+        return String(data: try self.jsonData(), encoding: encoding)
+    }
+}
+
+enum ADQuantity: String, Codable, Equatable {
+    case mcp = "mcp"
+    case tokens = "tokens"
 }
 
 // MARK: - Helper functions for creating encoders and decoders

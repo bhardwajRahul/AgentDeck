@@ -122,6 +122,11 @@ export function getUsageProviderCount(usageEvent: UsageEvent | null): number {
   if (codexPrimaryWindow || codexSecondaryWindow) {
     count++;
   }
+  const zaiPrimaryWindow = freshCodexWindow(usageEvent.zaiRateLimits?.primary);
+  const zaiSecondaryWindow = freshCodexWindow(usageEvent.zaiRateLimits?.secondary);
+  if (zaiPrimaryWindow || zaiSecondaryWindow) {
+    count++;
+  }
   return count;
 }
 
@@ -734,6 +739,7 @@ function drawUsageHUD(
   if (!usageEvent) return;
   type Window = { percent: number; resetsAt?: string };
   type Provider = {
+    /** Official mark from design/brand/*.svg (upstream SVGs, never redrawn). */
     glyph: OfficialDotGlyphName; brand: RGB;
     primary?: Window; secondary?: Window;
     subscriptionUntil?: string;
@@ -767,10 +773,24 @@ function drawUsageHUD(
       subscriptionUntil: usageEvent.codexSubscriptionActiveUntil,
     });
   }
+  const zaiPrimaryWindow = freshCodexWindow(usageEvent.zaiRateLimits?.primary);
+  const zaiSecondaryWindow = freshCodexWindow(usageEvent.zaiRateLimits?.secondary);
+  if (zaiPrimaryWindow || zaiSecondaryWindow) {
+    providers.push({
+      glyph: 'zai', brand: [31, 99, 236],  // Brand.zai (#1F63EC), measured from the upstream mark
+      primary: zaiPrimaryWindow,
+      secondary: zaiSecondaryWindow,
+    });
+  }
   if (providers.length === 0) return;
+  // The 64px panel budgets exactly two 7px provider rows (50-56, 57-63). With
+  // all three providers live, the two established seats win and z.ai stays on
+  // the surfaces that can compose three (D200H strip, glance rows, dashboard
+  // rail) — geometry is not renegotiated per provider count.
+  const seatedProviders = providers.slice(0, 2);
 
   const timeColor: RGB = [0x60, 0x70, 0x80];
-  const firstY = providers.length > 1 ? 50 : 57;
+  const firstY = seatedProviders.length > 1 ? 50 : 57;
 
   function drawCreatureMarker(provider: Provider, rowY: number): void {
     const mask = OFFICIAL_DOT_GLYPHS[provider.glyph];
@@ -840,7 +860,7 @@ function drawUsageHUD(
     }
   }
 
-  providers.forEach((provider, index) => {
+  seatedProviders.forEach((provider, index) => {
     const rowY = firstY + index * 7;
     for (let y = rowY; y < rowY + 7; y++) {
       for (let x = 0; x < 64; x++) {

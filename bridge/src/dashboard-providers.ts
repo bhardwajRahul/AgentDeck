@@ -1,7 +1,7 @@
 import { loadDaemonSettings, updateDaemonSetting } from './daemon-settings.js';
 
 /** Display membership only; independent of observation, quota and connectivity. */
-export const DASHBOARD_PROVIDER_IDS = ['claude', 'codex', 'openclaw', 'mlx', 'ollama', 'antigravity'] as const;
+export const DASHBOARD_PROVIDER_IDS = ['claude', 'codex', 'zai', 'openclaw', 'mlx', 'ollama', 'antigravity'] as const;
 export function dashboardProviders(update?: Record<string, unknown>): string[] | null {
   let providers = loadDaemonSettings().dashboardProviders;
   if (update) {

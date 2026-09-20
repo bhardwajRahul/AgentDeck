@@ -12,6 +12,7 @@ import {
   type DeckSlotConfig,
   type DeckSlotMapEvent,
   type SessionInfo,
+  modelProvider,
 } from '@agentdeck/shared';
 
 import { ConnectionManager } from './connection-manager.js';
@@ -20,7 +21,13 @@ import {
   isRetryNowMessage,
   isRequestConnectionStatusMessage,
 } from './connection-status-pi.js';
-import { updateUsageModeData, setUsageRefreshCallback } from './utility-modes/usage.js';
+import {
+  type UsageProviderId,
+  modelProviderToUsageProvider,
+  noteUsageProviderActivity,
+  updateUsageModeData,
+  setUsageRefreshCallback,
+} from './utility-modes/usage.js';
 import { setEncoderDaemonConnected } from './encoder-registry.js';
 import { dlog, dinfo } from './log.js';
 import { deviceTypeFromUnknown, familyForDeviceType } from './device-profile.js';
@@ -358,8 +365,8 @@ connMgr.on('usage_update', (ev: UsageEvent) => {
     usageStale: ev.usageStale,
   };
   // Codex rate limits (primary≈5h, secondary≈7d) ride alongside the Claude
-  // 5h/7d quota so every usage surface can draw both agents.
-  const merged = { ...usageData, codexRateLimits: ev.codexRateLimits };
+  // 5h/7d quota so every usage surface can draw both agents; z.ai the same (#348).
+  const merged = { ...usageData, codexRateLimits: ev.codexRateLimits, zaiRateLimits: ev.zaiRateLimits };
   updateUsageModeData(merged);
   // SD+ encoders: E2 = Claude usage water-tank, E3 = Codex usage water-tank.
   updateClaudeUsageDial(merged);
@@ -387,6 +394,23 @@ connMgr.on('connection', (ev: ConnectionEvent) => {
 connMgr.on('sessions_list', (ev: { type: 'sessions_list'; sessions: SessionInfo[] }) => {
   dlog('Plugin', `sessions_list: ${ev.sessions.length} sessions`);
   updateSessionSlotSessions(ev.sessions);
+  // Provider "last heavy use" signal for the auto usage dial (#349): the wire
+  // carries no per-row activity stamp, so the honest proxy is PROCESSING
+  // counts first, then the newest session-start per provider.
+  {
+    const processing: Partial<Record<UsageProviderId, number>> = {};
+    const recency: Partial<Record<UsageProviderId, number>> = {};
+    for (const s of ev.sessions) {
+      const p = modelProviderToUsageProvider(modelProvider(s.modelName));
+      if (!p) continue;
+      processing[p] = (processing[p] ?? 0) + (s.state === 'processing' ? 1 : 0);
+      const started = s.startedAt ? Date.parse(s.startedAt) : NaN;
+      if (Number.isFinite(started)) recency[p] = Math.max(recency[p] ?? 0, started);
+    }
+    for (const p of ['claude', 'codex', 'zai'] as const) {
+      noteUsageProviderActivity(p, processing[p] ?? 0, recency[p] ?? 0);
+    }
+  }
   if (isInDetailView()) {
     const focused = getFocusedSession();
     const snapshot = focusedDetailState.snapshot;

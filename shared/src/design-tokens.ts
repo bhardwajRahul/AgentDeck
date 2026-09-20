@@ -69,6 +69,7 @@ export const Brand = {
   opencode: "#3a3a3a",
   antigravity: "#5F6368",
   kiro: "#7C3AED",
+  zai: "#1F63EC",
 } as const;
 
 export const Font = {

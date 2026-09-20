@@ -477,6 +477,32 @@ struct CodexRateLimits: Codable, Sendable {
     var capturedAt: String?
 }
 
+/// A z.ai quota window — the shared window shape plus WHICH QUANTITY it
+/// meters: token/credits windows (`tokens`) or the MCP tool-call quota
+/// (`mcp`). A surface must never present one as the other; the label follows
+/// the quantity ("5h" vs "MCP").
+struct ZaiWindow: Codable, Sendable {
+    var usedPercent: Double? = nil
+    var windowMinutes: Int? = nil
+    var resetsAt: String? = nil
+    var stale: Bool? = nil
+    var quantity: String? = nil
+}
+
+/// Z.ai (GLM Coding Plan) usage limits — a direct provider-account reading,
+/// not a passive local snapshot. Same slot grammar as `CodexRateLimits`;
+/// `limitId` carries which quantity the secondary window is (weekly credits
+/// vs the monthly MCP quota). Parsed by the generated `ZaiQuotaRules`.
+struct ZaiRateLimits: Codable, Sendable {
+    var primary: ZaiWindow?
+    var secondary: ZaiWindow?
+    var planType: String?
+    var limitId: String?
+    /// ISO-8601 instant this reading was fetched. Consumers derive age from it
+    /// against their own clock — same contract as `CodexRateLimits.capturedAt`.
+    var capturedAt: String?
+}
+
 /// Convenience over the generated `CodexUsageFreshness` (see
 /// `CodexFreshnessRules.generated.swift`, SSOT `shared/src/format-utils.ts`):
 /// unwraps the window's `stale` flag so call sites can pass the window itself.
@@ -774,6 +800,7 @@ struct UsageEvent: Codable, Sendable {
     var codexSubscriptionActiveUntil: String?
     var codexLastRefreshAt: String?
     var codexRateLimits: CodexRateLimits?
+    var zaiRateLimits: ZaiRateLimits?
     var modelCatalog: [ModelCatalogEntry]?
     var mlxResidency: ModelResidency?
     var mlxModels: [String]?

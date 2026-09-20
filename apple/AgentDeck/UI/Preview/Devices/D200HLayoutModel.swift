@@ -24,7 +24,7 @@
 // against; `scripts/check-preview-mirror-sync.mjs` verifies they match the
 // current `git hash-object` of each file and fails CI when the origin drifts
 // ahead of this mirror. Update them whenever you re-port.
-// SYNC-HASH shared/src/d200h-layout.ts b66a15e9dc75d5ad43ec0698a7187eb4b82bc827
+// SYNC-HASH shared/src/d200h-layout.ts a701cb9f42956ba2fa40e4b99cde7c5807b3f6e3
 // SYNC-HASH shared/src/session-utils.ts 9b6eebeba19a0bb6ffe7c633d98c83dcee9e55cf
 //
 // INTENTIONALLY OMITTED (not needed by a read-only preview):
@@ -213,6 +213,21 @@ public struct D200HUsage: Equatable, Sendable {
     /// current clock — a still-live window whose snapshot went cold renders dimmed
     /// with a "3h ago" footnote instead of passing for a live reading.
     public var codexCapturedAt: String?
+    /// z.ai GLM Coding Plan primary (5h credits) window used%, labelled by its
+    /// own length (#348). nil → tile omitted.
+    public var zaiPrimaryPercent: Double?
+    public var zaiPrimaryWindowMinutes: Int?
+    public var zaiPrimaryStale: Bool
+    public var zaiPrimaryIsMcp: Bool
+    /// z.ai long window (weekly credits or the monthly MCP quota — the wire's
+    /// `quantity` says which; an MCP window labels "MCP", never its length).
+    /// nil → tile omitted.
+    public var zaiSecondaryPercent: Double?
+    public var zaiSecondaryWindowMinutes: Int?
+    public var zaiSecondaryStale: Bool
+    public var zaiSecondaryIsMcp: Bool
+    /// ISO-8601 instant the z.ai reading was fetched (`ZaiRateLimits.capturedAt`).
+    public var zaiCapturedAt: String?
     /// Luna-only reserve pool. Non-nil → the Codex 5H/7D tiles are replaced by
     /// one LUNA tile (the reserve is the quota that binds while it lasts).
     public var lunaReserve: D200HLunaReserve?
@@ -229,6 +244,15 @@ public struct D200HUsage: Equatable, Sendable {
         codexSecondaryWindowMinutes: Int? = nil,
         codexSecondaryStale: Bool = false,
         codexCapturedAt: String? = nil,
+        zaiPrimaryPercent: Double? = nil,
+        zaiPrimaryWindowMinutes: Int? = nil,
+        zaiPrimaryStale: Bool = false,
+        zaiPrimaryIsMcp: Bool = false,
+        zaiSecondaryPercent: Double? = nil,
+        zaiSecondaryWindowMinutes: Int? = nil,
+        zaiSecondaryStale: Bool = false,
+        zaiSecondaryIsMcp: Bool = false,
+        zaiCapturedAt: String? = nil,
         lunaReserve: D200HLunaReserve? = nil
     ) {
         self.fiveHourPercent = fiveHourPercent
@@ -242,6 +266,15 @@ public struct D200HUsage: Equatable, Sendable {
         self.codexSecondaryWindowMinutes = codexSecondaryWindowMinutes
         self.codexSecondaryStale = codexSecondaryStale
         self.codexCapturedAt = codexCapturedAt
+        self.zaiPrimaryPercent = zaiPrimaryPercent
+        self.zaiPrimaryWindowMinutes = zaiPrimaryWindowMinutes
+        self.zaiPrimaryStale = zaiPrimaryStale
+        self.zaiPrimaryIsMcp = zaiPrimaryIsMcp
+        self.zaiSecondaryPercent = zaiSecondaryPercent
+        self.zaiSecondaryWindowMinutes = zaiSecondaryWindowMinutes
+        self.zaiSecondaryStale = zaiSecondaryStale
+        self.zaiSecondaryIsMcp = zaiSecondaryIsMcp
+        self.zaiCapturedAt = zaiCapturedAt
         self.lunaReserve = lunaReserve
     }
 }
@@ -462,13 +495,21 @@ public enum D200HLayoutModel {
         // trailing positions for strip keys the user didn't place. Never reserve
         // more than the strip is wide, nor more than slots.count - 1 so at least
         // one key stays for sessions. Same-provider pairs compact before reserve.
+        // When the roster leaves keys free, the budget grows into them (#349):
+        // one window per key instead of compacted pairs — the growth never takes
+        // a key from a session (`spare` is computed after the roster).
         var usageHere: [String: (D200HSlotKind, String, String)] = [:]
         if view.showUsage, let usage = input.usage {
-            let usageTiles = buildUsageTiles(usage)
+            let stripTiles = buildUsageTiles(usage)
             let maxReserve = max(0, slots.count - 1)
             let preferred = sortPositions(usagePreferredPositions.filter { slots.contains($0) })
-            let reserveCount = min(usageTiles.count, usagePreferredPositions.count, maxReserve)
-            let pinned = Array(preferred.suffix(reserveCount))
+            let stripCount = min(stripTiles.count, usagePreferredPositions.count, maxReserve)
+            let afterStrip = slots.count - stripCount
+            let spare = sessions.count > afterStrip ? 0 : afterStrip - sessions.count
+            let budget = spare > 0 ? min(stripTiles.count + spare, maxReserve) : usagePreferredPositions.count
+            let usageTiles = spare > 0 ? buildUsageTiles(usage, budget: budget) : stripTiles
+            let reserveCount = min(usageTiles.count, budget, maxReserve)
+            let pinned = Array(preferred.suffix(min(reserveCount, preferred.count)))
             let rest = slots.filter { !pinned.contains($0) }
             let fallbackCount = max(0, reserveCount - pinned.count)
             let fallback = Array(rest.suffix(fallbackCount))
@@ -720,7 +761,10 @@ public enum D200HLayoutModel {
     /// Every tile is hide-if-absent (TS 208b1afc): Claude 5H/7D appear only
     /// when that window's quota is actually known, so fewer (or zero) tiles are
     /// reserved and the freed slots flow to session tiles.
-    private static func buildUsageTiles(_ usage: D200HUsage) -> [(D200HSlotKind, String, String)] {
+    private static func buildUsageTiles(
+        _ usage: D200HUsage,
+        budget: Int = usagePreferredPositions.count
+    ) -> [(D200HSlotKind, String, String)] {
         var claudeTiles: [(D200HSlotKind, String, String)] = []
         var claudePair: [D200HUsagePairWindow] = []
         if usage.known, let p = usage.fiveHourPercent {
@@ -781,6 +825,24 @@ public enum D200HLayoutModel {
             guard let scopedLabel, let s = worstScoped else { return nil }
             return .init(label: scopedLabel, percent: s.percent, stale: false, footnote: nil, inactive: !s.active)
         }()
+        // z.ai windows ride the same tank grammar (TS #348): labels from each
+        // window's own length, so the monthly MCP window reads "30D".
+        var zaiTiles: [(D200HSlotKind, String, String)] = []
+        var zaiPair: [D200HUsagePairWindow] = []
+        // MCP windows label by their QUANTITY ("MCP"), never their length —
+        // they meter tool calls, not tokens (TS #348).
+        if let p = usage.zaiPrimaryPercent {
+            let label = usage.zaiPrimaryIsMcp ? "MCP" : usageWindowLabel(usage.zaiPrimaryWindowMinutes)
+            let footnote = codexFootnote(stale: usage.zaiPrimaryStale, capturedAt: usage.zaiCapturedAt)
+            zaiTiles.append((.usageGauge(agent: "zai", window: usageWindowKind(usage.zaiPrimaryWindowMinutes), percent: p, known: true, stale: usage.zaiPrimaryStale, inactive: false, footnote: footnote), label, "zai"))
+            zaiPair.append(.init(label: label, percent: p, stale: usage.zaiPrimaryStale, footnote: footnote))
+        }
+        if let s = usage.zaiSecondaryPercent {
+            let label = usage.zaiSecondaryIsMcp ? "MCP" : usageWindowLabel(usage.zaiSecondaryWindowMinutes)
+            let footnote = codexFootnote(stale: usage.zaiSecondaryStale, capturedAt: usage.zaiCapturedAt)
+            zaiTiles.append((.usageGauge(agent: "zai", window: usageWindowKind(usage.zaiSecondaryWindowMinutes), percent: s, known: true, stale: usage.zaiSecondaryStale, inactive: false, footnote: footnote), label, "zai"))
+            zaiPair.append(.init(label: label, percent: s, stale: usage.zaiSecondaryStale, footnote: footnote))
+        }
         // The Luna tile is its own logical reading — it counts toward strip
         // pressure exactly like a Codex window would (TS: `+ (lunaTile ? 1 : 0)`).
         let lunaTile: (D200HSlotKind, String, String)? = usage.lunaReserve.map { luna in
@@ -789,11 +851,17 @@ public enum D200HLayoutModel {
             let active = luna.available != false && remaining > 0
             return (.lunaReserve(remainingPercent: remaining, active: active), "LUNA", "codex")
         }
-        let logicalCount = claudeTiles.count + codexTiles.count + (scopedTile == nil ? 0 : 1) + (lunaTile == nil ? 0 : 1)
-        let compactCodex = logicalCount > usagePreferredPositions.count && codexPair.count == 2
-        let stillOverflows = logicalCount - (compactCodex ? 1 : 0) > usagePreferredPositions.count
+        let logicalCount = claudeTiles.count + codexTiles.count + zaiTiles.count
+            + (scopedTile == nil ? 0 : 1) + (lunaTile == nil ? 0 : 1)
+        let compactCodex = logicalCount > budget && codexPair.count == 2
+        let stillOverflows = logicalCount - (compactCodex ? 1 : 0) > budget
         let pairScopedWith7D = stillOverflows && scopedPair != nil && claudePair.count == 2
         let compactClaude = stillOverflows && !pairScopedWith7D && claudePair.count == 2
+        // Third step of the same cascade (TS #348): with all three providers
+        // live the strip is six readings on three keys and z.ai compacts to a
+        // pair tile too — nothing dropped.
+        let afterClaude = logicalCount - (compactCodex ? 1 : 0) - ((compactClaude || pairScopedWith7D) ? 1 : 0)
+        let compactZai = afterClaude > budget && zaiPair.count == 2
         func cells(_ agent: String, _ tiles: [(D200HSlotKind, String, String)], _ pair: [D200HUsagePairWindow], compact: Bool) -> [(D200HSlotKind, String, String)] {
             compact ? [(.usagePair(agent: agent, windows: pair), pair.map(\.label).joined(separator: " · "), agent)] : tiles
         }
@@ -811,6 +879,7 @@ public enum D200HLayoutModel {
             if let scopedTile { tiles.append(scopedTile) }
         }
         tiles.append(contentsOf: cells("codex", codexTiles, codexPair, compact: compactCodex))
+        tiles.append(contentsOf: cells("zai", zaiTiles, zaiPair, compact: compactZai))
         if let lunaTile { tiles.append(lunaTile) }
         return tiles
     }

@@ -1648,6 +1648,8 @@ final class DaemonServer {
     private var lastAdminApiFetchTime: Date = .distantPast
     private var adminApiPollTask: Task<Void, Never>?
     private static let adminApiPollInterval: TimeInterval = 600  // 10 minutes
+    private var zaiUsagePollTask: Task<Void, Never>?
+    private static let zaiUsagePollInterval: TimeInterval = 60  // 1 minute
     /// True when cachedApiUsage was synced from relay's already-adjusted values
     private var apiUsagePreAdjusted = false
     private var oauthConnected = false
@@ -8640,6 +8642,24 @@ final class DaemonServer {
             }
         }
 
+        // z.ai GLM Coding Plan — provider-account poll (#348). No-ops with no
+        // key pasted; independent of every harness that might use the plan.
+        // Key availability is read OFF the actor: a Keychain ACL prompt must
+        // never gate daemon startup (it wedged /health on the first signed
+        // relaunch — the SettingsScreen Keychain trap, daemon-side).
+        zaiUsagePollTask = Task { [weak self] in
+            if await ZaiUsageClient.hasKeyOffActor() {
+                _ = await self?.refreshZaiUsage()
+            }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.zaiUsagePollInterval))
+                guard let self else { break }
+                guard await ZaiUsageClient.hasKeyOffActor() else { continue }
+                guard await self.wsServer.hasClients() else { continue }
+                _ = await self.refreshZaiUsage()
+            }
+        }
+
         // Ollama — dynamic interval (5s base, exponential backoff up to 5m
         // when the service is absent). See probeOllama() for the backoff
         // state machine.
@@ -9491,7 +9511,7 @@ final class DaemonServer {
             try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
         }) ?? [:]
         if let update {
-            let allowed = ["claude", "codex", "openclaw", "mlx", "ollama", "antigravity"]
+            let allowed = ["claude", "codex", "zai", "openclaw", "mlx", "ollama", "antigravity"]
             guard let values = update["providers"] as? [String], values.allSatisfy(allowed.contains) else {
                 return .json(["error": "Invalid providers"], status: 400)
             }
@@ -9779,6 +9799,16 @@ final class DaemonServer {
         broadcastUsage()
     }
 
+    /// Refresh the z.ai GLM Coding Plan reading (#348). The client owns the
+    /// cache and freshness semantics (key reads stay off this actor); the
+    /// daemon just triggers it and broadcasts. A not-fresh result keeps the
+    /// aged reading — read-time retirement handles the display bound.
+    private func refreshZaiUsage() async {
+        guard await ZaiUsageClient.hasKeyOffActor() else { return }
+        _ = await ZaiUsageClient.shared.fetch()
+        broadcastUsage()
+    }
+
     /// In App Store sandbox, `usageAPI.hasOAuthToken()` always returns
     /// false because Anthropic does not publish a Keychain Access Group
     /// for the Claude Code OAuth entry (see `UsageAPIClient.swift` —
@@ -9919,6 +9949,9 @@ final class DaemonServer {
         ) {
             e["codexRateLimits"] = payload
         }
+        if let payload = Self.zaiRateLimitsPayload(ZaiUsageClient.shared.cached()) {
+            e["zaiRateLimits"] = payload
+        }
         if let antigravity = cachedAntigravityStatus {
             e["antigravityStatus"] = antigravityPayload(antigravity)
         }
@@ -9974,6 +10007,20 @@ final class DaemonServer {
             (usage.inferredBillingType == nil && stateMachine.billingType == "subscription") {
             subscriptions.append(["name": "Claude"])
         }
+        // z.ai GLM Coding Plan: an ended window is routine life for a rolling
+        // plan, not a lapsed subscription — the row needs windows, and only
+        // the display retirement (windowless) removes it.
+        if let zai = ZaiUsageClient.shared.cached(),
+           zai.data.primary != nil || zai.data.secondary != nil,
+           Date().timeIntervalSince(zai.fetchedAt) <= Self.usageStaleTTL {
+            let name: String
+            if let plan = ZaiQuotaRules.formatPlanName(zai.data.planType) {
+                name = "GLM Coding Plan · \(plan)"
+            } else {
+                name = "GLM Coding Plan"
+            }
+            subscriptions.append(["name": name])
+        }
         return subscriptions
     }
 
@@ -9991,8 +10038,14 @@ final class DaemonServer {
     /// `isCodexWindowStale` — Codex usage is read passively from local rollout
     /// files, so once Codex stops being used the snapshot freezes and a "now"
     /// countdown would mislead. Grace keeps a just-reset window briefly showing "now".
+    /// Parses both ISO-8601 spellings the producers emit (with and without
+    /// fractional seconds — the z.ai windows carry epoch-ms instants).
     private static func isCodexWindowStale(_ resetsAt: String?, graceSeconds: Double = 300) -> Bool {
-        guard let resetsAt, let date = ISO8601DateFormatter().date(from: resetsAt) else { return false }
+        guard let resetsAt else { return false }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        guard let date = fractional.date(from: resetsAt) ?? plain.date(from: resetsAt) else { return false }
         return -date.timeIntervalSinceNow > graceSeconds
     }
 
@@ -10087,6 +10140,40 @@ final class DaemonServer {
         // consumer derives freshness from this against its own clock
         // (`isCodexSnapshotAged` / `codexUsageFootnote`, shared/format-utils).
         if let capturedAt = limits.capturedAt { payload["capturedAt"] = capturedAt }
+        return payload
+    }
+
+    /// Wire payload for the z.ai provider-account reading. Mirrors the Node
+    /// producer's `normalizeZaiRateLimits` + read-time retirement: nil when the
+    /// provider was never fetched (no key — no information), a windowless
+    /// dictionary when the reading is past the 10-minute display bound (the
+    /// Claude-quota retirement rule, block-scoped — plan/family axes survive so
+    /// surfaces can still name the row), and per-window `stale` marking
+    /// identical to the Codex windows.
+    private static func zaiRateLimitsPayload(
+        _ cached: (data: ZaiRateLimits, fetchedAt: Date)?,
+        now: Date = Date()
+    ) -> [String: Any]? {
+        guard let cached else { return nil }
+        func window(_ w: ZaiWindow?) -> [String: Any]? {
+            guard let w else { return nil }
+            var d: [String: Any] = ["usedPercent": w.usedPercent ?? 0, "windowMinutes": w.windowMinutes ?? 0]
+            if let quantity = w.quantity { d["quantity"] = quantity }
+            if isCodexWindowStale(w.resetsAt) {
+                d["stale"] = true
+            } else if let resetsAt = w.resetsAt {
+                d["resetsAt"] = resetsAt
+            }
+            return d
+        }
+        var payload: [String: Any] = [:]
+        if now.timeIntervalSince(cached.fetchedAt) <= usageStaleTTL {
+            if let p = window(cached.data.primary) { payload["primary"] = p }
+            if let s = window(cached.data.secondary) { payload["secondary"] = s }
+        }
+        if let plan = cached.data.planType { payload["planType"] = plan }
+        if let limitId = cached.data.limitId { payload["limitId"] = limitId }
+        if let capturedAt = cached.data.capturedAt { payload["capturedAt"] = capturedAt }
         return payload
     }
 

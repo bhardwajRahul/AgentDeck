@@ -1056,6 +1056,7 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
         s.codexSubscriptionActiveUntil = e.codexSubscriptionActiveUntil ?? s.codexSubscriptionActiveUntil
         s.codexLastRefreshAt = e.codexLastRefreshAt ?? s.codexLastRefreshAt
         s.codexRateLimits = e.codexRateLimits ?? s.codexRateLimits
+        s.zaiRateLimits = e.zaiRateLimits ?? s.zaiRateLimits
         s.modelCatalog = e.modelCatalog ?? s.modelCatalog
         // A legacy model snapshot invalidates earlier verification. A quota-only
         // frame with no model fields retains it. Never merge known=true across producers.
@@ -1179,6 +1180,7 @@ final class AgentStateHolder: ObservableObject, @unchecked Sendable {
         state.codexAuthMode = nil
         state.codexPlanType = nil
         state.codexRateLimits = nil
+        state.zaiRateLimits = nil
         state.subscriptions = []
         state.antigravityStatus = nil
     }

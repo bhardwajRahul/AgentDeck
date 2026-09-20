@@ -38,6 +38,7 @@
   --brand-opencode:    #3a3a3a;
   --brand-antigravity: #5F6368;
   --brand-kiro:        #7C3AED;
+  --brand-zai:         #1F63EC;
 
   /* === Semantic status (marketing / editorial surfaces) === */
   --status-idle:       var(--ink-300);

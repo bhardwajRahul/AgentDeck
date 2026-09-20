@@ -19,6 +19,7 @@
     "generate-session-weight-rules": "node scripts/generate-session-weight-rules.mjs",
     "generate-state-transitions": "node scripts/generate-state-transitions.mjs",
     "generate-codex-freshness-rules": "node scripts/generate-codex-freshness-rules.mjs",
+    "generate-zai-quota-rules": "node scripts/generate-zai-quota-rules.mjs",
     "generate-idotmatrix-identity": "node scripts/generate-idotmatrix-identity.mjs",
     "generate-pairing-code-rules": "node scripts/generate-pairing-code-rules.mjs",
     "generate-apme-display-rules": "node scripts/generate-apme-display-rules.mjs",

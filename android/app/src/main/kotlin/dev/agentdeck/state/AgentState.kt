@@ -15,6 +15,7 @@ import dev.agentdeck.net.SessionInfo
 import dev.agentdeck.net.SubscriptionInfo
 import dev.agentdeck.net.AntigravityStatusInfo
 import dev.agentdeck.net.CodexRateLimits
+import dev.agentdeck.net.ZaiRateLimits
 import dev.agentdeck.net.StateUpdate
 import dev.agentdeck.net.UsageUpdate
 import dev.agentdeck.net.VoiceState
@@ -91,6 +92,12 @@ data class DashboardState(
      * rides on usage_update (never state_update), exactly like macOS/iOS.
      */
     val codexRateLimits: CodexRateLimits? = null,
+    /**
+     * z.ai GLM Coding Plan usage — a direct provider-account reading, hoisted
+     * like [codexRateLimits] so a null in a later frame retains the last known
+     * value. Independent of every harness that may use the plan (#348).
+     */
+    val zaiRateLimits: ZaiRateLimits? = null,
 )
 
 class AgentStateHolder private constructor() {
@@ -271,6 +278,7 @@ class AgentStateHolder private constructor() {
                         // codexRateLimits only rides on usage_update — hoist it
                         // so a later null incoming doesn't wipe it (mirrors iOS).
                         codexRateLimits = incoming.codexRateLimits ?: current.codexRateLimits,
+                        zaiRateLimits = incoming.zaiRateLimits ?: current.zaiRateLimits,
                     )
                 }
                 lastKnownState = _state.value
@@ -369,6 +377,7 @@ class AgentStateHolder private constructor() {
                         subscriptions = emptyList(),
                         antigravityStatus = null,
                         codexRateLimits = null,
+                        zaiRateLimits = null,
                     )
                 }
                 SessionMetrics.instance.onDisconnected()

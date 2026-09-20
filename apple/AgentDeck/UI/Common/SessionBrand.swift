@@ -22,6 +22,9 @@ enum SessionBrand {
         case "opencode":    return Color(red: 0.945, green: 0.925, blue: 0.925) // near-white
         case "antigravity": return Color(red: 0.373, green: 0.388, blue: 0.408) // #5F6368
         case "kiro-cli", "kiro-ide": return Color(red: 0.486, green: 0.227, blue: 0.929) // #7C3AED
+        // Provider key for the z.ai GLM Coding Plan usage surfaces (#348) —
+        // measured from the upstream mark (design/brand/zai.svg).
+        case "zai":         return Color(red: 0.122, green: 0.388, blue: 0.925) // #1F63EC
         case "daemon":      return Color(red: 0.55,  green: 0.55,  blue: 0.60)
         default:            return Color.secondary
         }
@@ -164,6 +167,9 @@ private struct AgentBrandIconSpec {
         case "opencode":    return .openCode
         case "antigravity": return .antigravity
         case "kiro-cli", "kiro-ide": return .kiro
+        // Provider key for the z.ai GLM Coding Plan usage surfaces (#348) —
+        // not a session agent type.
+        case "zai":         return .zai
         default:            return nil
         }
     }
@@ -202,6 +208,18 @@ private struct AgentBrandIconSpec {
         paths: [parse(kiroPath)],
         viewBox: 24,
         evenOddFill: true
+    )
+
+    /// z.ai mark — upstream logo.svg from z-cdn.chatglm.cn (design/brand/
+    /// zai.svg): the Z's three strokes, mark without the app-icon plate.
+    private static let zai = AgentBrandIconSpec(
+        paths: [
+            "M15.47,7.1l-1.3,1.85c-0.2,0.29-0.54,0.47-0.9,0.47h-7.1V7.09C6.16,7.1,15.47,7.1,15.47,7.1z",
+            "M14.53,22.91l1.31-1.86c0.2-0.29,0.54-0.47,0.9-0.47h7.09v2.33H14.53z",
+            "M24.3,7.1L13.14,22.91L5.7,22.91L16.86,7.1Z",
+        ].map(parse),
+        viewBox: 30,
+        evenOddFill: false
     )
 
     private static func parse(_ pathData: String) -> Path {

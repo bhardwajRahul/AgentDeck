@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { Brand } from '../design-tokens.js';
 import {
   buildSessionDeck,
   parseState,
@@ -310,6 +311,61 @@ describe('usage tiles — scoped caps and the three-key strip budget', () => {
 
   it('renders no scoped tile when there are none', () => {
     expect(stripText({})).not.toContain('MODEL');
+  });
+});
+
+describe('usage tiles — z.ai provider windows', () => {
+  const zaiRateLimits = {
+    planType: 'max',
+    limitId: 'standard',
+    capturedAt: new Date().toISOString(),
+    primary: { usedPercent: 3, windowMinutes: 300, resetsAt: '2099-01-01T00:00:00Z', quantity: 'tokens' },
+    secondary: { usedPercent: 100, windowMinutes: 43200, resetsAt: '2099-01-01T00:00:00Z', quantity: 'mcp' },
+  };
+
+  function stripText(extra: Record<string, unknown>): string {
+    const deck = buildSessionDeck(
+      { state: 'IDLE', allSessions: [], zaiRateLimits, ...extra } as any,
+      { mode: 'list', showUsage: true } as any,
+      positions(15),
+    );
+    return [...deck.values()].map((c) => c?.svg ?? '').join('|');
+  }
+
+  it('renders a lone z.ai plan with a text identity and a length-derived 30D label', () => {
+    const text = stripText({});
+    // Identity is the upstream z.ai mark (design/brand/zai.svg) — the Z's
+    // diagonal stroke rendered in the brand colour, never a redrawn logo.
+    expect(text).toContain('M24.3,7.1L13.14,22.91');
+    expect(text).toContain(Brand.zai);
+    // The MCP tool-call quota labels by its QUANTITY, not its length.
+    expect(text).toContain('>MCP<');
+    expect(text).toContain('>3<');
+    expect(text).toContain('>100<');
+  });
+
+  it('compacts all three providers into pair tiles — six windows, nothing dropped', () => {
+    const text = stripText({
+      fiveHourPercent: 32,
+      sevenDayPercent: 64,
+      codexRateLimits: {
+        primary: { usedPercent: 55, windowMinutes: 300 },
+        secondary: { usedPercent: 20, windowMinutes: 10080 },
+      },
+    });
+    // Every provider's readings survive on the three-key strip.
+    expect(text).toContain('>32<');
+    expect(text).toContain('>64<');
+    expect(text).toContain('>55<');
+    expect(text).toContain('>20<');
+    expect(text).toContain('>MCP<');
+    expect(text).toContain('>100<');
+  });
+
+  it('emits no z.ai tiles for a windowless (retired or payg) block', () => {
+    const text = stripText({ zaiRateLimits: { limitId: 'payg' } });
+    expect(text).not.toContain('M24.3,7.1L13.14,22.91');
+    expect(text).not.toContain('>MCP<');
   });
 });
 

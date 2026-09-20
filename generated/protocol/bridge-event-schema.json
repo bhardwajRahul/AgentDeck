@@ -2002,6 +2002,9 @@
         },
         "usageStale": {
           "type": "boolean"
+        },
+        "zaiRateLimits": {
+          "$ref": "#/definitions/ZaiRateLimits"
         }
       },
       "required": [
@@ -2119,6 +2122,64 @@
         "type",
         "deviceId",
         "timestamp"
+      ],
+      "type": "object"
+    },
+    "ZaiRateLimits": {
+      "additionalProperties": false,
+      "description": "Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's monitor endpoint with the account's coding-plan key — an active account query like the Claude OAuth usage read, not a passive local-file snapshot. Same slot grammar as `CodexRateLimits`: `primary` is the 5-hour credits window, `secondary` the long window when the plan reports one (weekly credits on the credit schema, or the monthly MCP tool quota on the standard schema — `limitId` says which quantity the number belongs to, the same \"which limit\" axis Codex carries).",
+      "properties": {
+        "capturedAt": {
+          "description": "ISO-8601 instant this reading was fetched. Consumers derive age from it against their own clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches regularly, so an aged stamp means the poll is failing, and the reading dims rather than reading as live.",
+          "type": "string"
+        },
+        "limitId": {
+          "description": "Schema family the windows were read from: \"standard\" (TOKENS_LIMIT + TIME_LIMIT items) or \"credit\" (credit-only schema, lite-tier plans).",
+          "type": "string"
+        },
+        "planType": {
+          "description": "Plan tier stamped into every snapshot (\"lite\" | \"pro\" | \"max\").",
+          "type": "string"
+        },
+        "primary": {
+          "$ref": "#/definitions/ZaiWindow"
+        },
+        "secondary": {
+          "$ref": "#/definitions/ZaiWindow"
+        }
+      },
+      "type": "object"
+    },
+    "ZaiWindow": {
+      "additionalProperties": false,
+      "description": "A z.ai quota window — the shared window shape plus WHICH QUANTITY it meters: token/credits windows (`tokens`) or the MCP tool-call quota (`mcp`). They are different kinds of usage rendered side by side, and a surface must never present an MCP gauge as token usage (or vice versa); the label follows the quantity (\"5h\" vs \"MCP\").",
+      "properties": {
+        "quantity": {
+          "enum": [
+            "tokens",
+            "mcp"
+          ],
+          "type": "string"
+        },
+        "resetsAt": {
+          "description": "ISO-8601 reset instant (converted from the rollout's unix `resets_at`).",
+          "type": "string"
+        },
+        "stale": {
+          "description": "True when this window's snapshot has expired (its `resets_at` slid into the past with no fresher Codex activity). The passive rollout read is frozen, so the percent is last-known-only — renderers should dim the gauge and show a \"stale\" marker instead of a misleading \"now\" countdown. Set centrally in `buildUsageEvent`; `resetsAt` is cleared at the same time so no formatter prints \"now\".\n\nThis is the HARD signal — slot-based consumers (Pixoo renderers, ESP32 firmware) drop the gauge entirely on it. A merely OLD snapshot of a still- live window must therefore never set it; that rides `capturedAt` instead.",
+          "type": "boolean"
+        },
+        "usedPercent": {
+          "type": "number"
+        },
+        "windowMinutes": {
+          "description": "Rolling window length in minutes (primary ≈ 300 = 5h, secondary ≈ 10080 = 7d).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "usedPercent",
+        "windowMinutes"
       ],
       "type": "object"
     }

@@ -24,6 +24,7 @@ import dev.agentdeck.ui.eink.formatDuration
 import dev.agentdeck.ui.eink.formatDurationLong
 import dev.agentdeck.ui.theme.AgentDeckColors
 import dev.agentdeck.util.codexLimitRows
+import dev.agentdeck.util.zaiLimitRows
 
 /**
  * Compact usage summary card for DashboardScreen.
@@ -106,6 +107,28 @@ fun UsageSummaryCard(
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     codexRows.forEach { row ->
+                        CompactGauge(
+                            label = row.label,
+                            percent = row.percent,
+                            resetAt = if (row.stale || row.footnote != null) null else row.resetIso,
+                            suffix = row.footnote ?: if (row.stale) "stale" else null,
+                            agentType = row.agentType,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+
+            // z.ai GLM Coding Plan (#348) — same neutral-row grammar; renders
+            // only when the provider reports windows, so an absent plan leaves
+            // no reserved space.
+            val zaiRows = zaiLimitRows(usage.zaiRateLimits)
+            if (zaiRows.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    zaiRows.forEach { row ->
                         CompactGauge(
                             label = row.label,
                             percent = row.percent,

@@ -72,6 +72,7 @@ asked for anything beyond that.
 | Kiro ghost | `icons/kiro.svg` | Amazon.com, Inc. or its affiliates |
 | opencode | `icons/opencode.svg` | the opencode project |
 | OpenClaw | `icons/openclaw.svg` | the OpenClaw project |
+| z.ai | `https://z-cdn.chatglm.cn/z-ai/static/logo.svg` (captured 2026-09-20; `zai.svg` stores the Z strokes verbatim, mark without the upstream app-icon plate) | Z.ai / Zhipu AI |
 
 Re-verify a mark against upstream with:
 

@@ -692,6 +692,7 @@ final class PixooRenderer {
             case .openCode: return (255, 246, 248)
             case .openClaw: return (255, 67, 84)
             case .kiro: return (124, 58, 237)
+            case .zai: return (31, 99, 236)  // Brand.zai (#1F63EC)
             case .antigravity:
                 let bands: [RGB] = [
                     (92, 214, 77), (245, 203, 36), (255, 132, 16),
@@ -1334,6 +1335,11 @@ final class PixooRenderer {
             guard window?.stale != true, let percent = window?.usedPercent else { return nil }
             return UsageWindow(percent: percent, resetsAt: window?.resetsAt)
         }
+        // Same contract for the z.ai window shape (which carries `quantity`).
+        func freshCodexWindow(_ window: ZaiWindow?) -> UsageWindow? {
+            guard window?.stale != true, let percent = window?.usedPercent else { return nil }
+            return UsageWindow(percent: percent, resetsAt: window?.resetsAt)
+        }
 
         var providers: [ProviderRow] = []
         if dashboardState.usageStale != true, let fiveHour = dashboardState.fiveHourPercent {
@@ -1356,10 +1362,24 @@ final class PixooRenderer {
                 subscriptionUntil: dashboardState.codexSubscriptionActiveUntil
             ))
         }
+        let zaiPrimary = freshCodexWindow(dashboardState.zaiRateLimits?.primary)
+        let zaiSecondary = freshCodexWindow(dashboardState.zaiRateLimits?.secondary)
+        if zaiPrimary != nil || zaiSecondary != nil {
+            providers.append(ProviderRow(
+                glyph: .zai, brand: (31, 99, 236),  // Brand.zai (#1F63EC)
+                primary: zaiPrimary,
+                secondary: zaiSecondary,
+                subscriptionUntil: nil
+            ))
+        }
         guard !providers.isEmpty else { return }
+        // The 64px panel budgets exactly two 7px provider rows — with all three
+        // providers live the two established seats win (mirrors the Node
+        // renderer; geometry is not renegotiated per provider count).
+        let seatedProviders = Array(providers.prefix(2))
 
         let timeColor: RGB = (0x60, 0x70, 0x80)
-        let firstY = providers.count > 1 ? 50 : 57
+        let firstY = seatedProviders.count > 1 ? 50 : 57
 
         func drawCreatureMarker(_ provider: ProviderRow, rowY: Int) {
             guard let mask = OfficialDotGlyphs.masks[provider.glyph] else { return }
@@ -1446,7 +1466,7 @@ final class PixooRenderer {
             }
         }
 
-        for (index, provider) in providers.enumerated() {
+        for (index, provider) in seatedProviders.enumerated() {
             let rowY = firstY + index * 7
             for y in rowY..<(rowY + 7) {
                 for x in 0..<Self.width {
@@ -1517,6 +1537,11 @@ final class PixooRenderer {
                 return state == .processing ? Self.colors.crayfishRouting : Self.colors.crayfishBody
             case .kiro:
                 return state == .processing ? (167, 120, 255) : (124, 58, 237)
+            // The z.ai provider mark reaches this sprite only from the usage
+            // HUD, which never drives creature state — but the switch stays
+            // total over the glyph union. Brand.zai (#1F63EC).
+            case .zai:
+                return (31, 99, 236)
             case .antigravity:
                 return Self.colors.white
             }

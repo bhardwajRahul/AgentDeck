@@ -1,6 +1,8 @@
 package dev.agentdeck.util
 
 import dev.agentdeck.net.CodexRateLimits
+import dev.agentdeck.net.ZaiRateLimits
+import dev.agentdeck.net.ZaiWindow
 import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -132,6 +134,57 @@ fun codexLimitRows(limits: CodexRateLimits?, nowMs: Long = System.currentTimeMil
                 add(
                     ProviderLimitRow(
                         "codex", windowLabel(s.windowMinutes), pct, s.resetsAt, s.stale == true,
+                        CodexFreshnessRules.footnote(s.stale == true, limits.capturedAt, nowMs),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Codex + z.ai usage rows in one display list — every LIMITS surface renders
+ * THIS so the two providers' order cannot drift between surfaces (#348).
+ * Codex keeps the established seat, z.ai follows.
+ */
+fun providerLimitRows(
+    codex: CodexRateLimits?,
+    zai: ZaiRateLimits?,
+    nowMs: Long = System.currentTimeMillis(),
+): List<ProviderLimitRow> = codexLimitRows(codex, nowMs) + zaiLimitRows(zai, nowMs)
+
+/**
+ * z.ai (GLM Coding Plan) usage rows — the same window grammar as the Codex
+ * rows. The `agentType` "zai" resolves to the upstream z.ai mark in the
+ * BrandIcon registry (design/brand/zai.svg), so these gauges carry the real
+ * provider logo like [codexLimitRows] carries the Codex mark. The MCP
+ * tool-call quota labels by its QUANTITY ("mcp"), never its length. NOT gated
+ * by Claude's `usageStale`; each window carries its own stale flag (#348).
+ */
+fun zaiLimitRows(limits: ZaiRateLimits?, nowMs: Long = System.currentTimeMillis()): List<ProviderLimitRow> {
+    if (limits == null) return emptyList()
+    return buildList {
+        // The MCP tool-call quota is labeled by its QUANTITY, not its length —
+        // "MCP" must never read as token usage.
+        fun label(w: ZaiWindow): String =
+            if (w.quantity == "mcp") "mcp" else windowLabel(w.windowMinutes)
+        limits.primary?.let { p ->
+            val pct = p.usedPercent
+            if (pct != null) {
+                add(
+                    ProviderLimitRow(
+                        "zai", label(p), pct, p.resetsAt, p.stale == true,
+                        CodexFreshnessRules.footnote(p.stale == true, limits.capturedAt, nowMs),
+                    ),
+                )
+            }
+        }
+        limits.secondary?.let { s ->
+            val pct = s.usedPercent
+            if (pct != null) {
+                add(
+                    ProviderLimitRow(
+                        "zai", label(s), pct, s.resetsAt, s.stale == true,
                         CodexFreshnessRules.footnote(s.stale == true, limits.capturedAt, nowMs),
                     ),
                 )

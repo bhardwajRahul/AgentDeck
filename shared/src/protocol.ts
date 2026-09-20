@@ -193,6 +193,38 @@ export interface CodexRateLimits {
   capturedAt?: string;
 }
 
+/** Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's
+ *  monitor endpoint with the account's coding-plan key — an active account
+ *  query like the Claude OAuth usage read, not a passive local-file snapshot.
+ *  Same slot grammar as `CodexRateLimits`: `primary` is the 5-hour credits
+ *  window, `secondary` the long window when the plan reports one (weekly
+ *  credits on the credit schema, or the monthly MCP tool quota on the standard
+ *  schema — `limitId` says which quantity the number belongs to, the same
+ *  "which limit" axis Codex carries). */
+export interface ZaiRateLimits {
+  primary?: ZaiWindow;
+  secondary?: ZaiWindow;
+  /** Plan tier stamped into every snapshot ("lite" | "pro" | "max"). */
+  planType?: string;
+  /** Schema family the windows were read from: "standard" (TOKENS_LIMIT +
+   *  TIME_LIMIT items) or "credit" (credit-only schema, lite-tier plans). */
+  limitId?: string;
+  /** ISO-8601 instant this reading was fetched. Consumers derive age from it
+   *  against their own clock — same contract as `CodexRateLimits.capturedAt`:
+   *  an active poll re-fetches regularly, so an aged stamp means the poll is
+   *  failing, and the reading dims rather than reading as live. */
+  capturedAt?: string;
+}
+
+/** A z.ai quota window — the shared window shape plus WHICH QUANTITY it
+ *  meters: token/credits windows (`tokens`) or the MCP tool-call quota
+ *  (`mcp`). They are different kinds of usage rendered side by side, and a
+ *  surface must never present an MCP gauge as token usage (or vice versa);
+ *  the label follows the quantity ("5h" vs "MCP"). */
+export interface ZaiWindow extends CodexRateLimitWindow {
+  quantity?: 'tokens' | 'mcp';
+}
+
 // ===== Bridge → Plugin (State Updates) =====
 
 export interface StateUpdateEvent {
@@ -336,6 +368,10 @@ export interface UsageEvent {
   codexLastRefreshAt?: string;
   // Codex usage limits (5h/7d-style) parsed from local rollout files
   codexRateLimits?: CodexRateLimits;
+  // Z.ai GLM Coding Plan usage limits, fetched directly from the provider
+  // account (monitor endpoint). Independent of any harness: the plan serves
+  // Claude Code, Codex and other CLIs from one shared quota.
+  zaiRateLimits?: ZaiRateLimits;
   // Local model/runtime summaries
   modelCatalog?: ModelCatalogEntry[];
   mlxModels?: string[];
@@ -1211,7 +1247,9 @@ export interface CardFeedGlance {
 }
 
 export const GLANCE_MAX_WRAPUP_LINES = 4;
-export const GLANCE_MAX_USAGE_ROWS = 3;
+/** Claude, Codex and z.ai — a provider with no numbers gets no row, so the cap
+ *  only bites when all three are live at once. */
+export const GLANCE_MAX_USAGE_ROWS = 4;
 export const GLANCE_MAX_EVENTS = 3;
 /** Per-line UTF-8 byte budget (fits a 528px 1-bit panel row in KR16). */
 export const GLANCE_LINE_MAX_BYTES = 64;

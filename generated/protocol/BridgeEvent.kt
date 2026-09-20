@@ -37,6 +37,7 @@ private val klaxon = Klaxon()
     .convert(TokenStatus::class,         { TokenStatus.fromValue(it.string!!) },         { "\"${it.value}\"" })
     .convert(Type::class,                { Type.fromValue(it.string!!) },                { "\"${it.value}\"" })
     .convert(VoiceAssistantState::class, { VoiceAssistantState.fromValue(it.string!!) }, { "\"${it.value}\"" })
+    .convert(Quantity::class,            { Quantity.fromValue(it.string!!) },            { "\"${it.value}\"" })
 
 /**
  * Bridge → clients — fires when a run completes evaluation (layer 1 or 2).
@@ -233,6 +234,7 @@ data class BridgeEvent (
     val tokenStatus: TokenStatus? = null,
     val toolCalls: Double? = null,
     val usageStale: Boolean? = null,
+    val zaiRateLimits: ZaiRateLimits? = null,
     val status: BridgeEventStatus? = null,
 
     /**
@@ -1605,6 +1607,88 @@ enum class VoiceAssistantState(val value: String) {
             "processing" -> Processing
             "speaking"   -> Speaking
             else         -> throw IllegalArgumentException()
+        }
+    }
+}
+
+/**
+ * Z.ai (GLM Coding Plan) usage limits, fetched directly from the provider's monitor
+ * endpoint with the account's coding-plan key — an active account query like the Claude
+ * OAuth usage read, not a passive local-file snapshot. Same slot grammar as
+ * `CodexRateLimits`: `primary` is the 5-hour credits window, `secondary` the long window
+ * when the plan reports one (weekly credits on the credit schema, or the monthly MCP tool
+ * quota on the standard schema — `limitId` says which quantity the number belongs to, the
+ * same "which limit" axis Codex carries).
+ */
+data class ZaiRateLimits (
+    /**
+     * ISO-8601 instant this reading was fetched. Consumers derive age from it against their own
+     * clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches
+     * regularly, so an aged stamp means the poll is failing, and the reading dims rather than
+     * reading as live.
+     */
+    val capturedAt: String? = null,
+
+    /**
+     * Schema family the windows were read from: "standard" (TOKENS_LIMIT + TIME_LIMIT items) or
+     * "credit" (credit-only schema, lite-tier plans).
+     */
+    @Json(name = "limitId")
+    val limitID: String? = null,
+
+    /**
+     * Plan tier stamped into every snapshot ("lite" | "pro" | "max").
+     */
+    val planType: String? = null,
+
+    val primary: ZaiWindow? = null,
+    val secondary: ZaiWindow? = null
+)
+
+/**
+ * A z.ai quota window — the shared window shape plus WHICH QUANTITY it meters:
+ * token/credits windows (`tokens`) or the MCP tool-call quota (`mcp`). They are different
+ * kinds of usage rendered side by side, and a surface must never present an MCP gauge as
+ * token usage (or vice versa); the label follows the quantity ("5h" vs "MCP").
+ */
+data class ZaiWindow (
+    val quantity: Quantity? = null,
+
+    /**
+     * ISO-8601 reset instant (converted from the rollout's unix `resets_at`).
+     */
+    val resetsAt: String? = null,
+
+    /**
+     * True when this window's snapshot has expired (its `resets_at` slid into the past with no
+     * fresher Codex activity). The passive rollout read is frozen, so the percent is
+     * last-known-only — renderers should dim the gauge and show a "stale" marker instead of a
+     * misleading "now" countdown. Set centrally in `buildUsageEvent`; `resetsAt` is cleared at
+     * the same time so no formatter prints "now".
+     *
+     * This is the HARD signal — slot-based consumers (Pixoo renderers, ESP32 firmware) drop the
+     * gauge entirely on it. A merely OLD snapshot of a still- live window must therefore never
+     * set it; that rides `capturedAt` instead.
+     */
+    val stale: Boolean? = null,
+
+    val usedPercent: Double,
+
+    /**
+     * Rolling window length in minutes (primary ≈ 300 = 5h, secondary ≈ 10080 = 7d).
+     */
+    val windowMinutes: Double
+)
+
+enum class Quantity(val value: String) {
+    MCP("mcp"),
+    Tokens("tokens");
+
+    companion object {
+        public fun fromValue(value: String): Quantity = when (value) {
+            "mcp"    -> MCP
+            "tokens" -> Tokens
+            else     -> throw IllegalArgumentException()
         }
     }
 }

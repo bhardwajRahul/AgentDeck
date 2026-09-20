@@ -23,7 +23,12 @@ import { encoderRegistry, isDaemonConnected } from '../encoder-registry.js';
 import { svgToDataUrl } from '../renderers/button-renderer.js';
 import { renderUsageEncoderBoth, renderUsageEncoderSingle } from '../renderers/usage-gauge.js';
 import { renderUsageSession } from '../renderers/usage-dial-renderer.js';
-import { type UsageModeData, type UsageView, updateUsageModeData, getUsageModeData, fireUsageRefresh, buildCodexUsageEncoder, availableUsageViews } from '../utility-modes/usage.js';
+import {
+  type UsageModeData, type UsageProviderId, type UsageView,
+  updateUsageModeData, getUsageModeData, fireUsageRefresh,
+  availableUsageProviders, availableUsageViews, buildProviderUsageEncoder,
+  getUsageDialSelections, setE3UsageProvider,
+} from '../utility-modes/usage.js';
 import type { ConnectionManager } from '../connection-manager.js';
 import { renderOfflineTouchStrip } from '../renderers/session-slot-renderer.js';
 import { dlog, dinfo } from '../log.js';
@@ -34,10 +39,27 @@ const PIXMAP_LAYOUT = 'layouts/encoder-layout.json';
 
 let currentLayout = '';
 let hasReceivedData = false;
-/** Dial-cycled view for the Codex usage encoder (E3). Held as the view ITSELF,
+/** Dial-cycled view for the current provider page (E3). Held as the view ITSELF,
  *  not an index — the reachable list resizes as windows appear/disappear, and a
  *  retained index would silently land on a different view. */
 let currentView: UsageView = 'both';
+
+/**
+ * E3's provider page (#349): touch-tap cycles providers, rotation cycles the
+ * views of the current page, press refreshes. Re-anchored to a live provider
+ * when the current one loses its data.
+ */
+function anchoredProvider(): UsageProviderId {
+  const data = getUsageModeData();
+  const available = availableUsageProviders(data);
+  const current = getUsageDialSelections().e3;
+  if (available.includes(current)) return current;
+  // Prefer a page E2 is not showing, mirroring the never-same-provider rule.
+  const next = available.find((p) => p !== getUsageDialSelections().e2) ?? available[0];
+  const anchored = next ?? 'codex';
+  setE3UsageProvider(anchored);
+  return anchored;
+}
 
 export function initUsageDial(_bridge: ConnectionManager): void {
   dinfo('CodexUsageDial', 'initUsageDial called');
@@ -88,10 +110,10 @@ function refreshUsageDials(): void {
   setCanvasFeedback(renderCodexUsageView());
 }
 
-/** Render the current dial-cycled view for the Codex usage encoder. */
+/** Render the current dial-cycled view for the current provider page. */
 function renderCodexUsageView(): string {
   const data = getUsageModeData();
-  const enc = buildCodexUsageEncoder(data, hasReceivedData);
+  const enc = buildProviderUsageEncoder(anchoredProvider(), data, hasReceivedData);
   // A window can vanish between rotations (or never arrive), so re-anchor to a
   // reachable view instead of rendering a stop that no longer exists.
   const views = availableUsageViews(enc);
@@ -129,6 +151,20 @@ export class UsageDialAction extends SingletonAction {
       void openAgentDeckAppOrGitHub().catch(() => {});
       return;
     }
+    // Touch-tap cycles the provider page (#349). The cycle skips E2's current
+    // provider whenever another page exists, so the two dials never show the
+    // same provider at once; with a single page the tap is a no-op re-anchor.
+    const available = availableUsageProviders(getUsageModeData());
+    if (available.length < 2) return;
+    const e2 = getUsageDialSelections().e2;
+    const cycle = available.filter((p) => p !== e2);
+    const list = cycle.length > 0 ? cycle : available;
+    const current = getUsageDialSelections().e3;
+    const at = list.indexOf(current);
+    const next = list[((at < 0 ? 0 : at) + 1) % list.length];
+    setE3UsageProvider(next);
+    dlog('UsageDial', `touch-tap → provider=${next}`);
+    refreshUsageDials();
   }
 
   override async onDialRotate(ev: DialRotateEvent): Promise<void> {
@@ -136,10 +172,12 @@ export class UsageDialAction extends SingletonAction {
     // Rotation cycles the views the current payload actually has — with only a
     // weekly window that is both → 7d → session, no dead 5h stop.
     const dir = ev.payload.ticks >= 0 ? 1 : -1;
-    const views = availableUsageViews(buildCodexUsageEncoder(getUsageModeData(), hasReceivedData));
+    const views = availableUsageViews(
+      buildProviderUsageEncoder(anchoredProvider(), getUsageModeData(), hasReceivedData),
+    );
     const at = views.indexOf(currentView);
     currentView = views[((at < 0 ? 0 : at) + dir + views.length) % views.length];
-    dlog('CodexUsageDial', `rotate → view=${currentView}`);
+    dlog('UsageDial', `rotate → view=${currentView}`);
     refreshUsageDials();
   }
 

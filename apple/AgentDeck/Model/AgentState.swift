@@ -187,6 +187,9 @@ struct DashboardState: Sendable {
     var codexSubscriptionActiveUntil: String?
     var codexLastRefreshAt: String?
     var codexRateLimits: CodexRateLimits?
+    /// z.ai GLM Coding Plan usage — a direct provider-account reading,
+    /// independent of every harness that may use the plan (#348).
+    var zaiRateLimits: ZaiRateLimits?
     var mlxResidency: ModelResidency?
     var mlxModels: [String] = []
     var mlxModelCatalog: [String] = []

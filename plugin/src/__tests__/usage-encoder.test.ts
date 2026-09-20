@@ -7,7 +7,12 @@
  * notes are distinct, and stale data suppresses the tanks.
  */
 import { describe, it, expect } from 'vitest';
-import { buildClaudeUsageEncoder, buildCodexUsageEncoder, availableUsageViews } from '../utility-modes/usage.js';
+import type { UsageModeData } from '../utility-modes/usage.js';
+import {
+  buildClaudeUsageEncoder, buildCodexUsageEncoder, buildZaiUsageEncoder,
+  availableUsageViews, availableUsageProviders, buildProviderUsageEncoder,
+  pickAutoUsageProvider, noteUsageProviderActivity, modelProviderToUsageProvider,
+} from '../utility-modes/usage.js';
 import { renderUsageEncoderBoth } from '../renderers/usage-gauge.js';
 
 const CODEX_LIMITS = {
@@ -282,5 +287,76 @@ describe('availableUsageViews', () => {
 
   it('leaves only the gauge and session stops when no window exists', () => {
     expect(availableUsageViews(buildCodexUsageEncoder({}, true))).toEqual(['both', 'session']);
+  });
+});
+
+// ─── Provider pages: E2 auto / E3 cycle (#349) ──────────────────────────────
+
+describe('buildZaiUsageEncoder', () => {
+  it('maps the wire block to tanks; the MCP window labels by quantity', () => {
+    const enc = buildZaiUsageEncoder({
+      zaiRateLimits: {
+        planType: 'max',
+        limitId: 'standard',
+        primary: { usedPercent: 12, windowMinutes: 300, quantity: 'tokens' as const },
+        secondary: { usedPercent: 100, windowMinutes: 43200, quantity: 'mcp' as const },
+      },
+    }, true);
+    expect(enc.agent).toBe('zai');
+    expect(enc.title).toBe('Z.AI');
+    expect(enc.fiveHour).toMatchObject({ label: '5H', usedPercent: 12, known: true });
+    // The MCP quota is a DIFFERENT quantity — its label must never read as a
+    // token window length.
+    expect(enc.sevenDay).toMatchObject({ label: 'MCP', usedPercent: 100, known: true });
+    expect(enc.note).toBeUndefined();
+    expect(enc.sideCard).toEqual({ label: 'PLAN', value: 'MAX' });
+  });
+
+  it('windowless blocks render as notes, never as gauges', () => {
+    expect(buildZaiUsageEncoder({ zaiRateLimits: { limitId: 'payg' } }, true).note).toBe('Pay-as-you-go key');
+    expect(buildZaiUsageEncoder({ zaiRateLimits: {} }, true).note).toBe('No plan windows');
+    expect(buildZaiUsageEncoder({}, true).note).toBe('No z.ai data');
+    expect(buildZaiUsageEncoder({}, false).note).toBe('Waiting…');
+  });
+});
+
+describe('provider pages and the auto selection', () => {
+  const DATA: UsageModeData = {
+    fiveHourPercent: 40,
+    codexRateLimits: { primary: { usedPercent: 55, windowMinutes: 300 } },
+    zaiRateLimits: { primary: { usedPercent: 12, windowMinutes: 300, quantity: 'tokens' } },
+  };
+
+  it('lists every provider that currently has a page', () => {
+    expect(availableUsageProviders(DATA)).toEqual(['claude', 'codex', 'zai']);
+    // Claude needs LIVE (non-stale) quota; block providers need their block.
+    expect(availableUsageProviders({ ...DATA, usageStale: true })).toEqual(['codex', 'zai']);
+    expect(availableUsageProviders({})).toEqual([]);
+  });
+
+  it('auto-picks the most-recently-used provider, avoiding E3 when possible', () => {
+    noteUsageProviderActivity('claude', 0, 100);
+    noteUsageProviderActivity('codex', 0, 300);
+    noteUsageProviderActivity('zai', 2, 200); // z.ai has live working sessions
+    expect(pickAutoUsageProvider(DATA)).toBe('zai');
+    // E3 sits on z.ai → E2 falls to the next-best (codex), never the same page.
+    expect(pickAutoUsageProvider(DATA, 'zai')).toBe('codex');
+    // Processing outranks recency.
+    noteUsageProviderActivity('claude', 1, 50);
+    expect(pickAutoUsageProvider(DATA, 'zai')).toBe('claude');
+  });
+
+  it('buildProviderUsageEncoder dispatches per provider', () => {
+    expect(buildProviderUsageEncoder('claude', DATA, true).title).toBe('CLAUDE');
+    expect(buildProviderUsageEncoder('codex', DATA, true).title).toBe('CODEX');
+    expect(buildProviderUsageEncoder('zai', DATA, true).title).toBe('Z.AI');
+  });
+
+  it('modelProviderToUsageProvider maps only the three usage providers', () => {
+    expect(modelProviderToUsageProvider('anthropic')).toBe('claude');
+    expect(modelProviderToUsageProvider('openai')).toBe('codex');
+    expect(modelProviderToUsageProvider('zai')).toBe('zai');
+    expect(modelProviderToUsageProvider('google')).toBeNull();
+    expect(modelProviderToUsageProvider(null)).toBeNull();
   });
 });
