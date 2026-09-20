@@ -526,6 +526,10 @@ static void renderUsageTab() {
     take("Claude 7d", g_state.sevenDayPercent, g_state.sevenDayReset);
     take("Codex 5h", g_state.codexPrimaryPercent, g_state.codexPrimaryReset);
     take("Codex 7d", g_state.codexSecondaryPercent, g_state.codexSecondaryReset);
+    // z.ai (#350) — the MCP window labels by its quantity, never its length.
+    take("Z.AI 5h", g_state.zaiPrimaryPercent, g_state.zaiPrimaryReset);
+    take(g_state.zaiSecondaryIsMcp ? "Z.AI MCP" : "Z.AI 7d",
+         g_state.zaiSecondaryPercent, g_state.zaiSecondaryReset);
     // Account subscriptions — the "what am I paying for" line the landscape
     // strip and other dashboards carry.
     {
@@ -732,6 +736,7 @@ void update(float dt) {
         }
         int c5 = (int)g_state.fiveHourPercent, c7 = (int)g_state.sevenDayPercent;
         int x5 = (int)g_state.codexPrimaryPercent, x7 = (int)g_state.codexSecondaryPercent;
+        int z5 = (int)g_state.zaiPrimaryPercent, z7 = (int)g_state.zaiSecondaryPercent;
         char focused[32];
         strncpy(focused, g_state.focusedSessionId, sizeof(focused) - 1);
         focused[sizeof(focused) - 1] = '\0';
@@ -739,8 +744,8 @@ void update(float dt) {
         uint8_t subsCount = g_state.subscriptionCount;
         bool connected = g_state.wsConnected;
         unlockState();
-        snprintf(sig, sizeof(sig), "%d|%d|%d.%d.%d.%d|%d|%d%d%d%d|%d|%d|%d%d|%.31s|%s",
-                 s_tab, count, c5, c7, x5, x7, subsCount,
+        snprintf(sig, sizeof(sig), "%d|%d|%d.%d.%d.%d.%d.%d|%d|%d%d%d%d|%d|%d|%d%d|%.31s|%s",
+                 s_tab, count, c5, c7, x5, x7, z5, z7, subsCount,
                  connected ? 1 : 0, wifiUp ? 1 : 0, wsUp ? 1 : 0, serialUp ? 1 : 0,
                  Camera::lampDuty() > 0 ? 1 : 0,
                  power.voltageMv / 20, power.charging ? 1 : 0,

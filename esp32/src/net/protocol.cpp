@@ -304,6 +304,36 @@ static void handleUsageUpdate(JsonObject& obj) {
         }
     }
 
+    // z.ai GLM Coding Plan limits (#350) — same nested grammar. The secondary
+    // window carries `quantity`: "mcp" meters TOOL CALLS and renderers label
+    // it "MCP", never a window length; anything else meters token credits.
+    g_state.zaiPrimaryPercent = -1.0f;
+    g_state.zaiSecondaryPercent = -1.0f;
+    g_state.zaiPrimaryReset[0] = '\0';
+    g_state.zaiSecondaryReset[0] = '\0';
+    g_state.zaiSecondaryIsMcp = false;
+    if (obj["zaiRateLimits"].is<JsonObject>()) {
+        JsonObject zr = obj["zaiRateLimits"].as<JsonObject>();
+        if (zr["primary"].is<JsonObject>()) {
+            JsonObject p = zr["primary"].as<JsonObject>();
+            if (!p["stale"].as<bool>()) {
+                if (p["usedPercent"].is<float>()) g_state.zaiPrimaryPercent = p["usedPercent"].as<float>();
+                storeResetTime(p, "resetsAt", g_state.zaiPrimaryReset, sizeof(g_state.zaiPrimaryReset));
+            }
+        }
+        if (zr["secondary"].is<JsonObject>()) {
+            JsonObject s = zr["secondary"].as<JsonObject>();
+            if (!s["stale"].as<bool>()) {
+                if (s["usedPercent"].is<float>()) g_state.zaiSecondaryPercent = s["usedPercent"].as<float>();
+                storeResetTime(s, "resetsAt", g_state.zaiSecondaryReset, sizeof(g_state.zaiSecondaryReset));
+                if (s["quantity"].is<const char*>() &&
+                    strcmp(s["quantity"].as<const char*>(), "mcp") == 0) {
+                    g_state.zaiSecondaryIsMcp = true;
+                }
+            }
+        }
+    }
+
     // Antigravity local IDE quota — availableCredits is a raw count (no max),
     // so consumers render it as a text chip rather than a percentage gauge.
     g_state.antigravityCredits = -1.0f;
@@ -1170,6 +1200,8 @@ static void sendDeviceInfo() {
     resp["usageFiveH"] = (int)g_state.fiveHourPercent;   // -1 = no usage data held
     resp["usageCodex5H"] = (int)g_state.codexPrimaryPercent;
     resp["usageCodex7D"] = (int)g_state.codexSecondaryPercent;
+    resp["usageZai5H"] = (int)g_state.zaiPrimaryPercent;
+    resp["usageZai7D"] = (int)g_state.zaiSecondaryPercent;
     {
         uint8_t processing = 0;
         for (uint8_t i = 0; i < g_state.sessionCount; i++)

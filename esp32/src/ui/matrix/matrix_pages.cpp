@@ -408,6 +408,32 @@ void MatrixPages::renderCodex(CRGB* leds, float animTime) {
 }
 
 // ================================================================
+// PAGE 2b: Z.AI — GLM Coding Plan windows (#350). Same gauge pair as the
+// Codex page; the secondary window meters MCP TOOL CALLS when quantity=mcp
+// (the label rule lives in the state flag, this page only chooses the glyph
+// palette tint — quantity semantics never ride a color).
+// ================================================================
+void MatrixPages::renderZai(CRGB* leds, float animTime) {
+    lockState();
+    bool connected = g_state.wsConnected || Net::serialConnected();
+    float primary = g_state.zaiPrimaryPercent;
+    float secondary = g_state.zaiSecondaryPercent;
+    char primaryReset[20], secondaryReset[20];
+    strncpy(primaryReset, g_state.zaiPrimaryReset, sizeof(primaryReset) - 1);
+    primaryReset[sizeof(primaryReset) - 1] = '\0';
+    strncpy(secondaryReset, g_state.zaiSecondaryReset, sizeof(secondaryReset) - 1);
+    secondaryReset[sizeof(secondaryReset) - 1] = '\0';
+    unlockState();
+
+    if (!connected) {
+        renderDisconnectStatus(leds, animTime);
+        return;
+    }
+    renderGaugePair(leds, animTime, primary, primaryReset, secondary, secondaryReset, true);
+    drawStateDot(leds, animTime);
+}
+
+// ================================================================
 // PAGE 3: AGENTS — Crayfish fixed right + octopus scroll
 // ================================================================
 void MatrixPages::renderAgents(CRGB* leds, float animTime) {

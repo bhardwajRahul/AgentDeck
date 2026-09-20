@@ -127,6 +127,8 @@ static void sendDeviceInfoSerial() {
     resp["usageFiveH"] = (int)g_state.fiveHourPercent;
     resp["usageCodex5H"] = (int)g_state.codexPrimaryPercent;
     resp["usageCodex7D"] = (int)g_state.codexSecondaryPercent;
+    resp["usageZai5H"] = (int)g_state.zaiPrimaryPercent;
+    resp["usageZai7D"] = (int)g_state.zaiSecondaryPercent;
     {
         uint8_t processing = 0;
         for (uint8_t i = 0; i < g_state.sessionCount; i++)

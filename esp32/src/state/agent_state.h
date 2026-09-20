@@ -188,6 +188,16 @@ struct DashboardState {
     float codexSecondaryPercent;   // ≈7d window usedPercent (0-100)
     char codexPrimaryReset[20];    // "1h 23m" relative (needs NTP) or ""
     char codexSecondaryReset[20];
+    // z.ai GLM Coding Plan limits (#350) — a direct provider-account reading,
+    // same slot grammar. The secondary window may meter MCP TOOL CALLS, not
+    // tokens: `zaiSecondaryIsMcp` rides the wire `quantity` and renderers must
+    // label that gauge "MCP", never a window length — it can never read as
+    // token usage. -1.0f sentinel as above.
+    float zaiPrimaryPercent;       // 5h credits window usedPercent (0-100)
+    float zaiSecondaryPercent;     // long window (weekly credits OR monthly MCP)
+    char zaiPrimaryReset[20];
+    char zaiSecondaryReset[20];
+    bool zaiSecondaryIsMcp;
     // Antigravity local IDE quota. availableCredits is a raw count (no max),
     // so it renders as a text chip, not a gauge. -1.0f = "no data".
     float antigravityCredits;

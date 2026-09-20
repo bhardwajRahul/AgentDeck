@@ -388,6 +388,7 @@ static lv_obj_t* lblTankHeader = nullptr;
 // !BOARD_IPS10 only.
 static lv_obj_t* claudeGroup = nullptr;
 static lv_obj_t* codexGroup  = nullptr;
+static lv_obj_t* zaiGroup    = nullptr;  // #350 — third provider block
 
 // Claude 5h / 7d tanks
 static lv_obj_t* gauge5hBox = nullptr;
@@ -412,6 +413,19 @@ static lv_obj_t* gaugeCx7dFill = nullptr;
 static lv_obj_t* gaugeCx7dPct = nullptr;
 static lv_obj_t* gaugeCx7dPeriod = nullptr;
 static lv_obj_t* gaugeCx7dReset = nullptr;
+
+// z.ai 5h / long tanks (#350) — the long gauge is labeled dynamically ("7d" or
+// "MCP" by quantity), so the period label is retained for relabeling.
+static lv_obj_t* gaugeZa5hBox = nullptr;
+static lv_obj_t* gaugeZa5hFill = nullptr;
+static lv_obj_t* gaugeZa5hPct = nullptr;
+static lv_obj_t* gaugeZa5hPeriod = nullptr;
+static lv_obj_t* gaugeZa5hReset = nullptr;
+static lv_obj_t* gaugeZa7dBox = nullptr;
+static lv_obj_t* gaugeZa7dFill = nullptr;
+static lv_obj_t* gaugeZa7dPct = nullptr;
+static lv_obj_t* gaugeZa7dPeriod = nullptr;
+static lv_obj_t* gaugeZa7dReset = nullptr;
 
 // Stale indicator
 static lv_obj_t* lblStale = nullptr;
@@ -1952,6 +1966,12 @@ void init(lv_obj_t* parent) {
         gaugeCx5hBox, gaugeCx5hFill, gaugeCx5hPct, gaugeCx5hPeriod, gaugeCx5hReset,
         gaugeCx7dBox, gaugeCx7dFill, gaugeCx7dPct, gaugeCx7dPeriod, gaugeCx7dReset);
     lv_obj_add_flag(codexGroup, LV_OBJ_FLAG_HIDDEN);
+    // z.ai (#350) — same tank grammar; the second gauge's period label flips
+    // to "MCP" at update time when the window meters tool calls.
+    zaiGroup = makeTankGroup(panelRight, "Z.AI", Theme::ZaiBlue,
+        gaugeZa5hBox, gaugeZa5hFill, gaugeZa5hPct, gaugeZa5hPeriod, gaugeZa5hReset,
+        gaugeZa7dBox, gaugeZa7dFill, gaugeZa7dPct, gaugeZa7dPeriod, gaugeZa7dReset);
+    lv_obj_add_flag(zaiGroup, LV_OBJ_FLAG_HIDDEN);
 
     // Stale indicator (only shown when data is stale, hidden by default)
     lblStale = lv_label_create(panelRight);
@@ -2108,6 +2128,12 @@ void update() {
     char cxReset5h[20], cxReset7d[20];
     strncpy(cxReset5h, g_state.codexPrimaryReset, sizeof(cxReset5h) - 1);   cxReset5h[sizeof(cxReset5h) - 1] = '\0';
     strncpy(cxReset7d, g_state.codexSecondaryReset, sizeof(cxReset7d) - 1); cxReset7d[sizeof(cxReset7d) - 1] = '\0';
+    float zaP5h = g_state.zaiPrimaryPercent;
+    float zaP7d = g_state.zaiSecondaryPercent;
+    bool zaIsMcp = g_state.zaiSecondaryIsMcp;
+    char zaReset5h[20], zaReset7d[20];
+    strncpy(zaReset5h, g_state.zaiPrimaryReset, sizeof(zaReset5h) - 1);   zaReset5h[sizeof(zaReset5h) - 1] = '\0';
+    strncpy(zaReset7d, g_state.zaiSecondaryReset, sizeof(zaReset7d) - 1); zaReset7d[sizeof(zaReset7d) - 1] = '\0';
     // Account chip: shortened Antigravity plan (gold) + subscription expiries (dim).
     char agyBuf[28]; agyBuf[0] = '\0';
     char subsBuf[96]; subsBuf[0] = '\0'; size_t subsPos = 0;
@@ -2308,6 +2334,30 @@ void update() {
     {
         bool showCodex = (cxP5h >= 0.0f || cxP7d >= 0.0f);
         if (codexGroup) { showCodex ? lv_obj_clear_flag(codexGroup, LV_OBJ_FLAG_HIDDEN) : lv_obj_add_flag(codexGroup, LV_OBJ_FLAG_HIDDEN); }
+    }
+
+    // z.ai group (#350) — the second gauge's period label follows the QUANTITY:
+    // "MCP" when the window meters tool calls, never a window length.
+    updateGauge(gaugeZa5hFill, gaugeZa5hPct, gaugeZa5hReset, zaP5h, zaReset5h, false);
+    updateGauge(gaugeZa7dFill, gaugeZa7dPct, gaugeZa7dReset, zaP7d, zaReset7d, false);
+    if (gaugeZa7dPeriod) lv_label_set_text(gaugeZa7dPeriod, zaIsMcp ? "MCP" : "7d");
+    if (gaugeZa5hBox) {
+        if (zaP5h >= 0.0f) {
+            lv_obj_clear_flag(lv_obj_get_parent(gaugeZa5hBox), LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(lv_obj_get_parent(gaugeZa5hBox), LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (gaugeZa7dBox) {
+        if (zaP7d >= 0.0f) {
+            lv_obj_clear_flag(lv_obj_get_parent(gaugeZa7dBox), LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(lv_obj_get_parent(gaugeZa7dBox), LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    {
+        bool showZai = (zaP5h >= 0.0f || zaP7d >= 0.0f);
+        if (zaiGroup) { showZai ? lv_obj_clear_flag(zaiGroup, LV_OBJ_FLAG_HIDDEN) : lv_obj_add_flag(zaiGroup, LV_OBJ_FLAG_HIDDEN); }
     }
 
     // Stale indicator (shown only when we have Claude data but it's stale)

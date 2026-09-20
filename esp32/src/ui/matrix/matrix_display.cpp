@@ -42,6 +42,14 @@ static bool hasCodexData() {
     return has;
 }
 
+static bool hasZaiData() {
+    lockState();
+    bool connected = g_state.wsConnected || Net::serialConnected();
+    bool has = connected && (g_state.zaiPrimaryPercent >= 0.0f || g_state.zaiSecondaryPercent >= 0.0f);
+    unlockState();
+    return has;
+}
+
 /// Advance `currentPage` to the next non-empty page. With only USAGE +
 /// AGENTS, this is "skip USAGE when empty, otherwise alternate". Extended
 /// to safely handle future pages by looping until a renderable page is
@@ -54,6 +62,10 @@ static Page skipEmpty(Page p) {
             continue;
         }
         if (p == Page::CODEX && !hasCodexData()) {
+            p = static_cast<Page>((static_cast<uint8_t>(p) + 1) % count);
+            continue;
+        }
+        if (p == Page::ZAI && !hasZaiData()) {
             p = static_cast<Page>((static_cast<uint8_t>(p) + 1) % count);
             continue;
         }
@@ -177,6 +189,7 @@ void render() {
     switch (currentPage) {
         case Page::USAGE:  MatrixPages::renderUsage(leds, animTime);  break;
         case Page::CODEX:  MatrixPages::renderCodex(leds, animTime);  break;
+        case Page::ZAI:    MatrixPages::renderZai(leds, animTime);    break;
         case Page::AGENTS: MatrixPages::renderAgents(leds, animTime); break;
         default: break;
     }

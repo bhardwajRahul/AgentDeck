@@ -38,6 +38,9 @@ constexpr uint32_t CloudBodyLight  = 0x7B85F0;
 constexpr uint32_t CloudBodyDark   = 0x3A45C0;
 constexpr uint32_t CloudPrompt     = 0xE2E8F0;  // ">_" text color
 
+// --- z.ai provider mark (Brand.zai, measured from the upstream logo) ---
+constexpr uint32_t ZaiBlue         = 0x1F63EC;
+
 // --- OpenCode (nested square) ---
 constexpr uint32_t OpenCodeOuter = 0xF1ECEC;
 constexpr uint32_t OpenCodeInner = 0x4B4646;

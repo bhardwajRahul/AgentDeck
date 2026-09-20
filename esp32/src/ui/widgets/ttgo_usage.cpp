@@ -18,9 +18,10 @@ struct Card {
     lv_obj_t *panel, *title, *value, *reset, *bar;
     char titleText[20], valueText[8], resetText[28];
 };
-// Four bounded cards are allocated by LVGL once per screen lifetime. Their
-// label storage is static, so changing telemetry never allocates/free text.
-static Card cards[4];
+// Six bounded cards are allocated by LVGL once per screen lifetime (Claude
+// 5h/7d + Codex 5h/7d + z.ai 5h/MCP — #350). Their label storage is static,
+// so changing telemetry never allocates/free text.
+static Card cards[6];
 static int previousMask = -1;
 
 bool active() { return selected; }
@@ -84,25 +85,33 @@ void update() {
     if (!root) return;
     if (!selected) { lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN); return; }
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
-    // 100 bytes, bounded snapshot; never retain the large dashboard on stack.
-    float values[4]; char resets[4][20];
+    // Bounded snapshot; never retain the large dashboard on stack.
+    float values[6]; char resets[6][20];
     lockState();
     values[0] = g_state.usageStale ? -1 : g_state.fiveHourPercent;
     values[1] = g_state.usageStale ? -1 : g_state.sevenDayPercent;
     values[2] = g_state.codexPrimaryPercent;
     values[3] = g_state.codexSecondaryPercent;
+    values[4] = g_state.zaiPrimaryPercent;
+    values[5] = g_state.zaiSecondaryPercent;
     memcpy(resets[0], g_state.fiveHourReset, 20);
     memcpy(resets[1], g_state.sevenDayReset, 20);
     memcpy(resets[2], g_state.codexPrimaryReset, 20);
     memcpy(resets[3], g_state.codexSecondaryReset, 20);
+    memcpy(resets[4], g_state.zaiPrimaryReset, 20);
+    memcpy(resets[5], g_state.zaiSecondaryReset, 20);
+    // The MCP label rides the state, not a second names table: the secondary
+    // window is "MCP" when it meters tool calls and never a window length.
+    char mcpLabel[12];
+    snprintf(mcpLabel, sizeof(mcpLabel), "Z.AI %s", g_state.zaiSecondaryIsMcp ? "MCP" : "7D");
     unlockState();
-    static const char* const names[] = {"CLAUDE 5H", "CLAUDE 7D", "CODEX 5H", "CODEX 7D"};
+    const char* names[6] = {"CLAUDE 5H", "CLAUDE 7D", "CODEX 5H", "CODEX 7D", "Z.AI 5H", mcpLabel};
     int mask = 0, count = 0;
-    for (int i = 0; i < 4; ++i) if (hasWindow(values[i])) { mask |= 1 << i; ++count; }
+    for (int i = 0; i < 6; ++i) if (hasWindow(values[i])) { mask |= 1 << i; ++count; }
     if (count) lv_obj_add_flag(empty, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(empty, LV_OBJ_FLAG_HIDDEN);
     int slot = 0;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 6; ++i) {
         if (!(mask & (1 << i))) continue;
         auto& c = cards[slot];
         if (mask != previousMask) {
@@ -122,11 +131,12 @@ void update() {
         snprintf(buf, sizeof(buf), "%d%%", boundedPercent(values[i])); text(c.value, c.valueText, buf);
         resets[i][19] = '\0';
         snprintf(buf, sizeof(buf), "Reset %s", resets[i][0] ? resets[i] : "--"); text(c.reset, c.resetText, buf);
-        lv_obj_set_style_bg_color(c.bar, lv_color_hex(values[i] >= 90 ? Theme::StatusAmber : (i < 2 ? Theme::ClaudeBody : Theme::CloudBody)), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(c.bar, lv_color_hex(values[i] >= 90 ? Theme::StatusAmber :
+            (i < 2 ? Theme::ClaudeBody : i < 4 ? Theme::CloudBody : Theme::ZaiBlue)), LV_PART_INDICATOR);
         lv_bar_set_value(c.bar, boundedPercent(values[i]), LV_ANIM_OFF);
         ++slot;
     }
-    for (; slot < 4; ++slot) lv_obj_add_flag(cards[slot].panel, LV_OBJ_FLAG_HIDDEN);
+    for (; slot < 6; ++slot) lv_obj_add_flag(cards[slot].panel, LV_OBJ_FLAG_HIDDEN);
     previousMask = mask;
 }
 } }

@@ -303,6 +303,12 @@ struct Snap {
     bool usageStale;
     float codexP, codexS;
     char codexPReset[20], codexSReset[20];
+    // z.ai GLM Coding Plan (#350) — secondary labeled "MCP" when it meters
+    // tool calls (zaiIsMcp), never a window length.
+    float zaiP, zaiS;
+    char zaiPReset[20], zaiSReset[20];
+    bool zaiIsMcp;
+    char zaiPlan[40];
     // Subscription plan lines per provider ("Max 20x ~7/12"), '' = hide
     char claudePlan[40];
     char codexPlan[40];
@@ -394,6 +400,11 @@ void snapshot(Snap& s) {
     s.codexS = g_state.codexSecondaryPercent;
     strncpy(s.codexPReset, g_state.codexPrimaryReset, sizeof(s.codexPReset) - 1);
     strncpy(s.codexSReset, g_state.codexSecondaryReset, sizeof(s.codexSReset) - 1);
+    s.zaiP = g_state.zaiPrimaryPercent;
+    s.zaiS = g_state.zaiSecondaryPercent;
+    s.zaiIsMcp = g_state.zaiSecondaryIsMcp;
+    strncpy(s.zaiPReset, g_state.zaiPrimaryReset, sizeof(s.zaiPReset) - 1);
+    strncpy(s.zaiSReset, g_state.zaiSecondaryReset, sizeof(s.zaiSReset) - 1);
     // Map subscriptions[] to provider rows by name; unmatched → AGY chip.
     // (Antigravity credits are deliberately NOT surfaced — the raw count is
     // meaningless to glance at; only the plan/expiry chip remains.)
@@ -417,6 +428,9 @@ void snapshot(Snap& s) {
         } else if (strncmp(sub.name, "ChatGPT", 7) == 0 || strncmp(sub.name, "Codex", 5) == 0) {
             const char* tail = line + (sub.name[1] == 'h' ? 7 : 5); while (*tail == ' ') tail++;
             strncpy(s.codexPlan, tail, sizeof(s.codexPlan) - 1);
+        } else if (strncmp(sub.name, "GLM", 3) == 0) {
+            // z.ai row plan ("GLM Coding Plan · Max  ~9/28") — never the AGY chip.
+            strncpy(s.zaiPlan, line, sizeof(s.zaiPlan) - 1);
         } else {
             strncpy(s.agPlan, line, sizeof(s.agPlan) - 1);
         }
@@ -519,11 +533,16 @@ uint32_t contentHash(const Snap& s) {
     h = fnv(h, &s.optionCount, 1);
     for (uint8_t i = 0; i < s.optionCount; i++) h = fnvStr(h, s.options[i]);
     int fh = (int)s.fiveH, sd = (int)s.sevenD, cp = (int)s.codexP, cs = (int)s.codexS;
+    int zp = (int)s.zaiP, zs = (int)s.zaiS;
     h = fnv(h, &fh, sizeof(fh)); h = fnv(h, &sd, sizeof(sd));
     h = fnv(h, &cp, sizeof(cp)); h = fnv(h, &cs, sizeof(cs));
+    h = fnv(h, &zp, sizeof(zp)); h = fnv(h, &zs, sizeof(zs));
     h = fnvStr(h, s.fiveReset); h = fnvStr(h, s.sevenReset);
     h = fnvStr(h, s.codexPReset); h = fnvStr(h, s.codexSReset);
+    h = fnvStr(h, s.zaiPReset); h = fnvStr(h, s.zaiSReset);
+    h = fnv(h, &s.zaiIsMcp, 1);
     h = fnvStr(h, s.claudePlan); h = fnvStr(h, s.codexPlan); h = fnvStr(h, s.agPlan);
+    h = fnvStr(h, s.zaiPlan);
     h = fnv(h, &s.usageStale, 1);
     h = fnvStr(h, s.ip);
     // NOTE: ticker row TEXT intentionally NOT hashed — see Snap. The row
@@ -781,6 +800,7 @@ void drawAgentGlyph(const char* agentType, int16_t x, int16_t y, int size) {
     else if (strcmp(agentType, "opencode") == 0)    a8 = CreatureGlyphs::OPENCODE_A8;
     else if (strcmp(agentType, "antigravity") == 0) a8 = CreatureGlyphs::ANTIGRAVITY_A8;
     else if (strncmp(agentType, "kiro", 4) == 0)    a8 = CreatureGlyphs::KIRO_A8;
+    else if (strcmp(agentType, "zai") == 0)         a8 = CreatureGlyphs::ZAI_A8;
     drawMask64(x, y, a8, size);
     if (openclaw) {
         // Eye pupils at viewBox-24 (8.835, 7.843) / (15.165, 7.843), r≈1.26 —
@@ -935,7 +955,8 @@ void drawGaugeBar(int16_t x, int16_t y, const char* tag, float pct, const char* 
 // pack left instead.
 bool drawProviderUsage(int16_t y, const char* agentType, const char* label,
                        const char* plan, float p5, const char* r5,
-                       float p7, const char* r7, bool stale) {
+                       float p7, const char* r7, bool stale,
+                       const char* secondaryLabel = "7D") {
     if (p5 < 0.0f && p7 < 0.0f && !plan[0]) return false;
     drawAgentGlyph(agentType, 14, y + 2, 22);
     char lbl[24];
@@ -953,7 +974,7 @@ bool drawProviderUsage(int16_t y, const char* agentType, const char* label,
     int16_t slotX = 150;
     const int16_t slotW = (planX - slotX - 8) / ((p5 >= 0 && p7 >= 0) ? 2 : 1);
     if (p5 >= 0.0f) { drawGaugeBar(slotX, y + 2, "5H", p5, r5, slotW); slotX += slotW; }
-    if (p7 >= 0.0f) drawGaugeBar(slotX, y + 2, "7D", p7, r7, slotW);
+    if (p7 >= 0.0f) drawGaugeBar(slotX, y + 2, secondaryLabel, p7, r7, slotW);
     return true;
 }
 
@@ -963,6 +984,7 @@ static int usageRowCount(const Snap& s) {
     int n = 0;
     if (s.fiveH >= 0.0f || s.sevenD >= 0.0f || s.claudePlan[0]) n++;
     if (s.codexP >= 0.0f || s.codexS >= 0.0f || s.codexPlan[0]) n++;
+    if (s.zaiP >= 0.0f || s.zaiS >= 0.0f || s.zaiPlan[0]) n++;
     if (s.agPlan[0]) n++;
     return n;
 }
@@ -1000,6 +1022,11 @@ void drawUsageFooter(const Snap& s, bool showIdentity, const AgentDeckEink::Layo
                               s.sevenD, s.sevenReset, s.usageStale)) { y += 36; any = true; }
         if (drawProviderUsage(y, "codex-cli", "CODEX", s.codexPlan, s.codexP, s.codexPReset,
                               s.codexS, s.codexSReset, false)) { y += 36; any = true; }
+        // z.ai (#350) — the secondary label follows the QUANTITY: MCP meters
+        // tool calls and must never read as a token window length.
+        if (drawProviderUsage(y, "zai", "Z.AI", s.zaiPlan, s.zaiP, s.zaiPReset,
+                              s.zaiS, s.zaiSReset, false,
+                              s.zaiIsMcp ? "MCP" : "7D")) { y += 36; any = true; }
         if (s.agPlan[0]) {
             textAt(44, y + 20, "SUBSCRIPTION", &FreeSansBold9pt7b);
             smartTextAt(240, y + 20, s.agPlan, &FreeSans9pt7b);
@@ -1741,8 +1768,11 @@ void drawEp47Focus(const Snap& s) {
         drawMiniUsage(752, gaugeY, 174, "Claude", s.fiveH, 46);
         gaugeY += 48;
     }
-    if (s.codexP >= 0 || s.codexS >= 0) drawMiniUsage(752, gaugeY, 174,
-        s.codexP >= 0 ? "Codex 5H" : "Codex 7D", s.codexP >= 0 ? s.codexP : s.codexS, 46);
+    if (s.codexP >= 0 || s.codexS >= 0) { drawMiniUsage(752, gaugeY, 174,
+        s.codexP >= 0 ? "Codex 5H" : "Codex 7D", s.codexP >= 0 ? s.codexP : s.codexS, 46); gaugeY += 48; }
+    if (s.zaiP >= 0 || s.zaiS >= 0) drawMiniUsage(752, gaugeY, 174,
+        s.zaiP >= 0 ? "Z.AI 5H" : (s.zaiIsMcp ? "Z.AI MCP" : "Z.AI 7D"),
+        s.zaiP >= 0 ? s.zaiP : s.zaiS, 46);
     if (awaiting) {
         textAt(752, 430,
                epd47TouchAvailable() ? "TAP CARD · DECIDE" : "GPIO21 · DECIDE",
@@ -1879,9 +1909,11 @@ void drawEp47Home(const Snap& s) {
         smartTextAt(24, 346 + ti * 38, event, &FreeSans9pt7b);
     }
     if (s.rowCount > 1) textAt(24, 496, "All work >", &FreeSans9pt7b);
-    const int windowCount = (s.fiveH >= 0) + (s.sevenD >= 0) + (s.codexP >= 0) + (s.codexS >= 0);
+    const int windowCount = (s.fiveH >= 0) + (s.sevenD >= 0) + (s.codexP >= 0) + (s.codexS >= 0)
+        + (s.zaiP >= 0) + (s.zaiS >= 0);
     int16_t y = 140;
-    auto provider = [&](const char* name, const char* plan, float a, const char* ar, float b, const char* br) {
+    auto provider = [&](const char* name, const char* plan, float a, const char* ar,
+                        float b, const char* br, const char* secondaryLabel = "7D") {
         if (a < 0 && b < 0 && !plan[0]) return;
         textAt(right, y, name, &FreeSansBold12pt7b); y += 12;
         auto window = [&](const char* label, float pct, const char* reset) {
@@ -1899,12 +1931,15 @@ void drawEp47Home(const Snap& s) {
             }
         };
         if (a >= 0) window("5H", a, ar);
-        if (b >= 0) window("7D", b, br);
+        if (b >= 0) window(secondaryLabel, b, br);
         if (plan[0]) { smartTextAt(right, y + 8, plan, &FreeSans9pt7b); y += 28; }
         y += 22;
     };
     provider("CLAUDE", s.claudePlan, s.fiveH, s.fiveReset, s.sevenD, s.sevenReset);
     provider("CODEX", s.codexPlan, s.codexP, s.codexPReset, s.codexS, s.codexSReset);
+    // z.ai (#350): the MCP window labels by its QUANTITY, never its length.
+    provider("Z.AI", s.zaiPlan, s.zaiP, s.zaiPReset, s.zaiS, s.zaiSReset,
+             s.zaiIsMcp ? "MCP" : "7D");
     if (y == 140) { textAt(right, y, "No usage limits", &FreeSansBold12pt7b); y += 44; }
     if (s.agPlan[0] && y < 470) smartTextAt(right, y, s.agPlan, &FreeSans9pt7b);
     textAt(right, 496, "Usage details >", &FreeSans9pt7b);

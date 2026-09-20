@@ -303,6 +303,10 @@ static void renderUsagePage() {
     take("Claude 7d", g_state.sevenDayPercent, g_state.sevenDayReset);
     take("Codex 5h", g_state.codexPrimaryPercent, g_state.codexPrimaryReset);
     take("Codex 7d", g_state.codexSecondaryPercent, g_state.codexSecondaryReset);
+    // z.ai (#350) — the MCP window labels by its quantity, never its length.
+    take("Z.AI 5h", g_state.zaiPrimaryPercent, g_state.zaiPrimaryReset);
+    take(g_state.zaiSecondaryIsMcp ? "Z.AI MCP" : "Z.AI 7d",
+         g_state.zaiSecondaryPercent, g_state.zaiSecondaryReset);
     // Account subscriptions (usage_update subscriptions[]) — the "what am I
     // paying for" line other dashboards carry.
     {
@@ -1001,6 +1005,7 @@ void update(float dt) {
         lockState();
         int c5 = (int)g_state.fiveHourPercent, c7 = (int)g_state.sevenDayPercent;
         int x5 = (int)g_state.codexPrimaryPercent, x7 = (int)g_state.codexSecondaryPercent;
+        int z5 = (int)g_state.zaiPrimaryPercent, z7 = (int)g_state.zaiSecondaryPercent;
         char sess[128] = {0};
         size_t off = 0;
         for (uint8_t i = 0; i < g_state.sessionCount && off < sizeof(sess) - 28; i++) {
@@ -1020,9 +1025,9 @@ void update(float dt) {
                  g_state.fiveHourReset, g_state.sevenDayReset,
                  g_state.codexPrimaryReset, g_state.codexSecondaryReset);
         unlockState();
-        snprintf(sig, sizeof(sig), "%d|%d.%d.%d.%d|%s|%d|%d|%d%d%d%d|%d|%d%d|%.20s|%.6s%.10s%.36s|%.31s|%s",
+        snprintf(sig, sizeof(sig), "%d|%d.%d.%d.%d.%d.%d|%s|%d|%d|%d%d%d%d|%d|%d%d|%.20s|%.6s%.10s%.36s|%.31s|%s",
                  s_page,
-                 c5, c7, x5, x7, resets, subsCount, count,
+                 c5, c7, x5, x7, z5, z7, resets, subsCount, count,
                  connected ? 1 : 0, wifiUp ? 1 : 0, wsUp ? 1 : 0, serialUp ? 1 : 0,
                  power.voltageMv / 20, power.charging ? 1 : 0, power.usbPowered ? 1 : 0,
                  s_flashText,
