@@ -45,6 +45,33 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
+## 2026-09-21 — Apple 1.4.0
+
+- Adds optional z.ai GLM Coding Plan usage on Mac and paired iPhone/iPad.
+  Plan credit usage and MCP tool-call usage are labeled separately; macOS
+  stores the optional key in Keychain. Replacing or removing a key retires
+  the old account's readings without restarting the dashboard service.
+- Makes macOS Codex observation setup recoverable: configuration conflicts
+  and file-access failures now explain what happened, with retry and file
+  reselection. An existing `[features]` section with `hooks = true` can
+  coexist with observation. Unreadable files are never treated as empty;
+  existing disabled hooks remain unchanged and require explicit correction.
+- Refreshes Codex account quota independently of new rollout activity,
+  including USB updates when Claude quota is absent.
+- Preserves daemon-persisted observed-session ordering across the Swift and
+  Node paths, including references expressed in either observed-session ID form.
+- Improves live device previews with z.ai readings, MCP labels, provider marks,
+  Claude scoped limits, and compact layouts that keep all three providers
+  visible. Round-screen usage groups stay inside the screen boundary.
+- Improves local device coordination with lowest-port serial ownership and
+  flash-lease handling in the built-in macOS service.
+
+The Codex support report led to reproducible setup and recovery fixes, but the
+reporter's specific cause has not been confirmed. Account usage being connected
+does not imply observation hooks are installed. This Apple release does not
+publish a new daemon package, deck plugin, or firmware; those channels remain
+independent. Cross-daemon z.ai sibling relay remains a follow-up.
+
 ## 2026-09-15 — npm 1.3.5
 
 - Windows autostart launches the daemon without a persistent console window;
