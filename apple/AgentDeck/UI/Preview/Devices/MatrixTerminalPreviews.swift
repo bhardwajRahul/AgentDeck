@@ -177,7 +177,7 @@ private struct PixooPixelGrid: View {
 // drawStateDot's attention floor: that dot is drawn only by renderUsage and
 // renderCodex, never by renderAgents.
 //
-// SYNC-HASH esp32/src/ui/matrix/matrix_pages.cpp 03f516c60d911db9ff2826ff734bfb7e7e8c4c7c
+// SYNC-HASH esp32/src/ui/matrix/matrix_pages.cpp d549e4712f45ec4b5802638dc35d232994e7cc37
 // scripts/check-preview-mirror-sync.mjs fails CI when the origin above drifts
 // from this pin — re-verify AGENTS-page parity and bump the hash together.
 

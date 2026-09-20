@@ -1036,12 +1036,23 @@ function buildList(
     const reserveCount = Math.min(usageTiles.length, budget, maxReserve);
     // Fill the strip from its RIGHT end so a missing tile frees the LEFTMOST key
     // (which flows back to sessions) and the gauges stay flush against the clock
-    // — never a hole mid-strip. Expansion keys ride the trailing fallback, so
-    // they land after the sessions' region rather than punching into it.
+    // — never a hole mid-strip. Expansion keys prefer positions CONTIGUOUS with
+    // the strip (the key right of its end), so the gauges read as one row —
+    // a tile at the far end with a session sandwiched between is the
+    // "strange" layout the D200H showed when the fallback took trailing keys.
     const pinned = preferred.slice(Math.max(0, preferred.length - Math.min(reserveCount, preferred.length)));
-    // Tiles whose strip key the user didn't place fall back to trailing keys.
     const rest = slots.filter((p) => !pinned.includes(p));
-    const fallback = rest.slice(rest.length - Math.max(0, reserveCount - pinned.length));
+    const need = Math.max(0, reserveCount - pinned.length);
+    // Adjacent expansion: from the strip's right edge, claim the next key in
+    // the same row if it exists in `rest`; only then fall back to trailing.
+    const fallback: string[] = [];
+    if (need > 0 && pinned.length > 0) {
+      const lastPinned = sortPositions(pinned)[pinned.length - 1];
+      const [lc, lr] = lastPinned.split('_').map(Number);
+      const adjacent = `${lc + 1}_${lr}`;
+      if (rest.includes(adjacent)) { fallback.push(adjacent); rest.splice(rest.indexOf(adjacent), 1); }
+    }
+    for (const p of rest.slice(rest.length - Math.max(0, need - fallback.length))) fallback.push(p);
     const reserved = sortPositions([...pinned, ...fallback]).slice(0, reserveCount);
     reserved.forEach((pos, i) => usageHere.set(pos, usageTiles[i]));
   }
