@@ -24,7 +24,7 @@
 // against; `scripts/check-preview-mirror-sync.mjs` verifies they match the
 // current `git hash-object` of each file and fails CI when the origin drifts
 // ahead of this mirror. Update them whenever you re-port.
-// SYNC-HASH shared/src/d200h-layout.ts 3cea2f0d5a42b29702e71380bf0526817727dd28
+// SYNC-HASH shared/src/d200h-layout.ts 5a83a63ad2a5da57483f31d581cf5aa4f5bf3b4c
 // SYNC-HASH shared/src/session-utils.ts 9b6eebeba19a0bb6ffe7c633d98c83dcee9e55cf
 //
 // INTENTIONALLY OMITTED (not needed by a read-only preview):
