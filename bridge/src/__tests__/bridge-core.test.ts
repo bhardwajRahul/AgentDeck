@@ -64,6 +64,22 @@ describe('BridgeCore Orchestration', () => {
     tempDir.cleanup();
   });
 
+  it('retires old disk quota after a failed first poll and never restamps cache hits', () => {
+    const capturedAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    core.applyZaiUsageResult({ fresh: false, data: {
+      primary: { usedPercent: 92, windowMinutes: 300 }, capturedAt, planType: 'max',
+    } });
+    expect((core.buildUsage() as UsageEvent).zaiRateLimits?.primary).toBeUndefined();
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    core.applyZaiUsageResult({ fresh: true, data: {
+      primary: { usedPercent: 12, windowMinutes: 300 }, capturedAt: recent,
+    } });
+    expect(core.lastZaiFetchTime).toBe(Date.parse(recent));
+    expect((core.buildUsage() as UsageEvent).zaiRateLimits?.primary?.usedPercent).toBe(12);
+    core.applyZaiUsageResult({ data: null, fresh: false });
+    expect(JSON.parse(JSON.stringify(core.buildUsage())).zaiRateLimits).toEqual({});
+  });
+
   // ─── State event building ─────────────────────────────────────────
 
   describe('buildStateEvent', () => {

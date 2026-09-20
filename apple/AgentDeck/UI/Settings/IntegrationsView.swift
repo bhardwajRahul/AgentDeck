@@ -176,7 +176,7 @@ enum IntegrationCatalog {
         iconSystemName: "gauge.with.dots.needle.bottom.50percent",
         iconAgentType: "zai",
         iconTint: SessionBrand.color(for: "zai"),
-        oneLineHelp: "Remaining 5-hour and long-window credits for the GLM Coding Plan, read directly from your z.ai account.",
+        oneLineHelp: "Plan credit usage and MCP tool-call usage, read directly from your z.ai account.",
         connectInstructions: "Paste your z.ai coding-plan API key (z.ai/manage-apikey/apikey-list)."
     )
 
@@ -190,6 +190,7 @@ enum IntegrationCatalog {
 enum IntegrationStatus: Equatable {
     case connected(detail: String?)
     case awaiting(detail: String)
+    case awaitingData(detail: String)
     case failed(detail: String)
     case notConfigured(detail: String?)
     case unsupported(detail: String)
@@ -198,6 +199,7 @@ enum IntegrationStatus: Equatable {
         switch self {
         case .connected: return "Connected"
         case .awaiting: return "Awaiting setup"
+        case .awaitingData: return "Awaiting data"
         case .failed: return "Auth failed"
         case .notConfigured: return "Not configured"
         case .unsupported: return "Unsupported"
@@ -207,7 +209,7 @@ enum IntegrationStatus: Equatable {
     var detail: String? {
         switch self {
         case .connected(let d), .notConfigured(let d): return d
-        case .awaiting(let d), .failed(let d), .unsupported(let d): return d
+        case .awaiting(let d), .awaitingData(let d), .failed(let d), .unsupported(let d): return d
         }
     }
 
@@ -216,13 +218,13 @@ enum IntegrationStatus: Equatable {
         case .connected: return TerrariumHUD.ledGreen
         case .awaiting: return TerrariumHUD.ledAmber
         case .failed, .unsupported: return TerrariumHUD.ledRed
-        case .notConfigured: return TerrariumHUD.subtext
+        case .notConfigured, .awaitingData: return TerrariumHUD.subtext
         }
     }
 
     var needsAttention: Bool {
         switch self {
-        case .connected, .notConfigured: return false
+        case .connected, .notConfigured, .awaitingData: return false
         case .awaiting, .failed, .unsupported: return true
         }
     }
@@ -434,21 +436,24 @@ enum IntegrationStatusEvaluator {
     /// every harness that may use the plan. A pay-as-you-go key answers the
     /// endpoint but carries no plan windows — that is a not-a-subscription
     /// fact, never a failure.
-    private static func zaiStatus(state: DashboardState, hasKey: Bool) -> IntegrationStatus {
-        guard hasKey else {
-            return .notConfigured(detail: "Optional. Adds GLM Coding Plan quota windows when configured.")
+    static func zaiStatus(state: DashboardState, hasKey: Bool) -> IntegrationStatus {
+        // Companion/external-daemon readings are authoritative even without a
+        // local Keychain entry. A stored key alone proves no connection.
+        if let limits = state.zaiRateLimits {
+            if limits.limitId == "payg" {
+                return .notConfigured(detail: "Pay-as-you-go key · no Coding Plan quota.")
+            }
+            if limits.primary?.usedPercent != nil || limits.secondary?.usedPercent != nil {
+                let plan = ZaiQuotaRules.formatPlanName(limits.planType).map { " · \($0)" } ?? ""
+                return .connected(detail: "GLM Coding Plan\(plan)")
+            }
+            if hasKey || limits.planType != nil || limits.capturedAt != nil {
+                return .awaitingData(detail: "No current quota reading. AgentDeck will retry automatically.")
+            }
         }
-        guard let limits = state.zaiRateLimits else {
-            return .connected(detail: "Awaiting first reading")
-        }
-        if limits.limitId == "payg" {
-            return .notConfigured(detail: "Key is pay-as-you-go — no plan windows to show.")
-        }
-        if limits.primary == nil && limits.secondary == nil {
-            return .connected(detail: "Plan connected · no windows in the latest reading")
-        }
-        let plan = ZaiQuotaRules.formatPlanName(limits.planType) ?? "plan"
-        return .connected(detail: "GLM Coding Plan \(plan) · windows live")
+        return hasKey
+            ? .awaitingData(detail: "Key saved · awaiting a quota reading")
+            : .notConfigured(detail: "Optional. Adds GLM Coding Plan usage.")
     }
 }
 

@@ -72,6 +72,19 @@ describe('usage free-space expansion', () => {
     expect(svgs).not.toContain(renderEmptyMarker); // no empty slots left
   });
 
+  it.each([undefined, 64])('keeps all providers and the cap in three keys (Claude weekly: %s)', (sevenDayPercent) => {
+    const sessions = Array.from({ length: 12 }, (_, i) => ({ ...oneSession[0], id: `s${i}`, projectName: `p${i}` }));
+    const deck = buildSessionDeck({ ...ALL_THREE, sevenDayPercent, allSessions: sessions,
+      scopedLimits: [{ label: 'Fable', percent: 97, active: true }],
+    }, { mode: 'list', showUsage: true } as any, positions(15));
+    const svg = [...deck.values()].map((c) => c.svg).join('|');
+    expect(svg).toContain('>FABLE<');
+    expect(svg).toContain('>MCP<');
+    expect(svg).toContain('>55<');
+    expect(svg).toContain('>20<');
+    for (let i = 0; i < 12; i++) expect(svg).toContain(`p${i}<`);
+  });
+
   it('no spare (roster fills the grid) — usage stays the compacted strip', () => {
     // 12 sessions fill every non-strip key: spare 0 by construction, the strip
     // stays three pair tiles and the zai MCP window rides its pair.

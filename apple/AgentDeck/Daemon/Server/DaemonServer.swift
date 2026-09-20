@@ -4998,6 +4998,7 @@ final class DaemonServer {
             }
             return
         case "query_usage":
+            Task { await self.refreshZaiUsage() }
             Task {
                 await codexAccountUsage.refresh(credential: usageAPI.codexUsageCredential(), force: true)
                 await fetchUsageRelayed()
@@ -8648,15 +8649,12 @@ final class DaemonServer {
         // never gate daemon startup (it wedged /health on the first signed
         // relaunch — the SettingsScreen Keychain trap, daemon-side).
         zaiUsagePollTask = Task { [weak self] in
-            if await ZaiUsageClient.hasKeyOffActor() {
-                _ = await self?.refreshZaiUsage()
-            }
+            await self?.refreshZaiUsage()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.zaiUsagePollInterval))
-                guard let self else { break }
-                guard await ZaiUsageClient.hasKeyOffActor() else { continue }
+                guard !Task.isCancelled, let self else { break }
                 guard await self.wsServer.hasClients() else { continue }
-                _ = await self.refreshZaiUsage()
+                await self.refreshZaiUsage()
             }
         }
 
@@ -9524,7 +9522,8 @@ final class DaemonServer {
         if effectiveOauthConnected() { confirmed.append("claude") }
         if usageAPI.codexRateLimits(accountPlan: codexAuthStatusSnapshot()?.planType) != nil ||
             codexAuthStatusSnapshot()?.planType != nil { confirmed.append("codex") }
-        if ZaiUsageClient.shared.cached() != nil { confirmed.append("zai") }
+        if let zai = ZaiUsageClient.shared.cached(),
+           zai.data.primary != nil || zai.data.secondary != nil { confirmed.append("zai") }
         if cachedGatewayConnected { confirmed.append("openclaw") }
         if !cachedMlxModels.isEmpty { confirmed.append("mlx") }
         if cachedOllamaStatus != nil { confirmed.append("ollama") }
@@ -9837,10 +9836,16 @@ final class DaemonServer {
     /// cache and freshness semantics (key reads stay off this actor); the
     /// daemon just triggers it and broadcasts. A not-fresh result keeps the
     /// aged reading — read-time retirement handles the display bound.
-    private func refreshZaiUsage() async {
-        guard await ZaiUsageClient.hasKeyOffActor() else { return }
-        _ = await ZaiUsageClient.shared.fetch()
+    @discardableResult
+    func refreshZaiUsage(configurationChanged: Bool = false) async -> Bool {
+        if configurationChanged {
+            ZaiUsageClient.shared.invalidate()
+            broadcastUsage()
+        }
+        let result = await ZaiUsageClient.shared.fetch()
+        guard !Task.isCancelled else { return false }
         broadcastUsage()
+        return result.fresh
     }
 
     /// In App Store sandbox, `usageAPI.hasOAuthToken()` always returns
@@ -10627,6 +10632,7 @@ final class DaemonServer {
         networkMonitor = nil
         networkDebounceTask?.cancel()
         sessionPollTask?.cancel(); usagePollTask?.cancel(); adminApiPollTask?.cancel()
+        zaiUsagePollTask?.cancel(); zaiUsagePollTask = nil
         ollamaPollTask?.cancel(); mlxPollTask?.cancel(); gatewayPollTask?.cancel()
         gatewayHealthTask?.cancel(); usageTickTask?.cancel()
         antigravityPollTask?.cancel()

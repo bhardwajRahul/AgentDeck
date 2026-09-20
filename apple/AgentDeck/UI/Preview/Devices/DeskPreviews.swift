@@ -191,13 +191,25 @@ func liveD200HInput(for selection: DevicePreviewSelection) -> D200HDeckInput? {
             fiveHourPercent: live.fiveHourPercent,
             sevenDayPercent: live.sevenDayPercent,
             known: live.usageKnown,
+            scopedLimits: (live.source.scopedLimits ?? []).map {
+                D200HScopedLimit(label: $0.label, percent: $0.percent, active: $0.active == true)
+            },
             codexPrimaryPercent: live.codexPrimaryPercent,
             codexPrimaryWindowMinutes: live.codexPrimaryWindowMinutes,
             codexPrimaryStale: live.codexPrimaryStale,
             codexSecondaryPercent: live.codexSecondaryPercent,
             codexSecondaryWindowMinutes: live.codexSecondaryWindowMinutes,
             codexSecondaryStale: live.codexSecondaryStale,
-            codexCapturedAt: live.codexCapturedAt
+            codexCapturedAt: live.codexCapturedAt,
+            zaiPrimaryPercent: live.source.zaiRateLimits?.primary?.usedPercent,
+            zaiPrimaryWindowMinutes: live.source.zaiRateLimits?.primary?.windowMinutes,
+            zaiPrimaryStale: live.source.zaiRateLimits?.primary?.stale == true,
+            zaiPrimaryIsMcp: live.source.zaiRateLimits?.primary?.quantity == "mcp",
+            zaiSecondaryPercent: live.source.zaiRateLimits?.secondary?.usedPercent,
+            zaiSecondaryWindowMinutes: live.source.zaiRateLimits?.secondary?.windowMinutes,
+            zaiSecondaryStale: live.source.zaiRateLimits?.secondary?.stale == true,
+            zaiSecondaryIsMcp: live.source.zaiRateLimits?.secondary?.quantity == "mcp",
+            zaiCapturedAt: live.source.zaiRateLimits?.capturedAt
         ),
         focusedSessionId: live.focusedSessionId,
         navigable: live.navigable
@@ -362,10 +374,10 @@ private struct D200HSlotTile: View {
                             .font(.system(size: size * 0.15, weight: .bold, design: .monospaced))
                             .foregroundStyle(known && !stale && footnote == nil ? .white : .white.opacity(0.45))
                         Spacer(minLength: 0)
-                        CanonicalCreatureView(
-                            agentType: agent == "codex" ? "codex-cli" : "claude-code",
+                        PreviewUsageMark(
+                            agentType: agent == "codex" ? "codex-cli" : (agent == "claude" ? "claude-code" : agent),
                             size: size * 0.18,
-                            color: StateColors.brand(agent: agent == "codex" ? "codex-cli" : "claude-code")
+                            color: SessionBrand.color(for: agent == "codex" ? "codex-cli" : (agent == "claude" ? "claude-code" : agent))
                                 .opacity(known ? 1 : 0.45)
                         )
                     }
@@ -457,10 +469,10 @@ private struct D200HSlotTile: View {
                     }
                 }
                 .padding(size * 0.08)
-                CanonicalCreatureView(
-                    agentType: agent == "codex" ? "codex-cli" : "claude-code",
+                PreviewUsageMark(
+                    agentType: agent == "codex" ? "codex-cli" : (agent == "claude" ? "claude-code" : agent),
                     size: size * 0.14,
-                    color: StateColors.brand(agent: agent == "codex" ? "codex-cli" : "claude-code")
+                    color: SessionBrand.color(for: agent == "codex" ? "codex-cli" : (agent == "claude" ? "claude-code" : agent))
                 )
                 .padding(size * 0.055)
             }

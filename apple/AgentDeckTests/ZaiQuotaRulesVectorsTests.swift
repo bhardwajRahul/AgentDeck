@@ -113,3 +113,56 @@ final class ZaiQuotaRulesVectorsTests: XCTestCase {
         XCTAssertNil(ZaiQuotaRules.formatPlanName("  "))
     }
 }
+
+#if os(macOS)
+final class ZaiUsageLifecycleTests: XCTestCase {
+    func testReplacementRejectsLateReplyAndRemovalRetiresWindows() throws {
+        let state = ZaiUsageState()
+        let a = try XCTUnwrap(state.prepare(key: "account-a", expectedRevision: state.revision()))
+        let reading = ZaiRateLimits(primary: ZaiWindow(usedPercent: 91), planType: "max")
+        XCTAssertTrue(state.store(reading, at: Date(), revision: a))
+        XCTAssertEqual(state.cached()?.data.primary?.usedPercent, 91)
+        let b = try XCTUnwrap(state.prepare(key: "account-b", expectedRevision: state.revision()))
+        XCTAssertNil(state.cached()?.data.primary)
+        XCTAssertFalse(state.store(reading, at: Date(), revision: a))
+        XCTAssertTrue(state.store(reading, at: Date(), revision: b))
+        _ = state.prepare(key: nil, expectedRevision: state.revision())
+        XCTAssertNil(state.cached()?.data.primary)
+        XCTAssertNil(state.cached()?.data.planType)
+        XCTAssertNotNil(state.cached(), "An explicit empty block clears retain-on-absent consumers")
+    }
+
+    func testSettingsInvalidationRejectsPendingKeyReadAndResponse() throws {
+        let state = ZaiUsageState()
+        let revision = try XCTUnwrap(state.prepare(key: "old", expectedRevision: state.revision()))
+        state.invalidate()
+        XCTAssertNil(state.prepare(key: "old", expectedRevision: revision))
+        XCTAssertFalse(state.store(ZaiRateLimits(planType: "max"), at: Date(), revision: revision))
+        XCTAssertNil(state.cached()?.data.planType)
+    }
+
+    func testFailureBackoffAndInFlightDedupResetForNewAccount() throws {
+        let state = ZaiUsageState()
+        let now = Date()
+        let a = try XCTUnwrap(state.prepare(key: "a", expectedRevision: state.revision()))
+        XCTAssertTrue(state.beginAttempt(now: now, backoffs: [45], revision: a))
+        XCTAssertFalse(state.beginAttempt(now: now, backoffs: [45], revision: a))
+        _ = state.noteFailure(revision: a)
+        state.endAttempt(revision: a)
+        XCTAssertFalse(state.beginAttempt(now: now, backoffs: [45], revision: a))
+        let b = try XCTUnwrap(state.prepare(key: "b", expectedRevision: state.revision()))
+        XCTAssertTrue(state.beginAttempt(now: now, backoffs: [45], revision: b))
+        state.endAttempt(revision: a)
+        XCTAssertFalse(state.beginAttempt(now: now, backoffs: [45], revision: b))
+    }
+
+    func testStoredKeyIsNotProofOfConnectionAndRemoteReadingNeedsNoLocalKey() {
+        var state = DashboardState()
+        XCTAssertEqual(IntegrationStatusEvaluator.zaiStatus(state: state, hasKey: true).label, "Awaiting data")
+        state.zaiRateLimits = ZaiRateLimits(primary: ZaiWindow(usedPercent: 0), planType: "max")
+        XCTAssertEqual(IntegrationStatusEvaluator.zaiStatus(state: state, hasKey: false), .connected(detail: "GLM Coding Plan · Max"))
+        state.zaiRateLimits = ZaiRateLimits(planType: "max")
+        XCTAssertNotEqual(IntegrationStatusEvaluator.zaiStatus(state: state, hasKey: false).label, "Connected")
+    }
+}
+#endif

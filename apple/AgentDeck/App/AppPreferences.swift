@@ -237,6 +237,9 @@ final class AppPreferences: ObservableObject, @unchecked Sendable {
         didSet { defaults.set(codexConfigInstalled, forKey: Keys.codexConfigInstalled) }
     }
 
+    /// Live setup feedback; recomputed on every attempt rather than persisted.
+    @Published var codexConfigError: String? = nil
+
     /// First-launch tracking for the Device Preview window. Flips to `true`
     /// the first time the user opens the window so the empty-state banner
     /// can stop nudging them. Pure local flag — not mirrored to

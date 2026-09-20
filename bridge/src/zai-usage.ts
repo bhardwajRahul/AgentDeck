@@ -18,7 +18,8 @@
  * The endpoint is undocumented (same status as Codex's account endpoint):
  * read-only GET, redirects are not followed anywhere the credential could
  * leak, the key is never logged, and the cache file stores numbers + a
- * `fetchedAt` stamp only. A pay-as-you-go key is detected by shape and reports
+ * `fetchedAt` stamp plus a one-way account fingerprint. A pay-as-you-go key
+ * is detected by shape and reports
  * a windowless `{ limitId: "payg" }` block — absence of windows is explicit,
  * never rendered as exhaustion.
  */
@@ -26,6 +27,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { createHash } from 'crypto';
 import { debug, logTagged } from './logger.js';
 import { loadDaemonSettings } from './daemon-settings.js';
 import {
@@ -68,8 +70,10 @@ export interface ZaiUsageFetchResult {
 interface ZaiUsageCacheFile {
   data: ZaiRateLimits;
   fetchedAt: number; // epoch ms
+  accountFingerprint: string; // one-way key + endpoint identity, never the credential
 }
 
+let lastAccountFingerprint: string | undefined;
 let consecutiveFailures = 0;
 let lastAttemptAt = 0;
 let inFlight: Promise<ZaiUsageFetchResult> | null = null;
@@ -91,20 +95,20 @@ function noteFailure(reason: string): void {
   debug('ZaiUsage', `Fetch failed (${consecutiveFailures}x): ${reason}`);
 }
 
-function readFileCache(): ZaiUsageCacheFile | null {
+function readFileCache(accountFingerprint: string): ZaiUsageCacheFile | null {
   try {
     const cache = JSON.parse(readFileSync(ZAI_USAGE_CACHE_FILE, 'utf-8')) as ZaiUsageCacheFile;
-    if (cache?.data && typeof cache.fetchedAt === 'number') return cache;
+    if (cache?.data && typeof cache.fetchedAt === 'number' && cache.accountFingerprint === accountFingerprint) return cache;
     return null;
   } catch {
     return null;
   }
 }
 
-function writeFileCache(data: ZaiRateLimits): void {
+function writeFileCache(data: ZaiRateLimits, accountFingerprint: string): void {
   try {
     mkdirSync(AGENTDECK_DIR, { recursive: true });
-    const cache: ZaiUsageCacheFile = { data, fetchedAt: Date.now() };
+    const cache: ZaiUsageCacheFile = { data, fetchedAt: Date.now(), accountFingerprint };
     writeFileSync(ZAI_USAGE_CACHE_FILE, JSON.stringify(cache), 'utf-8');
   } catch (err) {
     debug('ZaiUsage', `Failed to write cache file: ${err}`);
@@ -169,26 +173,28 @@ export async function fetchZaiQuota(): Promise<ZaiUsageFetchResult> {
 }
 
 async function fetchZaiQuotaOnce(): Promise<ZaiUsageFetchResult> {
-  const fileCache = readFileCache();
-  const stale = (): ZaiUsageFetchResult =>
-    // Freshest reading on disk, not the snapshot this call started with (same
-    // rationale as usage-api.ts).
-    ({ data: (readFileCache() ?? fileCache)?.data ?? null, fresh: false });
-
-  if (fileCache && zaiCacheExpired(fileCache.fetchedAt) === false) {
-    debug('ZaiUsage', `File cache hit (age ${Math.round((Date.now() - fileCache.fetchedAt) / 1000)}s)`);
-    consecutiveFailures = 0;
-    return { data: fileCache.data, fresh: true };
-  }
-
   const source = resolveZaiApiKey();
+  const url = quotaUrl();
+  const fingerprint = source
+    ? createHash('sha256').update(JSON.stringify([url, source.key])).digest('hex')
+    : '';
+  if (lastAccountFingerprint !== fingerprint) {
+    consecutiveFailures = 0;
+    lastAttemptAt = 0;
+    lastAccountFingerprint = fingerprint;
+  }
+  // A missing/replaced key must retire the old account even within the TTL.
   if (!source) return { data: null, fresh: false };
-
   if (zaiKeyLooksPayAsYouGo(source.key)) {
-    // Not a subscription — an explicit windowless block, so any prior plan
-    // gauges clear instead of freezing (retain-on-absent).
-    if (consecutiveFailures > 0) consecutiveFailures = 0;
     return { data: { limitId: 'payg' }, fresh: true, payg: true };
+  }
+  const fileCache = readFileCache(fingerprint);
+  const stale = (): ZaiUsageFetchResult => ({
+    data: resolveZaiApiKey()?.key === source.key && quotaUrl() === url
+      ? (readFileCache(fingerprint) ?? fileCache)?.data ?? {} : {}, fresh: false,
+  });
+  if (fileCache && !zaiCacheExpired(fileCache.fetchedAt)) {
+    return { data: fileCache.data, fresh: true };
   }
 
   const backoff = backoffMs();
@@ -198,7 +204,7 @@ async function fetchZaiQuotaOnce(): Promise<ZaiUsageFetchResult> {
   try {
     // Raw token, no Bearer prefix — matches the provider's own clients; the
     // prefixed form is also accepted, this is simply the canonical spelling.
-    const res = await fetch(quotaUrl(), {
+    const res = await fetch(url, {
       method: 'GET',
       headers: { Authorization: source.key, Accept: 'application/json' },
       redirect: 'manual',
@@ -210,7 +216,7 @@ async function fetchZaiQuotaOnce(): Promise<ZaiUsageFetchResult> {
       return stale();
     }
     if (!res.ok) {
-      noteFailure(`API returned ${res.status} ${res.statusText}`);
+      noteFailure(`HTTP ${res.status}`);
       return stale();
     }
 
@@ -218,10 +224,14 @@ async function fetchZaiQuotaOnce(): Promise<ZaiUsageFetchResult> {
     // The envelope answers 200 with `{code:500, msg:"404 NOT_FOUND"}` for a
     // moved path — an HTTP-200 failure is still a failure.
     if (body?.code !== 200 || body?.success !== true || !body?.data) {
-      noteFailure(`API error envelope: code=${body?.code} msg=${String(body?.msg).slice(0, 80)}`);
+      noteFailure('API error envelope');
       return stale();
     }
 
+    // The user may replace the key while the request is in flight.
+    if (resolveZaiApiKey()?.key !== source.key || quotaUrl() !== url) {
+      return { data: {}, fresh: false };
+    }
     const windows: ZaiQuotaWindows = zaiQuotaFromLimits(body.data.limits, body.data.level);
     const data: ZaiRateLimits = {
       ...windows,
@@ -231,11 +241,11 @@ async function fetchZaiQuotaOnce(): Promise<ZaiUsageFetchResult> {
       logTagged('usage', `z.ai usage fetch recovered after ${consecutiveFailures} failure(s)`);
     }
     consecutiveFailures = 0;
-    writeFileCache(data);
+    writeFileCache(data, fingerprint);
     debug('ZaiUsage', `5h: ${windows.primary?.usedPercent}% (family ${windows.limitId ?? '?'}, plan ${windows.planType ?? '?'})`);
     return { data, fresh: true };
   } catch (err) {
-    noteFailure(String(err).slice(0, 160));
+    noteFailure('network request failed');
     return stale();
   }
 }

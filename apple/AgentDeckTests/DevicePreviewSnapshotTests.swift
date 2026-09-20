@@ -312,12 +312,12 @@ final class DevicePreviewSnapshotTests: XCTestCase {
         // A pinned usage gauge tile is present (real 42% Claude 5H).
         let hasUsageGauge = slots.contains { if case .usageGauge = $0.kind { return true } else { return false } }
         XCTAssertTrue(hasUsageGauge, "expected pinned usage gauge tiles")
-        let codexPair = slots.compactMap { slot -> [D200HUsagePairWindow]? in
-            if case .usagePair(let agent, let windows) = slot.kind, agent == "codex" { return windows }
+        // Three sessions leave room for individual windows after #349.
+        let codexWindows = slots.compactMap { slot -> Double? in
+            if case .usageGauge(let agent, _, let percent, _, _, _, _) = slot.kind, agent == "codex" { return percent }
             return nil
-        }.first
-        XCTAssertEqual(codexPair?.map(\.label), ["5H", "7D"])
-        XCTAssertEqual(codexPair?.map(\.percent), [23, 51])
+        }
+        XCTAssertEqual(codexWindows, [23, 51])
     }
 
     /// The three-key usage strip: how five readings are packed, and where the
@@ -337,7 +337,7 @@ final class DevicePreviewSnapshotTests: XCTestCase {
             )
             let input = D200HDeckInput(
                 state: "IDLE",
-                sessions: (0..<2).map {
+                sessions: (0..<12).map {
                     D200HSession(id: "s\($0)", agentType: "claude-code", state: "idle", projectName: "p\($0)")
                 },
                 usage: usage
@@ -390,6 +390,50 @@ final class DevicePreviewSnapshotTests: XCTestCase {
         XCTAssertEqual(labels(D200HUsage(fiveHourPercent: 42, known: true)), ["5H"])
         // A measured zero is a reading, not an absence.
         XCTAssertEqual(labels(D200HUsage(fiveHourPercent: 0, sevenDayPercent: 0, known: true)), ["5H", "7D"])
+    }
+
+    func testLiveZaiUsageAndCrowdedThreeProviderStrip() throws {
+        var state = DashboardState()
+        state.bridgeConnected = true
+        state.state = .idle
+        state.fiveHourPercent = 42
+        state.sevenDayPercent = 17
+        state.scopedLimits = [ScopedUsageLimit(label: "Fable", percent: 98, active: true)]
+        state.codexRateLimits = CodexRateLimits(
+            primary: CodexRateLimitWindow(usedPercent: 30, windowMinutes: 300),
+            secondary: CodexRateLimitWindow(usedPercent: 10, windowMinutes: 10080))
+        state.zaiRateLimits = ZaiRateLimits(
+            primary: ZaiWindow(usedPercent: 3, windowMinutes: 300, quantity: "tokens"),
+            secondary: ZaiWindow(usedPercent: 100, windowMinutes: 43200, quantity: "mcp"))
+        state.siblingSessions = (0..<12).map {
+            SessionInfo(id: "s\($0)", port: 9121 + $0, projectName: "p\($0)", agentType: "claude-code", alive: true, state: "idle")
+        }
+        var selected = selection(.d200hDeck, sessions: 4)
+        selected.live = LivePreviewData.from(state)
+        let usageRow = try XCTUnwrap(selected.displayUsageRows.last)
+        XCTAssertEqual(usageRow.agentType, "zai")
+        XCTAssertEqual(usageRow.secondaryLabel, "MCP")
+        XCTAssertEqual(usageRow.p7, 1)
+        let input = try XCTUnwrap(liveD200HInput(for: selected))
+        XCTAssertEqual(input.usage?.zaiSecondaryPercent, 100)
+        XCTAssertEqual(input.usage?.zaiSecondaryIsMcp, true)
+        let slots = D200HLayoutModel.buildSessionDeck(input, view: D200HDeckView(mode: .list))
+        let pairs = slots.compactMap { slot -> (String, [String])? in
+            if case .usagePair(let agent, let windows) = slot.kind { return (agent, windows.map(\.label)) }
+            return nil
+        }
+        XCTAssertEqual(pairs.map { $0.0 }, ["claude", "codex", "zai"])
+        XCTAssertEqual(pairs.first?.1, ["5H", "7D", "FABLE"])
+        XCTAssertEqual(pairs.last?.1, ["5H", "MCP"])
+        if outputDir != nil {
+            try snapshot(D200HDeckPreview(selection: selected), name: "zai-crowded-d200h")
+            let previewSessions = Array(selected.live?.sessions.prefix(3) ?? [])
+            selected.live?.sessions = previewSessions
+            selected.sessionCount = previewSessions.count
+            try snapshot(Trmnl75Preview(selection: selected), name: "zai-trmnl")
+            try snapshot(Esp32Ips10Preview(selection: selected), name: "zai-ips10")
+            try snapshot(Esp32RoundPreview(selection: selected), name: "zai-round")
+        }
     }
 
     /// A reported Luna reserve replaces BOTH Codex windows with one LUNA tile

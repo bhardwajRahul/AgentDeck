@@ -22,7 +22,7 @@ import { buildDisplayStateEvent } from './display-dim.js';
 import { foldCodexSessionsForDisplay, loadMlxSettings, sortSessions } from '@agentdeck/shared';
 import { probeGateway, checkGatewayHealth } from './gateway-probe.js';
 import { fetchUsageFromApi, hasOAuthToken, getTokenStatus, type ApiUsageData, type UsageFetchResult } from './usage-api.js';
-import { fetchZaiQuota, zaiUsageConfigured, type ZaiUsageFetchResult } from './zai-usage.js';
+import { fetchZaiQuota, type ZaiUsageFetchResult } from './zai-usage.js';
 import { buildEnrichedSessionsList } from './session-aggregator.js';
 import { activityFor } from './session-activity.js';
 import {
@@ -516,7 +516,7 @@ export class BridgeCore {
    *  not configured" and omits the block: no information. */
   private zaiQuotaForWire(): import('./types.js').ZaiRateLimits | null {
     if (!this.cachedZaiQuota) return null;
-    if (this.lastZaiFetchTime > 0 && Date.now() - this.lastZaiFetchTime > BridgeCore.USAGE_STALE_TTL) {
+    if (this.lastZaiFetchTime <= 0 || Date.now() - this.lastZaiFetchTime > BridgeCore.USAGE_STALE_TTL) {
       return { planType: this.cachedZaiQuota.planType, limitId: this.cachedZaiQuota.limitId };
     }
     return this.cachedZaiQuota;
@@ -649,18 +649,26 @@ export class BridgeCore {
 
   /**
    * Apply a z.ai quota fetch — the provider-account counterpart of
-   * `applyUsageResult`. `fresh` alone advances the display-validity stamp, so
-   * a failing poll ages into the read-time retirement above instead of
-   * laundering a frozen reading as live. A null `data` (no key configured)
-   * keeps whatever cache exists; the TTL retires it on its own.
+   * `applyUsageResult`. The reading's original capture time owns display
+   * validity, including disk-cache hits and failed-poll fallbacks; applying
+   * a result never restamps a frozen reading as live. Credential removal clears the old
+   * account explicitly so retain-on-absent consumers retire their gauges.
    */
   applyZaiUsageResult(result: ZaiUsageFetchResult): boolean {
     if (result.data) {
       this.cachedZaiQuota = result.data;
-      if (result.fresh) this.lastZaiFetchTime = Date.now();
+      const capturedAt = Date.parse(result.data.capturedAt ?? '');
+      this.lastZaiFetchTime = Number.isFinite(capturedAt) && capturedAt <= Date.now() ? capturedAt : 0;
+    } else if (this.cachedZaiQuota) {
+      this.cachedZaiQuota = {};
+      this.lastZaiFetchTime = 0;
     }
     this.broadcastUsage();
     return result.fresh;
+  }
+
+  async refreshZaiUsage(): Promise<void> {
+    this.applyZaiUsageResult(await fetchZaiQuota());
   }
 
   /** Start the z.ai provider-account poll. Daemon-side only — a session bridge
@@ -668,12 +676,10 @@ export class BridgeCore {
   startZaiUsagePolling(intervalMs = 60_000): void {
     // One immediate fetch so a freshly started daemon paints the provider row
     // without waiting a full interval; subsequent ticks share the file cache.
-    if (zaiUsageConfigured()) {
-      fetchZaiQuota().then((r) => this.applyZaiUsageResult(r)).catch(() => {});
-    }
+    void this.refreshZaiUsage().catch(() => {});
     this.addInterval(setInterval(() => {
-      if (!this.hasClients() || !zaiUsageConfigured()) return;
-      fetchZaiQuota().then((r) => this.applyZaiUsageResult(r)).catch(() => {});
+      if (!this.hasClients()) return;
+      void this.refreshZaiUsage().catch(() => {});
     }, intervalMs));
   }
 

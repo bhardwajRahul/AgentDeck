@@ -447,7 +447,7 @@ export function renderUsageGauge(data: UsageTankData): string {
  * be represented as four independent tiles. Compacting a provider pair keeps
  * every real window visible without stealing the clock or dropping a limit.
  */
-export function renderUsagePairGauge(agent: 'claude' | 'codex' | 'zai', windows: [UsageTankData, UsageTankData]): string {
+export function renderUsagePairGauge(agent: 'claude' | 'codex' | 'zai', windows: [UsageTankData, UsageTankData] | [UsageTankData, UsageTankData, UsageTankData]): string {
   const W = 144, H = 144, RX = 12;
   const bg = `<rect width="${W}" height="${H}" rx="${RX}" fill="${UI.popupBgMid}"/>`;
   const logo = usageBrandLogo(agent, 128, 16, 16, false);
@@ -455,7 +455,11 @@ export function renderUsagePairGauge(agent: 'claude' | 'codex' | 'zai', windows:
     const used = Math.max(0, Math.min(100, window.usedPercent));
     const dim = window.stale === true || Boolean(window.footnote);
     const ramp = usageRampColor(used, dim, window.inactive === true);
-    const y = index === 0 ? 0 : 72;
+    const dense = windows.length === 3;
+    const y = index * (H / windows.length);
+    const headlineY = dense ? 20 : 29;
+    const resetY = dense ? 34 : 51;
+    const barY = dense ? 41 : 62;
     const reset = window.footnote || (window.stale ? 'stale' : formatResetCountdown(window.resetsAt));
     const textColor = dim ? UI.ttyDim : Tide.s50;
     const barW = Math.round(120 * used / 100);
@@ -464,16 +468,16 @@ export function renderUsagePairGauge(agent: 'claude' | 'codex' | 'zai', windows:
     // ("5H"/"7D") and never hit this; a scoped cap's name (up to 6) does, and it
     // is exactly the pairing this renderer now carries. Shrink the label rather
     // than truncate a name the user has to recognise.
-    const labelSize = window.label.length >= 5 ? 14 : 18;
-    return `<text x="12" y="${y + 29}" font-family="JetBrains Mono, monospace" font-size="${labelSize}" font-weight="bold" fill="${textColor}">${escXml(window.label)}</text>`
-      + `<text x="100" y="${y + 29}" text-anchor="end" font-family="IBM Plex Sans, sans-serif" font-size="20" font-weight="bold" fill="${textColor}">${Math.round(used)}</text>`
-      + `<text x="102" y="${y + 29}" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="bold" fill="${textColor}">%</text>`
-      + (reset ? `<text x="12" y="${y + 51}" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${textColor}">${escXml(reset)}</text>` : '')
-      + `<rect x="12" y="${y + 62}" width="120" height="3" rx="1.5" fill="${UI.ttyFaint}"/>`
-      + (barW > 0 ? `<rect x="12" y="${y + 62}" width="${barW}" height="3" rx="1.5" fill="${ramp.fill}" opacity="${dim ? 0.55 : 1}"/>` : '');
+    const labelSize = window.label.length >= 5 ? 14 : (dense ? 16 : 18);
+    return `<text x="12" y="${y + headlineY}" font-family="JetBrains Mono, monospace" font-size="${labelSize}" font-weight="bold" fill="${textColor}">${escXml(window.label)}</text>`
+      + `<text x="100" y="${y + headlineY}" text-anchor="end" font-family="IBM Plex Sans, sans-serif" font-size="20" font-weight="bold" fill="${textColor}">${Math.round(used)}</text>`
+      + `<text x="102" y="${y + headlineY}" font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="bold" fill="${textColor}">%</text>`
+      + (reset ? `<text x="12" y="${y + resetY}" font-family="JetBrains Mono, monospace" font-size="11" font-weight="bold" fill="${textColor}">${escXml(reset)}</text>` : '')
+      + `<rect x="12" y="${y + barY}" width="120" height="3" rx="1.5" fill="${UI.ttyFaint}"/>`
+      + (barW > 0 ? `<rect x="12" y="${y + barY}" width="${barW}" height="3" rx="1.5" fill="${ramp.fill}" opacity="${dim ? 0.55 : 1}"/>` : '');
   }).join('');
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`
-    + bg + `<rect x="8" y="71" width="128" height="1" fill="${UI.ttyFaint}"/>` + rows + logo + `</svg>`;
+    + bg + windows.slice(1).map((_, i) => `<rect x="8" y="${(i + 1) * H / windows.length - 1}" width="128" height="1" fill="${UI.ttyFaint}"/>`).join('') + rows + logo + `</svg>`;
 }
 
 /**
@@ -614,6 +618,10 @@ function buildUsageTiles(state: DashState, budget: number = USAGE_PREFERRED_POS.
   // — nothing is dropped, each key keeps one provider's two windows.
   const afterClaude = afterCodex - ((compactClaude || pairScopedWith7D) ? 1 : 0);
   const compactZai = afterClaude > budget && zaiWindowData.length === 2;
+  // Seven readings (Claude + its scoped cap, Codex, z.ai) need one
+  // three-row Claude tile at the tightest budget; never truncate a provider.
+  const compactAllClaude = scopedTank != null && claudeWindows.length > 0
+    && afterClaude - (compactZai ? 1 : 0) > budget;
   const cellsFor = (agent: 'claude' | 'codex' | 'zai', windows: UsageTankData[], compact: boolean): SessionDeckCell[] => {
     if (compact && windows.length === 2) {
       return [{ svg: renderUsagePairGauge(agent, [windows[0], windows[1]]), action }];
@@ -624,13 +632,16 @@ function buildUsageTiles(state: DashState, budget: number = USAGE_PREFERRED_POS.
   // Order is `USAGE_STRIP_ORDER` (Claude → scoped cap → Codex → z.ai →
   // credits) and is the same whether or not the cap is currently binding:
   // `active` drives the ramp, never the seat. See `scopedLimitClaimsUsageKey`.
-  const tiles: SessionDeckCell[] = pairScopedWith7D && scopedTank
+  const tiles: SessionDeckCell[] = compactAllClaude && scopedTank
+    ? [{ svg: renderUsagePairGauge('claude', claudeWindows.length === 2
+      ? [claudeWindows[0], claudeWindows[1], scopedTank] : [claudeWindows[0], scopedTank]), action }]
+    : pairScopedWith7D && scopedTank
     ? [
         { svg: renderUsageGauge(claudeWindows[0]), action },
         { svg: renderUsagePairGauge('claude', [claudeWindows[1], scopedTank]), action },
       ]
     : cellsFor('claude', claudeWindows, compactClaude);
-  if (scopedTile && !pairScopedWith7D) tiles.push(scopedTile);
+  if (scopedTile && !pairScopedWith7D && !compactAllClaude) tiles.push(scopedTile);
   tiles.push(...cellsFor('codex', codexWindowData, compactCodex));
   tiles.push(...cellsFor('zai', zaiWindowData, compactZai));
   if (lunaTile) tiles.push(lunaTile);

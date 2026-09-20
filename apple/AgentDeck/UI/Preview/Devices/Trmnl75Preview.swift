@@ -412,6 +412,7 @@ struct Trmnl75Preview: View {
         let otherPlans = selection.live?.source.subscriptions.filter { sub in
             !rows.contains { row in
                 (row.label == "CLAUDE" && sub.name.hasPrefix("Claude")) ||
+                (row.label == "Z.AI" && sub.name.hasPrefix("GLM Coding Plan")) ||
                 (row.label == "CODEX" && (sub.name.hasPrefix("ChatGPT") || sub.name.hasPrefix("Codex")))
             }
         } ?? []
@@ -422,7 +423,7 @@ struct Trmnl75Preview: View {
             if !rows.isEmpty {
                 Rectangle().fill(ink).frame(height: 1.4)
                 ForEach(rows) { row in
-                    providerRow(glyphAgent: row.agent, label: row.label, plan: row.plan, p5: row.p5, p7: row.p7)
+                    providerRow(agentType: row.agentType, label: row.label, plan: row.plan, p5: row.p5, p7: row.p7, secondaryLabel: row.secondaryLabel)
                 }
             }
             if selection.state != .disconnected {
@@ -481,9 +482,9 @@ struct Trmnl75Preview: View {
         }
     }
 
-    private func providerRow(glyphAgent: PixooPreviewAgent, label: String, plan: String, p5: Double, p7: Double) -> some View {
+    private func providerRow(agentType: String, label: String, plan: String, p5: Double, p7: Double, secondaryLabel: String) -> some View {
         HStack(spacing: 6) {
-            PreviewCreatureGlyph(agent: glyphAgent, state: .idle, size: 13, tintOverride: ink)
+            PreviewUsageMark(agentType: agentType, size: 13, color: ink)
             VStack(alignment: .leading, spacing: 0) {
                 Text(label)
                     .font(.system(size: 8, weight: .bold))
@@ -494,7 +495,7 @@ struct Trmnl75Preview: View {
             // Present windows share the available width; an absent window
             // leaves its space to the remaining gauge.
             if p5 >= 0 { gaugeBar(tag: "5H", pct: p5) }
-            if p7 >= 0 { gaugeBar(tag: "7D", pct: p7) }
+            if p7 >= 0 { gaugeBar(tag: secondaryLabel, pct: p7) }
             if !plan.isEmpty {
                 Text(plan).font(.system(size: 8)).foregroundStyle(ink)
                     .frame(width: 90, alignment: .trailing).lineLimit(1)
