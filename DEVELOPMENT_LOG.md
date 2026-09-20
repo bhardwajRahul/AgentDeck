@@ -50,7 +50,18 @@ design/brand/, and marks are never redrawn — identity is text until one does).
 
 Deferred to #348 phase 3: Stream Deck usage action (new UUID — marketplace
 decision), ESP32 firmware parse+render (fleet-gated OTA), model/tool-usage
-timeseries detail, cross-daemon z.ai relay over the sibling `/usage` path.
+timeseries detail beyond the trailing-24h totals, cross-daemon z.ai relay over
+the sibling `/usage` path.
+
+**Measured token usage (same day).** The credits windows are percentages only,
+so actual token volume now rides the block too: both producers also read the
+provider's `model-usage` report (trailing 24h, fixed window — the label says
+so) and ship `tokensUsed24h`/`calls24h`; the Apple rail subtitle shows
+"460M tok/24h". A failed report omits the fields, never fabricates. The Swift
+half initially requested `/api/monitor/usage` without the `/model-usage`
+segment — the provider answered a silent HTTP-404-shaped envelope and the
+fields vanished; caught by wire-probing the running daemon, not by the
+compiler.
 
 ## 2026-09-19 — Worktree installs refused (Stream Deck dark-key incident)
 

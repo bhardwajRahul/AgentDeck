@@ -471,8 +471,23 @@ struct TopologyRail: View {
     }
 
     static func zaiSubtitle(_ limits: ZaiRateLimits) -> String? {
-        guard let plan = ZaiQuotaRules.formatPlanName(limits.planType) else { return nil }
-        return "GLM Coding Plan \(plan)"
+        // Measured trailing-24h token volume rides the subtitle: the credits
+        // windows are percentages only, so this is the one place actual token
+        // usage shows (the label must say 24h — the producers fix that window).
+        let measured: String? = limits.tokensUsed24h.map { "\(Self.zaiCompactTokens($0)) tok/24h" }
+        guard let plan = ZaiQuotaRules.formatPlanName(limits.planType) else {
+            return measured
+        }
+        let planText = "GLM Coding Plan \(plan)"
+        guard let measured else { return planText }
+        return "\(planText) · \(measured)"
+    }
+
+    static func zaiCompactTokens(_ tokens: Double) -> String {
+        if tokens >= 1_000_000_000 { return String(format: "%.1fB", tokens / 1_000_000_000) }
+        if tokens >= 1_000_000 { return String(format: "%.0fM", tokens / 1_000_000) }
+        if tokens >= 1_000 { return String(format: "%.0fK", tokens / 1_000) }
+        return String(format: "%.0f", tokens)
     }
 
     /// z.ai usage chips, mirroring the Codex window grammar. Labels derive from

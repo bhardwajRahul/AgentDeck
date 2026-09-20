@@ -74,7 +74,16 @@ describe('fetchZaiQuota', () => {
 
   it('maps the Max-plan standard schema onto wire windows and caches the reading', async () => {
     process.env.AGENTDECK_ZAI_API_KEY = 'test-plan-key';
-    const fetchMock = vi.fn(async () => jsonResponse(MAX_PLAN_BODY));
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes('model-usage')) {
+        return jsonResponse({
+          code: 200, success: true,
+          data: { totalUsage: { totalTokensUsage: 447649157, totalModelCallCount: 2402 } },
+        });
+      }
+      return jsonResponse(MAX_PLAN_BODY);
+    });
     vi.stubGlobal('fetch', fetchMock);
     const { fetchZaiQuota } = await loadModule();
 
@@ -85,16 +94,36 @@ describe('fetchZaiQuota', () => {
     expect(first.data?.primary).toEqual({ usedPercent: 1, windowMinutes: 300, resetsAt: '2026-09-19T19:10:00.174Z' });
     expect(first.data?.secondary).toEqual({ usedPercent: 100, windowMinutes: 43200, resetsAt: '2026-09-28T09:48:08.997Z' });
     expect(first.data?.capturedAt).toBeTruthy();
+    // Measured trailing-24h usage rides the same block.
+    expect(first.data?.tokensUsed24h).toBe(447649157);
+    expect(first.data?.calls24h).toBe(2402);
 
     // Within the TTL the shared file cache answers without the network.
     await vi.resetModules();
     const again = await (await loadModule()).fetchZaiQuota();
     expect(again.fresh).toBe(true);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     // The cache stores numbers + a stamp only — never the key.
     const cached = JSON.parse(readFileSync(join(dataDir, 'zai-usage-cache.json'), 'utf-8'));
     expect(JSON.stringify(cached)).not.toContain('test-plan-key');
+  });
+
+  it('omits the measured totals when the model-usage report fails — quota still lands', async () => {
+    process.env.AGENTDECK_ZAI_API_KEY = 'test-plan-key';
+    vi.stubGlobal('fetch', vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes('model-usage')) {
+        return jsonResponse({ code: 500, msg: 'nope', success: false });
+      }
+      return jsonResponse(MAX_PLAN_BODY);
+    }));
+    const { fetchZaiQuota } = await loadModule();
+    const result = await fetchZaiQuota();
+    expect(result.fresh).toBe(true);
+    expect(result.data?.primary?.usedPercent).toBe(1);
+    expect(result.data?.tokensUsed24h).toBeUndefined();
+    expect(result.data?.calls24h).toBeUndefined();
   });
 
   it('treats an HTTP-200 error envelope as a failure and serves the cache as not-fresh', async () => {

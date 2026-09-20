@@ -1621,6 +1621,12 @@ enum class VoiceAssistantState(val value: String) {
  */
 data class ZaiRateLimits (
     /**
+     * Model calls over the same trailing-24h report.
+     */
+    @Json(name = "calls24h")
+    val calls24H: Double? = null,
+
+    /**
      * ISO-8601 instant this reading was fetched. Consumers derive age from it against their own
      * clock — same contract as `CodexRateLimits.capturedAt`: an active poll re-fetches
      * regularly, so an aged stamp means the poll is failing, and the reading dims rather than
@@ -1641,5 +1647,15 @@ data class ZaiRateLimits (
     val planType: String? = null,
 
     val primary: CodexRateLimitWindow? = null,
-    val secondary: CodexRateLimitWindow? = null
+    val secondary: CodexRateLimitWindow? = null,
+
+    /**
+     * MEASURED token consumption over the trailing 24h (the provider's model-usage report), not
+     * a window percentage — the credits windows are the only percentage the quota endpoint
+     * exposes, so this is where actual token volume comes from. Absent when the report fails
+     * (never fabricated). The measurement window is fixed at 24h by the producers; the label a
+     * surface prints must say so.
+     */
+    @Json(name = "tokensUsed24h")
+    val tokensUsed24H: Double? = null
 )
