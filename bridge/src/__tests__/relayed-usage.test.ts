@@ -310,8 +310,8 @@ describe('resolveRelayedUsageEvent — z.ai provider block', () => {
     expect('zaiRateLimits' in relayed).toBe(false);
   });
 
-  it.each([[], [{ name: 'Claude' }, { name: 'ChatGPT Plus', until: '2099-01-01' }]])(
-    'retains the daemon z.ai plan alongside a session subscription snapshot %j', (subscriptions) => {
+  it.each([[], [{ name: 'Claude' }, { name: 'ChatGPT Plus', until: '2099-01-01' }]].map(subscriptions => ({ subscriptions })))(
+    'retains the daemon z.ai plan alongside a session subscription snapshot $subscriptions', ({ subscriptions }) => {
       const relayed = { type: 'usage_update', fiveHourPercent: 63, subscriptions };
       const out = resolveRelayedUsageEvent({ relayed, ownCodexRateLimits: null,
         ownZaiRateLimits: zaiBlock, buildOwnUsage: () => { throw new Error('must not build'); } });
