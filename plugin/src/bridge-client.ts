@@ -12,6 +12,8 @@ import {
 import type { AgentLink } from './agent-link.js';
 import { dlog, dwarn, derr } from './log.js';
 
+export const BRIDGE_HANDSHAKE_TIMEOUT_MS = 5_000;
+
 export type PortProvider = () => number | null;
 
 export class BridgeClient extends EventEmitter implements AgentLink {
@@ -41,6 +43,9 @@ export class BridgeClient extends EventEmitter implements AgentLink {
     dlog('Bridge', `connect(port=${this._port})`);
     this.cleanup();
     this._connectGeneration++;
+    this.retireSocket();
+    this._connected = false;
+    this.setStale(false);
     const gen = this._connectGeneration;
     this._backoffIdx = 0;
     this.attemptConnect(gen);
@@ -48,28 +53,28 @@ export class BridgeClient extends EventEmitter implements AgentLink {
 
   /** Reconnect to a different session on a different port */
   reconnectTo(port: number): void {
-    dlog('Bridge', `reconnectTo(port=${port})`);
-    this._port = port;
-    // Clean up old connection without emitting 'disconnected'
-    this.cleanup();
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.close();
-      this.ws = null;
-    }
-    this._connected = false;
     this.connect(port);
   }
 
   disconnect(): void {
     dlog('Bridge', 'disconnect()');
+    this._connectGeneration++;
     this.cleanup();
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.retireSocket();
     this._connected = false;
+    this.setStale(false);
     this.emit('disconnected');
+  }
+
+  /** Retire even a pending handshake. Its async error/close must not revive
+   * retries or mutate a newer connection, and ws emits an error on abort. */
+  private retireSocket(): void {
+    const socket = this.ws;
+    this.ws = null;
+    if (!socket) return;
+    socket.removeAllListeners();
+    socket.on('error', () => {});
+    socket.terminate();
   }
 
   send(command: PluginCommand): void {
@@ -167,7 +172,9 @@ export class BridgeClient extends EventEmitter implements AgentLink {
       // address guaranteed to match the daemon's bind regardless of the host
       // runtime's IPv6-fallback behavior.
       dlog('Bridge', `attemptConnect ws://127.0.0.1:${this._port} (gen=${gen})`);
-      this.ws = new WebSocket(`ws://127.0.0.1:${this._port}`);
+      this.ws = new WebSocket(`ws://127.0.0.1:${this._port}`, {
+        handshakeTimeout: BRIDGE_HANDSHAKE_TIMEOUT_MS,
+      });
 
       this.ws.on('open', () => {
         if (gen !== this._connectGeneration) return;
@@ -207,6 +214,8 @@ export class BridgeClient extends EventEmitter implements AgentLink {
         if (wasConnected) {
           dlog('Bridge', 'WebSocket closed (was connected)');
           this.emit('disconnected');
+        } else {
+          this.emit('connection-attempt-failed', this._port);
         }
         this.scheduleReconnect(gen);
       });
@@ -217,6 +226,7 @@ export class BridgeClient extends EventEmitter implements AgentLink {
       });
     } catch (err) {
       dlog('Bridge', `attemptConnect exception: ${err}`);
+      this.emit('connection-attempt-failed', this._port);
       this.scheduleReconnect(gen);
     }
   }

@@ -9,7 +9,7 @@ import { DisplayMonitor } from './display-monitor.js';
 import { BridgeTimelineStore } from './timeline-store.js';
 import type { BridgeLogStream } from './log-stream.js';
 import { readAntigravityLocalStatus } from './antigravity-local.js';
-import { buildSubscriptions, buildUsageEvent } from './usage-event.js';
+import { buildSubscriptions, buildUsageEvent, normalizeZaiRateLimits } from './usage-event.js';
 import { readCodexAuthStatus } from './codex-auth.js';
 import { readCodexRateLimits } from './codex-rate-limits.js';
 import {
@@ -482,11 +482,6 @@ export class BridgeCore {
    */
   lastBuiltCodexRateLimits: CodexRateLimits | null = null;
 
-  /** The z.ai block from this daemon's last built usage event — the relay path
-   *  re-attaches it onto session-bridge events (which never poll the provider
-   *  themselves), the same way `lastBuiltCodexRateLimits` rides the codex half. */
-  lastBuiltZaiQuota: import('./types.js').ZaiRateLimits | null = null;
-
   /**
    * Whether a live `codex app-server` answer stands behind that block's limit
    * FAMILY — not whether the live snapshot itself was published. It is the
@@ -514,12 +509,12 @@ export class BridgeCore {
    *  its windows rather than reading as live — the plan/family axes survive so
    *  surfaces can still name the provider row). Null means "never fetched /
    *  not configured" and omits the block: no information. */
-  private zaiQuotaForWire(): import('./types.js').ZaiRateLimits | null {
+  zaiQuotaForWire(): import('./types.js').ZaiRateLimits | null {
     if (!this.cachedZaiQuota) return null;
     if (this.lastZaiFetchTime <= 0 || Date.now() - this.lastZaiFetchTime > BridgeCore.USAGE_STALE_TTL) {
       return { planType: this.cachedZaiQuota.planType, limitId: this.cachedZaiQuota.limitId };
     }
-    return this.cachedZaiQuota;
+    return normalizeZaiRateLimits(this.cachedZaiQuota) ?? null;
   }
 
   /** Build and return a usage event */
@@ -565,7 +560,6 @@ export class BridgeCore {
     event.mlxModels = this.cachedMlxModels ?? [];
     event.mlxResidency = this.cachedMlxResidency;
     this.lastBuiltCodexRateLimits = event.codexRateLimits ?? null;
-    this.lastBuiltZaiQuota = event.zaiRateLimits ?? null;
     // "Is this block backed by a live answer", not "did the live answer win the
     // pick" — when the two agree on family the picker keeps the fresher rollout,
     // which is every build while Codex is working, and reading that as "no live

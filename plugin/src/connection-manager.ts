@@ -272,6 +272,12 @@ export class ConnectionManager extends EventEmitter implements AgentLink {
       this.emit('disconnected');
     });
 
+    // A failed initial handshake never emits 'disconnected': there was no
+    // connection to lose. It must still advance discovery past this endpoint.
+    this.bridge.on('connection-attempt-failed', () => {
+      this.quarantineCurrentPort();
+    });
+
     this.bridge.on('stale-changed', (stale: boolean) => {
       this.emit('stale-changed', stale);
     });

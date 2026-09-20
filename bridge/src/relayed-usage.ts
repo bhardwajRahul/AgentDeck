@@ -1,5 +1,5 @@
 import type { CodexRateLimits, UsageEvent } from './types.js';
-import { mergeRelayedSessionUsage } from './usage-event.js';
+import { mergeRelayedSessionUsage, mergeZaiSubscription } from './usage-event.js';
 import { pickBestCodexRateLimits } from './codex-rate-limits-live.js';
 
 /**
@@ -92,7 +92,7 @@ export function resolveRelayedUsageEvent(input: {
    *  event's clock: without a live reading there is no family authority here,
    *  and the tie falls back to recency. */
   ownLiveFamilyAuthorityExpiresAtMs?: number | null;
-  /** The daemon's remembered z.ai block, re-attached verbatim: session bridges
+  /** The daemon's z.ai block with read-time expiry applied: session bridges
    *  never poll the provider account, so a relayed event carrying Claude data
    *  must not silently drop the provider's gauges for as long as the relay is
    *  the louder broadcaster. Undefined = the daemon has nothing either. */
@@ -126,12 +126,18 @@ export function resolveRelayedUsageEvent(input: {
   // an unchanged pick must leave the relayed event object untouched — including
   // an absent `codexRateLimits` key, which under retain-on-absent merging is
   // "no information" and must not become an explicit `undefined`. The z.ai
-  // re-attach is the one exception: the relayed event never carries it, and
-  // leaving it absent every relay tick would dim the provider gauges with age
-  // between the daemon's own (less frequent) full builds.
+  // re-attach also carries its subscription row: the session bridge's
+  // replacement list cannot author this daemon-owned provider account.
   if (best === relayedCodex && !ownZaiRateLimits) return relayed as unknown as UsageEvent;
   const merged: Record<string, unknown> = { ...relayed };
   if (best !== relayedCodex) merged.codexRateLimits = best ?? undefined;
-  if (ownZaiRateLimits) merged.zaiRateLimits = ownZaiRateLimits;
+  if (ownZaiRateLimits) {
+    merged.zaiRateLimits = ownZaiRateLimits;
+    // Older producers may omit the list. Preserve that "no information"
+    // signal rather than replacing other providers with a z.ai-only list.
+    if (Array.isArray(relayed.subscriptions)) {
+      merged.subscriptions = mergeZaiSubscription(relayed.subscriptions, ownZaiRateLimits);
+    }
+  }
   return merged as unknown as UsageEvent;
 }
