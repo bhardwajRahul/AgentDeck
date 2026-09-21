@@ -37,8 +37,9 @@ android {
         applicationId = "dev.agentdeck"
         minSdk = 29
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.4.0"
+        versionCode = 19
+        versionName = "1.4.1"
+        buildConfigField("boolean", "APK_UPDATES", "false")
     }
 
     buildTypes {
@@ -50,6 +51,12 @@ android {
             )
             signingConfig = signingConfigs.getByName("release")
         }
+    }
+
+    buildTypes.create("sideload") {
+        initWith(buildTypes.getByName("release"))
+        matchingFallbacks += listOf("release")
+        buildConfigField("boolean", "APK_UPDATES", "true")
     }
 
     compileOptions {

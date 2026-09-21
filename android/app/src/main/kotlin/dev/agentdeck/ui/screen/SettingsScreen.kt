@@ -311,6 +311,7 @@ internal fun DisplaySettingsCard(
 
 @Composable
 internal fun AboutFooter() {
+    dev.agentdeck.update.AppUpdateCard()
     Text(
         text = "AgentDeck Android \u00B7 v${BuildConfig.VERSION_NAME} \u00B7 Monitoring dashboard for AI coding agents",
         style = MaterialTheme.typography.bodySmall,

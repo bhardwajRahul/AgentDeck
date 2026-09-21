@@ -87,6 +87,7 @@ void base(CreatureState cs) {
   g_state.estimatedCostUsd = 3.42f;
   g_state.codexPrimaryPercent = -1.0f;   // no Codex-window data by default
   g_state.codexSecondaryPercent = -1.0f;
+  g_state.zaiPrimaryPercent = g_state.zaiSecondaryPercent = -1.0f;
   g_state.antigravityCredits = -1.0f;
   setStr(g_state.subscriptions[0].name, sizeof(g_state.subscriptions[0].name), "Claude Max");
   setStr(g_state.subscriptions[0].until, sizeof(g_state.subscriptions[0].until), "~7/28");
@@ -172,6 +173,7 @@ bool SimScenes::apply(const char* name) {
     std::memset(&g_state, 0, sizeof(g_state));
     g_state.fiveHourPercent = g_state.sevenDayPercent = -1;
     g_state.codexPrimaryPercent = g_state.codexSecondaryPercent = -1;
+    g_state.zaiPrimaryPercent = g_state.zaiSecondaryPercent = -1;
     g_state.dataReceived = false;   // pre-connection: no quota data or creatures
     return true;
   }
@@ -193,6 +195,22 @@ bool SimScenes::apply(const char* name) {
       g_state.fiveHourPercent = 82;
       g_state.usageStale = true;
       g_state.codexSecondaryPercent = 37;
+    }
+    return true;
+  }
+  if (std::strcmp(name, "usage-all") == 0 || std::strcmp(name, "zai-only") == 0) {
+    base(CreatureState::FLOATING);
+    g_state.zaiPrimaryPercent = 36;
+    setStr(g_state.zaiPrimaryReset, sizeof(g_state.zaiPrimaryReset), "2h 15m");
+    g_state.zaiSecondaryPercent = 100;
+    g_state.zaiSecondaryIsMcp = true;
+    if (std::strcmp(name, "zai-only") == 0) {
+      g_state.fiveHourPercent = g_state.sevenDayPercent = -1;
+      g_state.subscriptionCount = 0;
+    } else {
+      g_state.codexPrimaryPercent = 15;
+      g_state.codexSecondaryPercent = 30;
+      setStr(g_state.codexSecondaryReset, sizeof(g_state.codexSecondaryReset), "6d 1h");
     }
     return true;
   }
@@ -366,6 +384,6 @@ bool SimScenes::apply(const char* name) {
 }
 
 const char* SimScenes::catalog() {
-  return "usage-none, usage-zero, usage-stale, codex-only, empty, idle, display-off, working, multi, crowd, crowded, dense, permission, attention, "
+  return "usage-all, zai-only, usage-none, usage-zero, usage-stale, codex-only, empty, idle, display-off, working, multi, crowd, crowded, dense, permission, attention, "
          "demo:<agent>:<state>";
 }

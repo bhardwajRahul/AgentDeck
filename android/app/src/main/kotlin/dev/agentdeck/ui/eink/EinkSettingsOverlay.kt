@@ -290,6 +290,7 @@ fun EinkSettingsOverlay(
 
                 Spacer(modifier = Modifier.height(2.dp))
 
+                dev.agentdeck.update.AppUpdateCard()
                 Text(
                     text = "AgentDeck Android - Monitoring dashboard for AI coding agents",
                     style = MaterialTheme.typography.bodySmall,

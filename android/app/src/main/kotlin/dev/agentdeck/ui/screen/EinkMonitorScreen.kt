@@ -447,7 +447,11 @@ private fun buildEinkLimitRows(state: DashboardState, now: Instant = Instant.now
     // "!" instead of disappearing. The leading brand mark identifies the provider,
     // so labels stay plain 5h/7d.
     providerLimitRows(state.codexRateLimits, state.zaiRateLimits).forEach {
-        rows.add(EinkLimitLine(label = it.label, percent = it.percent, agentType = it.agentType, stale = it.stale))
+        // The small monochrome mark alone is easy to miss on e-ink. Keep
+        // GLM identifiable in text; einkLimitRowText budgets the gauge to fit.
+        val label = if (it.agentType != "zai") it.label
+            else if (it.label.equals("mcp", ignoreCase = true)) "MCP" else "GLM${it.label}"
+        rows.add(EinkLimitLine(label = label, percent = it.percent, agentType = it.agentType, stale = it.stale))
     }
     // Subscription expiry rows — show "<provider> → M D" when the plan carries an
     // expiry (Antigravity has its own chip below, so skip it here). When the
@@ -479,6 +483,7 @@ private fun einkLimitsSourceTag(rows: List<EinkLimitLine>, state: DashboardState
         when (row.agentType) {
             "claude-code" -> providers.add("claude")
             "codex" -> providers.add("codex")
+            "zai" -> providers.add("glm")
         }
     }
     if (state.antigravityStatus != null) providers.add("agy")

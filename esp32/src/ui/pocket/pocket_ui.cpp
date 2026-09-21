@@ -510,12 +510,12 @@ static void renderUsageTab() {
     lv_obj_set_layout(s_content, LV_LAYOUT_NONE);
     lv_obj_set_style_pad_all(s_content, 6, 0);
     struct GaugeData { const char* label; float pct; char reset[20]; };
-    GaugeData rowsArr[4];
+    GaugeData rowsArr[5];
     uint8_t n = 0;
     char subsLine[96] = {0};
     lockState();
     auto take = [&](const char* label, float pct, const char* reset) {
-        if (pct < 0.0f) return;
+        if (pct < 0.0f || n >= sizeof(rowsArr) / sizeof(rowsArr[0])) return;
         rowsArr[n].label = label;
         rowsArr[n].pct = pct;
         strncpy(rowsArr[n].reset, reset, sizeof(rowsArr[n].reset) - 1);
@@ -549,7 +549,8 @@ static void renderUsageTab() {
         return;
     }
     for (uint8_t i = 0; i < n; i++) {
-        int y = 8 + i * 92;
+        const int rowStep = n > 3 ? 64 : 92;
+        int y = 8 + i * rowStep;
         lv_obj_t* name = makeLabel(s_content, &lv_font_montserrat_14,
                                    Theme::HUDText, rowsArr[i].label);
         lv_obj_set_pos(name, 6, y);
@@ -590,7 +591,7 @@ static void renderUsageTab() {
         lv_obj_t* s = makeLabel(s_content, &font_kr_12, Theme::HUDDim, subsLine);
         lv_label_set_long_mode(s, LV_LABEL_LONG_DOT);
         lv_obj_set_width(s, POCKET_W - 24);
-        lv_obj_set_pos(s, 6, 12 + n * 92);
+        lv_obj_set_pos(s, 6, 12 + n * (n > 3 ? 64 : 92));
     }
 }
 

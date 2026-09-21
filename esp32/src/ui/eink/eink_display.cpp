@@ -1973,7 +1973,7 @@ void drawGlanceFace(const Snap& s) {
     char summary[48]; snprintf(summary, sizeof(summary), "%u needs you  /  %u working", attention, working);
     { InkScope ink(attention ? accentColor() : GxEPD_BLACK);
       textAt(14, 72, summary, &FreeSansBold9pt7b); }
-    const int windowCount = (s.fiveH >= 0) + (s.sevenD >= 0) + (s.codexP >= 0) + (s.codexS >= 0);
+    const int windowCount = (s.fiveH >= 0) + (s.sevenD >= 0) + (s.codexP >= 0) + (s.codexS >= 0) + (s.zaiP >= 0);
     const int16_t usageTop = windowCount > 2 ? 158 : 192;
     const int i = primarySession(s);
     if (i >= 0) {
@@ -2000,6 +2000,7 @@ void drawGlanceFace(const Snap& s) {
     window("Claude 7D", s.sevenD, s.sevenReset);
     window("Codex 5H", s.codexP, s.codexPReset);
     window("Codex 7D", s.codexS, s.codexSReset);
+    window("Z.AI 5H", s.zaiP, s.zaiPReset);
     if (!windowCount) { textAt(14, y + 12, "No usage limits", &FreeSans9pt7b); y += 23; }
     const char* plan = s.codexPlan[0] ? s.codexPlan : s.claudePlan[0] ? s.claudePlan : s.agPlan;
     if (plan[0] && y < 266) {
