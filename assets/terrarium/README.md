@@ -34,8 +34,8 @@ blender --background --python assets/terrarium/export-paper-aquarium.py
 
 The first command writes Android's bundled GLB and Apple's bundled USDZ. Android
 uses Filament in an optional LCD-only preview activity; Apple uses RealityKit in
-an optional preview sheet (iOS 18+/macOS 15+). Neither replaces the live dashboard
-or maps these study fish to actual agent sessions yet. Android keeps morph
+an optional preview sheet (iOS 18+/macOS 15+) and the selectable dashboard below.
+The study fish are decorative, not actual agent sessions. Android keeps morph
 channels; Apple currently uses triangulated geometry and the global transform
 clip. Do not play the USDZ's overlapping per-node animation libraries together.
 
@@ -55,6 +55,12 @@ Apple and Android now embed the native habitat beneath their existing live HUD
 when selected in Settings → Dashboard type. Selection is device-local and
 persistent; it does not replace session state, connection controls or usage data.
 The standalone preview entry remains a diagnostic compatibility path.
+
+Apple composites the canonical live 2D session creatures over the 3D habitat,
+including state, labels, focus and tap handling. Their transparent central stage
+keeps the side rails, weather and timeline clear. A dark palette scrim preserves
+HUD contrast independently of the imported scene materials. This is a hybrid
+composition, not a set of fully modeled 3D agent creatures.
 
 Stable preference IDs are `standard` and `aquarium3d`; Android also offers `paper`
 on LCD. Android's existing effective panel classification still chooses the

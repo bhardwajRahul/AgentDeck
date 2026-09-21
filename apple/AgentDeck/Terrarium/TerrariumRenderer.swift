@@ -215,33 +215,35 @@ final class TerrariumRenderer {
 
     // MARK: - Draw (layer order matching Android ColorRenderer)
 
-    func draw(context: inout GraphicsContext, size: CGSize) {
-        // Layer 1: Deep-sea 3-color gradient background
-        drawBackground(context: &context, size: size)
+    func draw(context: inout GraphicsContext, size: CGSize, includeHabitat: Bool = true) {
+        if includeHabitat {
+            // Layer 1: Deep-sea 3-color gradient background
+            drawBackground(context: &context, size: size)
 
-        // Layer 2: Caustics overlay
-        waterEffect.draw(context: &context, size: size)
+            // Layer 2: Caustics overlay
+            waterEffect.draw(context: &context, size: size)
 
-        // Layer 2.5: God rays (light shafts)
-        lightRays.draw(context: &context, size: size)
+            // Layer 2.5: God rays (light shafts)
+            lightRays.draw(context: &context, size: size)
 
-        // Layer 2.7: Back-layer plankton
-        plankton.drawBackLayer(context: &context, size: size)
+            // Layer 2.7: Back-layer plankton
+            plankton.drawBackLayer(context: &context, size: size)
 
-        // Layer 4: Rocks + sand
-        rocks.draw(context: &context, size: size)
+            // Layer 4: Rocks + sand
+            rocks.draw(context: &context, size: size)
 
-        // Layer 4.5: Sand disturbance particles
-        sand.draw(context: &context, size: size)
+            // Layer 4.5: Sand disturbance particles
+            sand.draw(context: &context, size: size)
 
-        // Layer 5: Kelp + grass
-        kelp.draw(context: &context, size: size)
+            // Layer 5: Kelp + grass
+            kelp.draw(context: &context, size: size)
 
-        // Layer 6: LED cables on rocks
-        rocks.drawLEDs(context: &context, size: size, envState: envState)
+            // Layer 6: LED cables on rocks
+            rocks.drawLEDs(context: &context, size: size, envState: envState)
 
-        // Layer 6.5: Back-layer fish (behind creatures for 3D depth)
-        tetra.drawBackLayer(context: &context, size: size)
+            // Layer 6.5: Back-layer fish (behind creatures for 3D depth)
+            tetra.drawBackLayer(context: &context, size: size)
+        }
 
         // Layer 6.7: Focus halo (drawn behind every creature so the sprite
         // sits cleanly inside the glow). Driven by stateHolder's focused
@@ -282,17 +284,19 @@ final class TerrariumRenderer {
             k.draw(context: &context, size: size)
         }
 
-        // Layer 9.5: Front-layer fish
-        tetra.drawFrontLayer(context: &context, size: size)
+        if includeHabitat {
+            // Layer 9.5: Front-layer fish
+            tetra.drawFrontLayer(context: &context, size: size)
 
-        // Layer 9.7: Front-layer plankton
-        plankton.drawFrontLayer(context: &context, size: size)
+            // Layer 9.7: Front-layer plankton
+            plankton.drawFrontLayer(context: &context, size: size)
 
-        // Layer 10: Bubbles
-        bubbles.draw(context: &context, size: size)
+            // Layer 10: Bubbles
+            bubbles.draw(context: &context, size: size)
 
-        // Layer 10.5: Water surface line
-        waterSurface.draw(context: &context, size: size)
+            // Layer 10.5: Water surface line
+            waterSurface.draw(context: &context, size: size)
+        }
 
         // Layer 11: Error tint overlay
         if lastState?.hasError == true {

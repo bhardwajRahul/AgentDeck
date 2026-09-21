@@ -155,7 +155,31 @@ struct MonitorScreen: View {
     private var terrariumLayer: some View {
         if preferences.effectiveDashboardType == .aquarium3D {
             if #available(iOS 18.0, macOS 15.0, *) {
-                LivingAquariumScene().ignoresSafeArea()
+                ZStack {
+                    LivingAquariumScene()
+                    // The live HUD uses the dark aquarium palette. Keep text
+                    // readable independently of the model's lighting/materials.
+                    TerrariumColors.deepSea.opacity(0.48)
+                    LinearGradient(stops: [
+                        .init(color: TerrariumColors.deepSea.opacity(0.25), location: 0),
+                        .init(color: .clear, location: 0.4),
+                        .init(color: TerrariumColors.deepSea.opacity(0.8), location: 0.72),
+                        .init(color: TerrariumColors.deepSea.opacity(0.95), location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                    GeometryReader { geo in
+                        TerrariumView(
+                            terrariumState: terrariumState,
+                            includeHabitat: false,
+                            onCreatureTapped: handleCreatureTap,
+                            onBackgroundTapped: backgroundTapHandler
+                        )
+                        // Keep residents clear of the side rails, weather and
+                        // lower timeline; hit testing uses this same stage.
+                        .frame(width: geo.size.width * 0.60, height: geo.size.height * 0.68)
+                        .position(x: geo.size.width * 0.50, y: geo.size.height * 0.42)
+                    }
+                }
+                .ignoresSafeArea()
             }
         } else {
             TerrariumView(
