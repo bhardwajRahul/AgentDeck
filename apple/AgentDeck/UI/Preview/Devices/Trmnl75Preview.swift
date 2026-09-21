@@ -1,3 +1,4 @@
+// The optional physical-key Aquarium page does not change this default dashboard mirror.
 // Trmnl75Preview.swift — TRMNL 7.5" e-ink (Seeed TRMNL OG DIY Kit) preview.
 //
 // Hand-maintained mirror of the firmware dashboard layout in
@@ -38,7 +39,7 @@
 // fails CI when the firmware drifts ahead of this mirror. Update this view and
 // re-pin whenever the firmware layout changes.
 //
-// SYNC-HASH esp32/src/ui/eink/eink_display.cpp 4794e75c42be11d0bef852445802328c9bdef824
+// SYNC-HASH esp32/src/ui/eink/eink_display.cpp a684689f2d9114eacebc3c951e4dfcacc8b1f488
 // SYNC-HASH esp32/src/ui/eink/eink_dashboard_layout.h 97b1d2a6f5c84e9cf733b3e5b3145ad45f3136e7
 
 import SwiftUI

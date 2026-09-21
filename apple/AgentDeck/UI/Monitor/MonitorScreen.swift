@@ -29,6 +29,7 @@ struct MonitorScreen: View {
     /// Dashboard interaction stays consistent even though macOS has extra
     /// windows and host-side controls.
     @State private var hudHidden = false
+    @State private var showAquariumPreview = false
     @State private var previousAgentState: AgentConnectionState = .disconnected
     @StateObject private var toastManager = ToastManager()
 
@@ -72,6 +73,7 @@ struct MonitorScreen: View {
 
     var body: some View {
         mainContent
+            .sheet(isPresented: $showAquariumPreview) { AquariumPreview() }
             #if os(iOS)
             .sheet(isPresented: $showSettingsSheet) {
                 SettingsScreen()
@@ -378,6 +380,7 @@ struct MonitorScreen: View {
             Spacer()
             HStack {
                 Spacer()
+                aquariumPreviewButton
                 rotationButton
                 if preferences.showSettingsButton {
                     settingsGearButton
@@ -390,11 +393,24 @@ struct MonitorScreen: View {
                 Spacer()
                 HStack {
                     Spacer()
+                    aquariumPreviewButton
                     settingsGearButton
                 }
             }
         }
         #endif
+    }
+
+    private var aquariumPreviewButton: some View {
+        Button { showAquariumPreview = true } label: {
+            Image(systemName: "cube.transparent")
+                .font(.title2)
+                .foregroundStyle(TerrariumHUD.text)
+                .padding(12)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Explore 3D aquarium preview")
+        .help("Explore 3D aquarium preview")
     }
 
     /// Gear icon that opens Settings. Routes through `openWindow(id:)`

@@ -207,6 +207,12 @@ internal fun DisplaySettingsCard(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            val previewContext = LocalContext.current
+            if (!dev.agentdeck.util.DeviceProfile.detect(previewContext).isEink) {
+                androidx.compose.material3.TextButton(onClick = {
+                    previewContext.startActivity(Intent(previewContext, dev.agentdeck.AquariumPreviewActivity::class.java))
+                }) { Text("Explore 3D aquarium · Preview") }
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
