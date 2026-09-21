@@ -9,6 +9,25 @@ import XCTest
 /// `(agentType=codex-cli, projectName)` group.
 final class TerrariumCloudFoldTests: XCTestCase {
 
+    func testThreeProcessingCloudsKeepSeparateSwimmingLanes() {
+        var state = DashboardState()
+        state.state = .idle
+        state.siblingSessions = (0..<3).map { session(id: "cloud-\($0)", project: "Project \($0)") }
+        let habitat = state.toTerrariumState()
+        let clouds = habitat.cloudCreatures.sorted { $0.homeX < $1.homeX }.map {
+            CloudCreature(sessionId: $0.id, homeX: $0.homeX, homeY: $0.homeY, scale: $0.scale)
+        }
+        XCTAssertEqual(clouds.count, 3)
+        for _ in 0..<3600 {
+            for cloud in clouds { cloud.update(dt: 1.0 / 60, state: habitat) }
+            for i in 1..<clouds.count {
+                let gap = clouds[i].currentPosition().x - clouds[i - 1].currentPosition().x
+                let radii = 0.060 * 1.28 * 1.03 * (clouds[i].scale + clouds[i - 1].scale) / 2
+                XCTAssertGreaterThan(gap, radii, "Independent drift must not overlap adjacent marks")
+            }
+        }
+    }
+
     private func session(
         id: String,
         project: String?,

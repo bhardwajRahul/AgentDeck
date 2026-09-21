@@ -36,11 +36,11 @@ struct LivingAquariumScene: View {
             camera.look(at: [0, 1.65, -0.7], from: [0, 4.8, 14], relativeTo: nil)
             content.add(camera)
             let sun = DirectionalLight()
-            sun.light.intensity = 12_000
+            sun.light.intensity = 5_000
             sun.look(at: [0, 0, 0], from: [-4, 8, 5], relativeTo: nil)
             content.add(sun)
             let fill = DirectionalLight()
-            fill.light.intensity = 3_000
+            fill.light.intensity = 900
             fill.look(at: [0, 1, 0], from: [4, 4, -4], relativeTo: nil)
             content.add(fill)
             do {
@@ -48,6 +48,7 @@ struct LivingAquariumScene: View {
                     throw CocoaError(.fileNoSuchFile)
                 }
                 let root = try await Entity(contentsOf: url)
+                applyWaterMaterial(to: root)
                 content.add(root)
                 // USDZ exposes the same tracks through global and per-node libraries.
                 // Playing all of them overlays competing transforms; use one scene clip.
@@ -73,6 +74,22 @@ struct LivingAquariumScene: View {
             for controller in controllers { controller.stop() }
             controllers.removeAll()
         }
+    }
+
+    /// The water enclosure should recede, not reflect the key light like a wall.
+    /// A token-bound unlit material also avoids a bright horizon across imports.
+    private func applyWaterMaterial(to entity: Entity) {
+        if entity.name.lowercased().contains("garden") && entity.name.lowercased().contains("water"),
+           var model = entity.components[ModelComponent.self] {
+            #if os(macOS)
+            let color = NSColor(TerrariumColors.deepSea)
+            #else
+            let color = UIColor(TerrariumColors.deepSea)
+            #endif
+            model.materials = [UnlitMaterial(color: color)]
+            entity.components.set(model)
+        }
+        for child in entity.children { applyWaterMaterial(to: child) }
     }
 
     private func updatePlayback() {

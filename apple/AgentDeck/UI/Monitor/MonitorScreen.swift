@@ -159,11 +159,11 @@ struct MonitorScreen: View {
                     LivingAquariumScene()
                     // The live HUD uses the dark aquarium palette. Keep text
                     // readable independently of the model's lighting/materials.
-                    TerrariumColors.deepSea.opacity(0.48)
+                    TerrariumColors.deepSea.opacity(0.12)
                     LinearGradient(stops: [
-                        .init(color: TerrariumColors.deepSea.opacity(0.25), location: 0),
+                        .init(color: TerrariumColors.deepSea.opacity(0.12), location: 0),
                         .init(color: .clear, location: 0.4),
-                        .init(color: TerrariumColors.deepSea.opacity(0.8), location: 0.72),
+                        .init(color: TerrariumColors.deepSea.opacity(0.85), location: 0.72),
                         .init(color: TerrariumColors.deepSea.opacity(0.95), location: 1),
                     ], startPoint: .top, endPoint: .bottom)
                     GeometryReader { geo in

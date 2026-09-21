@@ -74,3 +74,29 @@ and Apple `AppPreferences.swift`: add a stable storage ID, title/description,
 capability rule and renderer routing. Keep hardware classification independent
 from visual style. Preserve shared HUD/control layers, release native renderer
 resources when switching, and verify restart/fallback behavior.
+
+## Dark garden (Apple preview)
+
+The Apple dashboard now bundles `dark-garden.blend` through the existing USDZ
+resource name. The original study and Android GLB remain available unchanged.
+Rebuild this candidate explicitly after exporting the original study:
+
+```sh
+blender --background --python assets/terrarium/build-dark-garden.py
+blender --background --python assets/terrarium/export-living-aquarium.py -- --source dark-garden.blend --target apple
+```
+
+The deterministic authoring script retains the original swimming hierarchy and
+creates asymmetrical stones, broad-leaf planting, branching wood and a winding
+sand ribbon. Rooted leaf transform tracks close on the same 24-second loop and
+survive the Apple export without requiring morph support. Fish body shape-key
+animation remains outside the Apple compatibility claim; existing tail/yaw
+transform animation remains. Native water uses the dark palette's unlit material
+to avoid a reflective backdrop/horizon seam. Lighting and the HUD scrim are tuned
+in the actual macOS scene, not inferred from the Blender render.
+
+Claude's canonical silhouette gains restrained top-left shading. Codex horizontal
+drift is bounded by the neighboring home spacing, preserving distinct marks for
+three simultaneous processing sessions. This does not promise arbitrary-density
+label packing. Fully modeled agent creatures and sustained GPU/power profiling
+remain future work. Android and physical e-ink assets were not replaced here.
