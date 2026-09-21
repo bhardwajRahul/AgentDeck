@@ -20,6 +20,34 @@ final class AppPreferences: ObservableObject, @unchecked Sendable {
         case declined
     }
 
+    enum DashboardType: String, CaseIterable, Identifiable {
+        case standard
+        case aquarium3D = "aquarium3d"
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .standard: "Default"
+            case .aquarium3D: "3D aquarium · Preview"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .standard: "Live agents, usage and activity in the familiar dashboard."
+            case .aquarium3D: "A dimensional habitat with live information panels. Fish are decorative."
+            }
+        }
+        static var available: [Self] {
+            if #available(iOS 18.0, macOS 15.0, *) { return allCases }
+            return [.standard]
+        }
+    }
+    @Published var dashboardType: DashboardType {
+        didSet { defaults.set(dashboardType.rawValue, forKey: "prefs.dashboardType") }
+    }
+    var effectiveDashboardType: DashboardType {
+        DashboardType.available.contains(dashboardType) ? dashboardType : .standard
+    }
+
     enum MenuBarIconStyle: String, CaseIterable, Identifiable {
         case status
         case app
@@ -294,6 +322,7 @@ final class AppPreferences: ObservableObject, @unchecked Sendable {
 
     private init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.dashboardType = DashboardType(rawValue: defaults.string(forKey: "prefs.dashboardType") ?? "") ?? .standard
         let storedPort = defaults.object(forKey: Keys.daemonPort) as? Int
         self.daemonPort = Self.clampPort(storedPort ?? Self.defaultDaemonPort)
         self.daemonLoopbackOnly = defaults.object(forKey: Keys.daemonLoopbackOnly) as? Bool ?? false

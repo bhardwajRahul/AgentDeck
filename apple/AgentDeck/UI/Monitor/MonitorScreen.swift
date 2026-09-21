@@ -29,7 +29,6 @@ struct MonitorScreen: View {
     /// Dashboard interaction stays consistent even though macOS has extra
     /// windows and host-side controls.
     @State private var hudHidden = false
-    @State private var showAquariumPreview = false
     @State private var previousAgentState: AgentConnectionState = .disconnected
     @StateObject private var toastManager = ToastManager()
 
@@ -73,7 +72,6 @@ struct MonitorScreen: View {
 
     var body: some View {
         mainContent
-            .sheet(isPresented: $showAquariumPreview) { AquariumPreview() }
             #if os(iOS)
             .sheet(isPresented: $showSettingsSheet) {
                 SettingsScreen()
@@ -153,13 +151,20 @@ struct MonitorScreen: View {
 
     // MARK: - Sub-views
 
+    @ViewBuilder
     private var terrariumLayer: some View {
-        TerrariumView(
-            terrariumState: terrariumState,
-            onCreatureTapped: handleCreatureTap,
-            onBackgroundTapped: backgroundTapHandler
-        )
-        .ignoresSafeArea()
+        if preferences.effectiveDashboardType == .aquarium3D {
+            if #available(iOS 18.0, macOS 15.0, *) {
+                LivingAquariumScene().ignoresSafeArea()
+            }
+        } else {
+            TerrariumView(
+                terrariumState: terrariumState,
+                onCreatureTapped: handleCreatureTap,
+                onBackgroundTapped: backgroundTapHandler
+            )
+            .ignoresSafeArea()
+        }
     }
 
     /// Tap handler for empty terrarium water. When the AttentionTheater
@@ -380,37 +385,23 @@ struct MonitorScreen: View {
             Spacer()
             HStack {
                 Spacer()
-                aquariumPreviewButton
                 rotationButton
-                if preferences.showSettingsButton {
+                if preferences.showSettingsButton || preferences.effectiveDashboardType == .aquarium3D {
                     settingsGearButton
                 }
             }
         }
         #else
-        if preferences.showSettingsButton {
+        if preferences.showSettingsButton || preferences.effectiveDashboardType == .aquarium3D {
             VStack {
                 Spacer()
                 HStack {
                     Spacer()
-                    aquariumPreviewButton
                     settingsGearButton
                 }
             }
         }
         #endif
-    }
-
-    private var aquariumPreviewButton: some View {
-        Button { showAquariumPreview = true } label: {
-            Image(systemName: "cube.transparent")
-                .font(.title2)
-                .foregroundStyle(TerrariumHUD.text)
-                .padding(12)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Explore 3D aquarium preview")
-        .help("Explore 3D aquarium preview")
     }
 
     /// Gear icon that opens Settings. Routes through `openWindow(id:)`

@@ -16,37 +16,84 @@ import com.google.android.filament.utils.ModelViewer
 import com.google.android.filament.utils.Utils
 import java.nio.ByteBuffer
 
-/** Opt-in native rendering trial. The live dashboard stays available through Back. */
-class AquariumPreviewActivity : Activity(), Choreographer.FrameCallback {
+import android.content.Context
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalContext
+
+/** Standalone compatibility entry; production dashboards embed AquariumSurface. */
+class AquariumPreviewActivity : Activity() {
+    private var surface: AquariumSurface? = null
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (dev.agentdeck.util.DeviceProfile.detect(this).isEink) { finish(); return }
+        val container = FrameLayout(this)
+        surface = AquariumSurface(this)
+        container.addView(surface)
+        container.addView(Button(this).apply {
+            text = "Back to dashboard"
+            setOnClickListener { finish() }
+        }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
+        setContentView(container)
+    }
+    override fun onResume() { super.onResume(); surface?.resume() }
+    override fun onPause() { surface?.pause(); super.onPause() }
+    override fun onDestroy() { surface?.dispose(); surface = null; super.onDestroy() }
+}
+
+@Composable
+fun AquariumBackground(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val owner = LocalLifecycleOwner.current
+    val surface = remember(context) { AquariumSurface(context) }
+    AndroidView(factory = { surface }, modifier = modifier)
+    DisposableEffect(owner, surface) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> surface.resume()
+                Lifecycle.Event.ON_PAUSE -> surface.pause()
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) surface.resume()
+        onDispose { owner.lifecycle.removeObserver(observer); surface.dispose() }
+    }
+}
+
+class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
     private var viewer: ModelViewer? = null
     private var fillLight: IndirectLight? = null
     private var active = false
     private var lastFrame = 0L
     private var reduceMotion = false
-    private val power by lazy { getSystemService(PowerManager::class.java) }
+    private val power by lazy { context.getSystemService(PowerManager::class.java) }
     private var elapsedSeconds = 0f
     private val choreographer by lazy { Choreographer.getInstance() }
-    private lateinit var root: FrameLayout
+    private val root get() = this
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        if (dev.agentdeck.util.DeviceProfile.detect(this).isEink) { finish(); return }
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        root = FrameLayout(this)
-        setContentView(root)
-        val close = Button(this).apply {
-            text = "Back to dashboard"
-            setOnClickListener { finish() }
-        }
+    init {
         try {
             Utils.init()
-            val surface = SurfaceView(this)
+            val surface = object : SurfaceView(context) {
+                override fun onDetachedFromWindow() {
+                    // ModelViewer's detach listener destroys the engine after this
+                    // callback. Release our light before that listener runs.
+                    pause()
+                    releaseLighting()
+                    viewer = null
+                    super.onDetachedFromWindow()
+                }
+            }
             root.addView(surface, FrameLayout.LayoutParams(-1, -1))
             val model = ModelViewer(surface, manipulator = null)
             viewer = model
             model.autoPlayAnimations = false
-            val bytes = assets.open("living-aquarium.glb").use { it.readBytes() }
+            val bytes = context.assets.open("living-aquarium.glb").use { it.readBytes() }
             model.loadModelGlb(ByteBuffer.allocateDirect(bytes.size).apply { put(bytes); flip() })
             model.cameraFocalLength = 42f
             model.camera.lookAt(0.0, 4.8, 14.0, 0.0, 1.65, -0.7, 0.0, 1.0, 0.0)
@@ -58,26 +105,24 @@ class AquariumPreviewActivity : Activity(), Choreographer.FrameCallback {
             android.util.Log.i("Aquarium3D", "Native model loaded; animations=${model.animator?.animationCount}")
         } catch (error: Exception) {
             android.util.Log.e("Aquarium3D", "Could not open aquarium", error)
-            root.addView(TextView(this).apply {
+            root.addView(TextView(context).apply {
                 text = "The 3D aquarium could not be opened. Your dashboard is still available."
                 gravity = Gravity.CENTER
             }, FrameLayout.LayoutParams(-1, -1))
         }
-        root.addView(close, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
     }
 
-    override fun onResume() {
-        super.onResume()
+    fun resume() {
+        if (active) return
         active = true
         lastFrame = 0L
-        reduceMotion = Settings.Global.getFloat(contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+        reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         choreographer.postFrameCallback(this)
     }
 
-    override fun onPause() {
+    fun pause() {
         active = false
         choreographer.removeFrameCallback(this)
-        super.onPause()
     }
 
     override fun doFrame(frameTimeNanos: Long) {
@@ -99,17 +144,20 @@ class AquariumPreviewActivity : Activity(), Choreographer.FrameCallback {
         }
     }
 
-    override fun onDestroy() {
-        active = false
-        choreographer.removeFrameCallback(this)
+    private fun releaseLighting() {
+        val light = fillLight ?: return
+        fillLight = null
         viewer?.let { model ->
             model.scene.indirectLight = null
-            fillLight?.let { model.engine.destroyIndirectLight(it) }
+            model.engine.destroyIndirectLight(light)
         }
-        fillLight = null
-        // ModelViewer destroys its engine when its SurfaceView detaches. Do not destroy twice.
-        if (::root.isInitialized) root.removeAllViews()
+    }
+
+    fun dispose() {
+        pause()
+        releaseLighting()
         viewer = null
-        super.onDestroy()
+        // The child surface owns ModelViewer's engine-detach lifecycle.
+        root.removeAllViews()
     }
 }

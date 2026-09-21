@@ -1,9 +1,12 @@
 package dev.agentdeck
 
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -168,6 +171,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val dashboardType by displayPrefs.dashboardTypeFlow.collectAsState(initial = dev.agentdeck.data.DashboardType.Default)
             AgentDeckTheme(profile = deviceProfile) {
                 when {
                     !showDashboard -> UnsupportedDeviceScreen(
@@ -182,6 +186,9 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                     deviceProfile.isEink -> EinkMonitorScreen(stateHolder, connection, displayPrefs)
+                    dashboardType == dev.agentdeck.data.DashboardType.Paper -> Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+                        EinkMonitorScreen(stateHolder, connection, displayPrefs)
+                    }
                     else -> TabletDashboard(stateHolder, connection, displayPrefs)
                 }
             }

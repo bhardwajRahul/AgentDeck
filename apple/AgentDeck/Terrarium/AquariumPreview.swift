@@ -22,7 +22,7 @@ struct AquariumPreview: View {
 }
 
 @available(iOS 18.0, macOS 15.0, *)
-private struct LivingAquariumScene: View {
+struct LivingAquariumScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var controllers: [AnimationPlaybackController] = []

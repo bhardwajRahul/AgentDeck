@@ -48,3 +48,23 @@ attention bypasses that interval; the existing periodic panel cleanup remains.
 This is a renderer/composition prototype. Art direction, agent-state integration,
 sustained frame-time/power measurements and final device approval remain release
 gates. The universal Android APK grows substantially with the native renderer.
+
+## Dashboard selection
+
+Apple and Android now embed the native habitat beneath their existing live HUD
+when selected in Settings → Dashboard type. Selection is device-local and
+persistent; it does not replace session state, connection controls or usage data.
+The standalone preview entry remains a diagnostic compatibility path.
+
+Stable preference IDs are `standard` and `aquarium3d`; Android also offers `paper`
+on LCD. Android's existing effective panel classification still chooses the
+physical-reader path and its waveform policy. Missing, unknown or unsupported
+types resolve to the existing default without rewriting the stored choice.
+Apple exposes 3D only on iOS 18+/macOS 15+. Settings remains reachable in 3D even
+when the optional settings icon preference was previously hidden.
+
+To add another type, extend `DashboardType` in Android `DisplayPreferences.kt`
+and Apple `AppPreferences.swift`: add a stable storage ID, title/description,
+capability rule and renderer routing. Keep hardware classification independent
+from visual style. Preserve shared HUD/control layers, release native renderer
+resources when switching, and verify restart/fallback behavior.

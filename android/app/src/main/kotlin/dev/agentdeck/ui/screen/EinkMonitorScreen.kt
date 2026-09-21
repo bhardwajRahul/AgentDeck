@@ -125,7 +125,9 @@ fun EinkMonitorScreen(
     val reconnectAttempt by connection.reconnectAttempt.collectAsState()
     val showSessionList by displayPrefs.showSessionListFlow.collectAsState(initial = true)
     val showTimeline by displayPrefs.showTimelineFlow.collectAsState(initial = true)
-    val showSettingsButton by displayPrefs.showSettingsButtonFlow.collectAsState(initial = true)
+    val storedSettingsButton by displayPrefs.showSettingsButtonFlow.collectAsState(initial = true)
+    val dashboardType by displayPrefs.dashboardTypeFlow.collectAsState(initial = dev.agentdeck.data.DashboardType.Default)
+    val showSettingsButton = storedSettingsButton || dashboardType == dev.agentdeck.data.DashboardType.Paper
     val displaySyncEnabled by displayPrefs.displaySyncEnabledFlow.collectAsState(initial = true)
     val featuredAttention = remember(state) { buildEinkAttentionFeatured(state) }
     val sleepSnapshotMode = displaySyncEnabled && !state.hostDisplayOn && state.hostDim?.enabled != false
