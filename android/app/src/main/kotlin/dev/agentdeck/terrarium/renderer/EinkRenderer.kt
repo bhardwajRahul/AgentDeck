@@ -46,7 +46,7 @@ private const val EINK_ANIM_CYCLE = 32
 
 // Octopus (Claude robot) and crayfish (OpenClaw) silhouettes are rendered from the
 // canonical SVG paths in CreatureGeometry via canvas.drawPath — drawPath works on
-// CremaS/RK3566 e-ink (the old "no drawPath" comments were based on an unverified claim).
+// supported e-ink (the old "no drawPath" comments were based on an unverified claim).
 
 // Codex and OpenCode also preserve their canonical geometry; Codex uses the
 // cached path below while OpenCode's rectangular ring is equivalent primitives.
@@ -90,7 +90,7 @@ fun EinkTerrariumView(
         val hostView = LocalView.current
         val physicalEink = remember(hostView) { EinkRefreshHelper.isPhysicalEink(hostView) }
         val habitat = remember(hostView, physicalEink) {
-            if (physicalEink) null else AquariumHabitat.load(hostView.context, einkColorEnabled)
+            AquariumHabitat.load(hostView.context, einkColorEnabled, physicalEink)
         }
         // Reusable render target — NOT displayed directly, only used as renderEinkFrame target
         var reusableBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -184,8 +184,8 @@ fun EinkTerrariumView(
 
 /**
  * Render a single e-ink frame with optional animation. Reuses [target] bitmap to avoid allocation.
- * Physical EPD animation skips gray quantization. LCD residents render with alpha over a
- * separately GPU-composited habitat, avoiding a full background copy on every frame.
+ * Live residents render with alpha over a cached habitat; the physical monochrome
+ * background is quantized once at load time. Separate composition, avoiding a full background copy on every frame.
  */
 private fun renderEinkFrame(
     state: TerrariumState, width: Int, height: Int, animFrame: Float = 0f,
@@ -208,6 +208,8 @@ private fun renderEinkFrame(
 
     if (habitat == null) {
         drawEinkEnvironment(canvas, paint, width, height, animFrame)
+    } else {
+        habitat.drawResidents(canvas, paint, width, height, animFrame)
     }
 
     // Back-layer fish (behind creatures for 3D depth)
@@ -1341,7 +1343,7 @@ private fun drawEinkFish(
 /**
  * Vendor-specific EPD refresh control.
  *
- * Rockchip RK3566 (Crema S, Xiaomi Reader, etc.):
+ * Rockchip RK3566 (Pantone 6, Xiaomi Reader, etc.):
  *   Uses `android.os.EinkManager` system service with string-based mode constants.
  *   Reference: KOReader's RK35xxEPDController.
  *   EPD modes: "2"=FULL_GC16, "7"=PART_GC16, "12"=A2, "14"=DU
@@ -1359,6 +1361,10 @@ object EinkRefreshHelper {
             .also { physicalEink = it }
     }
 
+    // Crema S (sdm660) exposes Onyx extensions directly on framework View.
+    // Probe once: the SDK jar is not bundled with the app or required on this device.
+    private val nativeOnyx by lazy { NativeOnyxRefresh.probe() }
+
     // Rockchip EPD mode constants (string values for EinkManager.setMode)
     private const val RK_EPD_FULL_GC16 = "2"
     private const val RK_EPD_A2 = "12"
@@ -1373,6 +1379,7 @@ object EinkRefreshHelper {
         // B&W e-ink gets an explicit full-frame GC16 flash. Color e-ink uses
         // the same mode switch without forcing a full monochrome frame, which
         // restores quality after animation/A2 frames.
+        if (nativeOnyx?.refresh(view, 2, full = true) == true) return
         if (tryRockchipRefresh(view, RK_EPD_FULL_GC16, sendFullFrame = !einkColorEnabled)) return
 
         try {
@@ -1382,31 +1389,15 @@ object EinkRefreshHelper {
             return
         } catch (_: Exception) {}
 
-        // Kobo / Tolino / KOReader-style: write the EPD waveform via mxcfb ioctl
-        // wrapper exposed as a system property bridge on some devices.
-        if (tryKoboRefresh(view, koboMode = "GC16")) return
-
-        // Fallback: standard invalidate
         view.invalidate()
     }
 
-    /**
-     * Kobo / Tolino fallback (KOReader-compatible).
-     * Devices that ship neither EinkManager nor the Onyx SDK still expose a
-     * waveform hint through the `sys.eink.update` system property, which the
-     * vendor's display HAL picks up. This path is best-effort and silently
-     * degrades to a normal invalidate on devices that ignore it.
-     */
-    private fun tryKoboRefresh(view: View, koboMode: String): Boolean {
-        return try {
-            val systemProps = Class.forName("android.os.SystemProperties")
-            val set = systemProps.getMethod("set", String::class.java, String::class.java)
-            set.invoke(null, "sys.eink.update", koboMode)
-            view.invalidate()
-            true
-        } catch (_: Exception) {
-            false
-        }
+    /** Gray-preserving regional update, without the full-screen clearing waveform. */
+    fun requestQualityRefresh(view: View) {
+        if (!isPhysicalEink(view)) { view.invalidate(); return }
+        if (nativeOnyx?.refresh(view, 2) == true) return
+        if (tryRockchipRefresh(view, "7")) return
+        view.invalidate()
     }
 
     fun requestPartialRefresh(view: View) {
@@ -1416,6 +1407,7 @@ object EinkRefreshHelper {
     /** A2 mode — fastest binary refresh, ideal for state markers and timeline. */
     fun requestA2Refresh(view: View) {
         if (!isPhysicalEink(view)) { view.invalidate(); return }
+        if (nativeOnyx?.refresh(view, 4) == true) return
         if (tryRockchipRefresh(view, RK_EPD_A2)) return
 
         try {
@@ -1430,9 +1422,6 @@ object EinkRefreshHelper {
             return
         } catch (_: Exception) {}
 
-        // Kobo / Tolino — sys.eink.update bridge accepts mode strings.
-        if (tryKoboRefresh(view, koboMode = "A2")) return
-
         // Fallback
         view.invalidate()
     }
@@ -1446,6 +1435,7 @@ object EinkRefreshHelper {
      *  and B&W animation frames (flash-min policy). */
     fun requestDURefresh(view: View) {
         if (!isPhysicalEink(view)) { view.invalidate(); return }
+        if (nativeOnyx?.refresh(view, 1) == true) return
         if (tryRockchipRefresh(view, RK_EPD_DU)) return
 
         try {
@@ -1459,9 +1449,6 @@ object EinkRefreshHelper {
             view.invalidate()
             return
         } catch (_: Exception) {}
-
-        // Kobo / Tolino — sys.eink.update bridge.
-        if (tryKoboRefresh(view, koboMode = "DU")) return
 
         // Fallback
         view.invalidate()

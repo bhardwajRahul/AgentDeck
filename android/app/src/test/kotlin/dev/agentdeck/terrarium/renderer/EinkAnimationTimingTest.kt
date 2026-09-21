@@ -106,6 +106,23 @@ class EinkAnimationTimingTest {
         }
     }
 
+    @Test
+    fun `routine vendor modes never carry full refresh or blocking flags`() {
+        for (waveform in listOf(1, 2, 4)) {
+            assertEquals(0, onyxUpdateMode(waveform, false) and (32 or 64))
+        }
+        assertEquals(98, onyxUpdateMode(2, true))
+    }
+
+    @Test
+    fun `reader habitat is monotonic native grayscale with dark tones reserved for agents`() {
+        val levels = (0..255).map(::einkHabitatGray)
+        assertTrue(levels.all { it % 17 == 0 && it in 102..255 })
+        assertTrue(levels.zipWithNext().all { (a, b) -> a <= b })
+        assertEquals(255, levels.last())
+        assertTrue(levels.distinct().size >= 8)
+    }
+
     private fun totalDistance(initial: List<Pair<Float, Float>>, school: EinkFishSchool): Float =
         school.fish.zip(initial).sumOf { (fish, start) ->
             hypot((fish.x - start.first).toDouble(), (fish.y - start.second).toDouble())
