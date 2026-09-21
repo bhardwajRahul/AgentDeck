@@ -28,14 +28,10 @@ class EinkAnimationTimingTest {
 
         fullStepSchool.update(
             streaming = false,
-            agentSlots = emptyList(),
-            crayfishRouting = false,
             stepScale = 1f,
         )
         partialStepSchool.update(
             streaming = false,
-            agentSlots = emptyList(),
-            crayfishRouting = false,
             stepScale = 0.25f,
         )
 
@@ -51,27 +47,51 @@ class EinkAnimationTimingTest {
         val mono = EinkFishSchool()
         val color = EinkFishSchool()
         repeat(300) {
-            mono.update(false, emptyList(), false, 1f)
-            repeat(4) { color.update(false, emptyList(), false, 0.25f) }
+            mono.update(false, 1f)
+            repeat(4) { color.update(false, 0.25f) }
         }
         mono.fish.zip(color.fish).forEach { (a, b) ->
             assertEquals(a.x, b.x, 0.000001f)
             assertEquals(a.y, b.y, 0.000001f)
-            assertEquals(a.heading, b.heading, 0.000001f)
+            assertEquals(a.facing, b.facing, 0.000001f)
         }
     }
 
     @Test
-    fun `fish turn gradually and hovering preserves positions`() {
+    fun `fish cross the aquarium rather than orbiting in place`() {
         val school = EinkFishSchool()
-        repeat(600) { frame ->
-            val before = school.fish.map { Triple(it.x, it.y, it.heading) }
-            school.update(frame < 200, emptyList(), false, hovering = frame in 200..399)
+        var minX = 1f
+        var maxX = 0f
+        var reversals = 0
+        var previousDirection = school.fish.first().facing > 0
+        repeat(160) {
+            val oldX = school.fish.first().x
+            school.update(false)
+            val fish = school.fish.first()
+            minX = minOf(minX, fish.x)
+            maxX = maxOf(maxX, fish.x)
+            val direction = fish.facing > 0
+            if (direction != previousDirection) reversals++
+            previousDirection = direction
+            if (kotlin.math.abs(fish.facing) > 0.05f) {
+                assertTrue("must face the direction of travel", (fish.x - oldX) * fish.facing > 0f)
+            }
+            assertTrue("back stays upright", kotlin.math.abs(fish.pitch) <= 9f)
+        }
+        assertTrue("should traverse most of the tank", maxX - minX > 0.65f)
+        assertTrue("no repeated U-turns within a shoal", reversals in 1..3)
+    }
+
+    @Test
+    fun `state changes and repeated laps preserve continuous bounded motion`() {
+        val school = EinkFishSchool()
+        repeat(4000) { frame ->
+            val before = school.fish.map { Triple(it.x, it.y, it.facing) }
+            school.update(frame % 300 < 100, hovering = frame % 300 in 100..199)
             school.fish.zip(before).forEach { (fish, old) ->
-                assertTrue(hypot(fish.x - old.first, fish.y - old.second) <= 0.0251f)
-                val turn = ((fish.heading - old.third + 540f) % 360f) - 180f
-                assertTrue("turn must not flip at display cadence", kotlin.math.abs(turn) <= 30.001f)
-                assertTrue(fish.x in 0.04f..0.96f && fish.y in 0.10f..0.70f)
+                assertTrue(hypot(fish.x - old.first, fish.y - old.second) <= 0.018f)
+                assertTrue(kotlin.math.abs(fish.facing - old.third) <= 0.05f)
+                assertTrue(fish.x in 0.15f..0.85f && fish.y in 0.20f..0.51f)
             }
         }
     }

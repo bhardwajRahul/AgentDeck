@@ -134,8 +134,7 @@ fun EinkTerrariumView(
                     animFrame = (animFrame + frameAdvance) % EINK_ANIM_CYCLE.toFloat()
                     val s = currentState
                     val streaming = s.tetra == TetraVisualState.STREAMING
-                    val agentSlots = dev.agentdeck.terrarium.layoutOctopuses(s.agents.size)
-                    fishSchool.update(streaming, agentSlots, s.crayfish == CrayfishVisualState.ROUTING, frameAdvance,
+                    fishSchool.update(streaming, frameAdvance,
                         hovering = s.tetra == TetraVisualState.HOVERING)
                     renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, animFrame, bmp,
                         skipDither = einkColorEnabled, fishSchool = fishSchool)
@@ -1220,26 +1219,16 @@ private fun drawEinkDataParticles(
 
     val slots = dev.agentdeck.terrarium.layoutOctopuses(agentCount.coerceAtLeast(1))
     val crayfishRouting = crayfishState == CrayfishVisualState.ROUTING
-    val fishSize = w * 0.014f  // slightly larger with fewer fish
+    val fishSize = w * 0.012f
 
     if (fishSchool != null) {
-        // Boids-based rendering: read persistent positions from fishSchool
-        for (i in 0 until EINK_FISH_COUNT) {
-            val fishLayer = if (i % EINK_FISH_PER_SCHOOL == EINK_FISH_PER_SCHOOL - 1) 0 else 1
+        // Depth controls occlusion as well as size: the far side of the circuit
+        // passes behind agents, so a neon stripe cannot paint over their marks.
+        for (f in fishSchool.fish) {
+            val fishLayer = if (f.depth < 0.86f) 0 else 1
             if (layer != -1 && fishLayer != layer) continue
-            val depthScale = if (fishLayer == 0) 0.80f else 1.0f
-
-            val f = fishSchool.fish[i]
-            val fx = f.x * w
-            val fy = f.y * h
-            val heading = Math.toDegrees(kotlin.math.atan2(
-                kotlin.math.sin(Math.toRadians(f.heading.toDouble())) * h,
-                kotlin.math.cos(Math.toRadians(f.heading.toDouble())) * w,
-            )).toFloat()
-            val localIdx = i % EINK_FISH_PER_SCHOOL
-            val tailPhase = (floor(animFrame).toInt() + localIdx * 2).floorMod(4)
-
-            drawEinkFish(canvas, paint, fx, fy, fishSize * depthScale, heading, tailPhase)
+            drawEinkFish(canvas, paint, f.x * w, f.y * h, fishSize * f.depth,
+                f.facing, f.pitch, f.tailBeat)
         }
 
         // STREAMING: data particles (orbit around active agent or crayfish)
@@ -1286,113 +1275,58 @@ private fun drawEinkDataParticles(
             }
             paint.pathEffect = null
         }
-    } else if (state == TetraVisualState.HOVERING) {
-        // HOVERING: fish gather near option area (matching tablet behavior)
-        val time = animFrame * 0.08f
-        val nearX = w * 0.45f + w * 0.012f * kotlin.math.cos(time * 0.3).toFloat()
-        val nearY = h * 0.35f
-
-        for (i in 0 until EINK_FISH_COUNT) {
-            val fishLayer = if (i % EINK_FISH_PER_SCHOOL == EINK_FISH_PER_SCHOOL - 1) 0 else 1
-            if (layer != -1 && fishLayer != layer) continue
-            val depthScale = if (fishLayer == 0) 0.80f else 1.0f
-
-            val isNear = i < 7  // 7 gather, 3 drift
-            val localIdx = i % EINK_FISH_PER_SCHOOL
-            val wanderSeed = localIdx * 1.47f + i * 0.83f
-            val bx: Float; val by: Float; val vx: Float
-            if (isNear) {
-                val ang = time * (0.4f + localIdx * 0.1f) + wanderSeed
-                bx = nearX + kotlin.math.cos(ang.toDouble()).toFloat() * w * 0.04f
-                by = nearY + kotlin.math.sin(ang.toDouble() * 0.8).toFloat() * h * 0.03f
-                vx = -kotlin.math.sin(ang.toDouble()).toFloat()
-            } else {
-                val ang = time * (0.3f + i * 0.07f) + wanderSeed
-                bx = w * 0.50f + kotlin.math.cos(ang.toDouble()).toFloat() * w * 0.10f
-                by = h * 0.45f + kotlin.math.sin(ang.toDouble() * 0.7).toFloat() * h * 0.06f
-                vx = -kotlin.math.sin(ang.toDouble()).toFloat()
-            }
-
-            val fx = bx.coerceIn(w * 0.05f, w * 0.95f)
-            val fy = by.coerceIn(h * 0.10f, h * 0.72f)
-            val heading = if (vx >= 0f) 0f else 180f
-            val tailPhase = (floor(animFrame).toInt() + localIdx * 2).floorMod(4)
-
-            drawEinkFish(canvas, paint, fx, fy, fishSize * depthScale, heading, tailPhase)
-        }
     }
 }
 
-/**
- * Draw a single e-ink fish — teardrop body with neon stripe, animated tail.
- * [tailPhase] 0-3 drives tail wiggle (4 positions per cycle).
- */
+/** Side-view silhouette with yaw foreshortening and a continuous tail stroke. */
 private fun drawEinkFish(
     canvas: android.graphics.Canvas, paint: Paint,
-    cx: Float, cy: Float, size: Float, heading: Float,
-    tailPhase: Int = 0,
+    cx: Float, cy: Float, size: Float, facing: Float, pitch: Float, tailBeat: Float,
 ) {
     canvas.save()
-    canvas.rotate(heading, cx, cy)
+    canvas.translate(cx, cy)
+    canvas.rotate(pitch)
+    // The fish turns into depth at each end of the circuit. Its back stays up.
+    val side = kotlin.math.abs(facing)
+    val direction = if (facing >= 0f) 1f else -1f
+    canvas.scale(direction, 1f)
+    val length = size * (0.28f + 1.45f * side)
+    val height = size * 0.52f
+    val tail = tailBeat * size * 0.30f
+    val savedCap = paint.strokeCap
 
-    val halfLen = size * 1.8f
-    val halfH = size * 0.75f
-    // Tail wiggle: 4-phase sinusoidal offset (±30% of halfH)
-    val tailWiggle = when (tailPhase % 4) {
-        0 -> 0f
-        1 -> halfH * 0.30f
-        2 -> 0f
-        else -> -halfH * 0.30f
-    }
-
-    // Body — asymmetric diamond (wider toward head for fish shape)
     paint.style = Paint.Style.FILL
     paint.color = einkPick(GRAY_FISH_BODY, COLOR_FISH_BODY)
-    val bodyPath = android.graphics.Path().apply {
-        moveTo(cx + halfLen, cy)                         // nose
-        lineTo(cx + halfLen * 0.1f, cy - halfH)         // top (shifted forward)
-        lineTo(cx - halfLen, cy + tailWiggle)            // tail base (wiggle)
-        lineTo(cx + halfLen * 0.1f, cy + halfH)         // bottom
+    val body = android.graphics.Path().apply {
+        moveTo(length, 0f)
+        cubicTo(length * 0.65f, -height, -length * 0.25f, -height, -length, tail * 0.25f)
+        cubicTo(-length * 0.25f, height, length * 0.65f, height, length, 0f)
         close()
     }
-    canvas.drawPath(bodyPath, paint)
+    canvas.drawPath(body, paint)
+    val fin = android.graphics.Path().apply {
+        moveTo(-length * 0.85f, tail * 0.25f)
+        lineTo(-length - size * 0.60f * side, tail - height * 0.75f)
+        lineTo(-length - size * 0.36f * side, tail)
+        lineTo(-length - size * 0.60f * side, tail + height * 0.75f)
+        close()
+    }
+    canvas.drawPath(fin, paint)
 
-    // Body outline for e-ink crispness
     paint.style = Paint.Style.STROKE
-    paint.color = GRAY_CREATURE
-    paint.strokeWidth = 0.8f
-    canvas.drawPath(bodyPath, paint)
-
-    // Neon stripe — lighter highlight for the signature tetra feature
     paint.color = einkPick(GRAY_FISH_STRIPE, COLOR_FISH_STRIPE)
-    paint.strokeWidth = size * 0.22f
+    paint.strokeWidth = size * 0.18f
     paint.strokeCap = Paint.Cap.ROUND
-    canvas.drawLine(cx - halfLen * 0.3f, cy, cx + halfLen * 0.6f, cy, paint)
-
-    // Tail — filled forked V with wiggle
-    paint.color = einkPick(GRAY_FISH_BODY, COLOR_FISH_BODY)
-    paint.style = Paint.Style.FILL
-    val tailX = cx - halfLen
-    val tailPath = android.graphics.Path().apply {
-        moveTo(tailX, cy + tailWiggle)
-        lineTo(tailX - halfLen * 0.4f, cy + tailWiggle - halfH * 0.9f)
-        lineTo(tailX + halfLen * 0.1f, cy + tailWiggle)
-        lineTo(tailX - halfLen * 0.4f, cy + tailWiggle + halfH * 0.9f)
-        close()
+    canvas.drawLine(-length * 0.55f, 0f, length * 0.65f, 0f, paint)
+    paint.strokeCap = savedCap
+    if (side > 0.22f) {
+        paint.style = Paint.Style.FILL
+        paint.color = GRAY_AIR
+        canvas.drawCircle(length * 0.60f, -height * 0.18f, size * 0.12f, paint)
+        paint.color = GRAY_CREATURE
+        canvas.drawCircle(length * 0.63f, -height * 0.18f, size * 0.055f, paint)
     }
-    canvas.drawPath(tailPath, paint)
-    paint.style = Paint.Style.STROKE
-    paint.color = GRAY_CREATURE
-    paint.strokeWidth = 0.6f
-    canvas.drawPath(tailPath, paint)
-
-    // Eye — white with black pupil for visibility
     paint.style = Paint.Style.FILL
-    paint.color = android.graphics.Color.WHITE
-    canvas.drawCircle(cx + halfLen * 0.45f, cy - halfH * 0.15f, size * 0.14f, paint)
-    paint.color = android.graphics.Color.BLACK
-    canvas.drawCircle(cx + halfLen * 0.45f, cy - halfH * 0.15f, size * 0.07f, paint)
-
     canvas.restore()
 }
 
