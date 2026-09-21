@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntSize
 import dev.agentdeck.terrarium.CrayfishVisualState
@@ -87,6 +88,10 @@ fun EinkTerrariumView(
         // Capture hosting Android View — postInvalidate() flushes the LAYER_TYPE_SOFTWARE
         // cache in the parent EinkRefreshZone FrameLayout, ensuring animation frames reach the EPD.
         val hostView = LocalView.current
+        val physicalEink = remember(hostView) { EinkRefreshHelper.isPhysicalEink(hostView) }
+        val habitat = remember(hostView, physicalEink) {
+            if (physicalEink) null else AquariumHabitat.load(hostView.context, einkColorEnabled)
+        }
         // Reusable render target — NOT displayed directly, only used as renderEinkFrame target
         var reusableBitmap by remember { mutableStateOf<Bitmap?>(null) }
         var animFrame by remember { mutableFloatStateOf(0f) }
@@ -108,7 +113,7 @@ fun EinkTerrariumView(
                 // caller decide whether that frame warrants an EPD refresh.
                 val bmp = reusableBitmap?.takeIf { it.width == widthPx && it.height == heightPx }
                     ?: Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { reusableBitmap = it }
-                renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, 0f, bmp, fishSchool = fishSchool)
+                renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, 0f, bmp, fishSchool = fishSchool, habitat = habitat)
                 hostView.postInvalidate()
                 onFrameRendered?.invoke(false)
                 return@LaunchedEffect
@@ -130,7 +135,7 @@ fun EinkTerrariumView(
                     fishSchool.update(streaming, frameAdvance,
                         hovering = s.tetra == TetraVisualState.HOVERING)
                     renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, animFrame, bmp,
-                        skipDither = true, fishSchool = fishSchool)
+                        skipDither = true, fishSchool = fishSchool, habitat = habitat)
                     hostView.postInvalidate()
                     onFrameRendered?.invoke(true)
                 } catch (e: Exception) {
@@ -150,7 +155,7 @@ fun EinkTerrariumView(
             val bmp = reusableBitmap?.takeIf { it.width == widthPx && it.height == heightPx }
                 ?: Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { reusableBitmap = it }
             val frame = if (snapshotMode) 0f else animFrame
-            renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, frame, bmp, fishSchool = fishSchool)
+            renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, frame, bmp, fishSchool = fishSchool, habitat = habitat)
             hostView.postInvalidate()
             onFrameRendered?.invoke(false)
         }
@@ -160,7 +165,7 @@ fun EinkTerrariumView(
             if (renderedBitmap == null || renderedBitmap?.width != widthPx || renderedBitmap?.height != heightPx) {
                 val bmp = reusableBitmap?.takeIf { it.width == widthPx && it.height == heightPx }
                     ?: Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { reusableBitmap = it }
-                renderedBitmap = renderEinkFrame(state, widthPx, heightPx, 0f, bmp, fishSchool = fishSchool)
+                renderedBitmap = renderEinkFrame(state, widthPx, heightPx, 0f, bmp, fishSchool = fishSchool, habitat = habitat)
                 hostView.postInvalidate()
                 onFrameRendered?.invoke(false)
             }
@@ -168,6 +173,7 @@ fun EinkTerrariumView(
 
         Canvas(modifier = Modifier.fillMaxSize()) {
             val bmp = renderedBitmap ?: return@Canvas
+            habitat?.draw(drawContext.canvas.nativeCanvas, size.width.toInt(), size.height.toInt())
             drawImage(
                 image = bmp.asImageBitmap(),
                 dstSize = IntSize(size.width.toInt(), size.height.toInt()),
@@ -178,13 +184,14 @@ fun EinkTerrariumView(
 
 /**
  * Render a single e-ink frame with optional animation. Reuses [target] bitmap to avoid allocation.
- * [skipDither] skips the snapToNearestGray pass — safe because all draw colors are pre-quantized
- * 16-level grays and paint.isAntiAlias=false. Use for animation frames where speed matters.
+ * Physical EPD animation skips gray quantization. LCD residents render with alpha over a
+ * separately GPU-composited habitat, avoiding a full background copy on every frame.
  */
 private fun renderEinkFrame(
     state: TerrariumState, width: Int, height: Int, animFrame: Float = 0f,
     target: Bitmap? = null, skipDither: Boolean = false,
     fishSchool: EinkFishSchool? = null,
+    habitat: AquariumHabitat? = null,
 ): Bitmap {
     val bitmap = if (target != null && target.width == width && target.height == height) {
         target.eraseColor(0)
@@ -193,100 +200,15 @@ private fun renderEinkFrame(
         Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     }
     val canvas = android.graphics.Canvas(bitmap)
-    val paint = Paint().apply { isAntiAlias = false }
+    val paint = Paint().apply { isAntiAlias = habitat != null }
 
     if (Log.isLoggable("EinkFrame", Log.VERBOSE)) {
         Log.v("EinkFrame", "agents=${state.agents.size} clouds=${state.cloudCreatures.size} oc=${state.openCodeCreatures.size} cf=${state.crayfish} frame=$animFrame")
     }
 
-    // Water background — entire frame is the aquarium (no inner border)
-    canvas.drawColor(einkPick(GRAY_WATER_BG, COLOR_WATER_BG))
-
-    // Color e-ink: ukiyo-e style water depth lines for paper-print texture
-    if (einkColorEnabled) {
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 1.0f
-        val waveColor = 0xFF7AAAC0.toInt()  // slightly darker than water bg
-        paint.color = waveColor
-        for (i in 1..5) {
-            val lineY = height * (0.15f + i * 0.12f)
-            val wavePath = android.graphics.Path().apply {
-                moveTo(0f, lineY)
-                var x = 0f
-                while (x <= width) {
-                    val y = lineY + kotlin.math.sin((x * 0.015f + i * 0.8f).toDouble()).toFloat() * 2.5f
-                    lineTo(x, y)
-                    x += 3f
-                }
-            }
-            canvas.drawPath(wavePath, paint)
-        }
+    if (habitat == null) {
+        drawEinkEnvironment(canvas, paint, width, height, animFrame)
     }
-
-    // Water surface — flat air region above water line, wave only on the boundary
-    val discreteFrame = floor(animFrame).toInt()
-    val creatureFrame = discreteFrame.floorMod(4)
-    val surfaceY = height * 0.08f
-    val surfaceAmp = height * 0.012f
-    val surfaceFreq = (2.0 * kotlin.math.PI / (width * 0.5)).toFloat()
-    val phaseShift = creatureFrame * kotlin.math.PI.toFloat() / 2f
-
-    // Air fill — everything above the sine wave curve.
-    // The contrast between GRAY_AIR (0xEE) and GRAY_WATER_BG (0xDD) forms a natural
-    // subtle water surface. No separate wave stroke needed (it was too prominent on e-ink).
-    paint.style = Paint.Style.FILL
-    paint.color = einkPick(GRAY_AIR, COLOR_AIR)
-    val airPath = android.graphics.Path().apply {
-        moveTo(0f, 0f)
-        lineTo(width.toFloat(), 0f)
-        // Trace sine wave from right to left (bottom edge of air region)
-        var sx = width.toFloat()
-        while (sx >= 0f) {
-            val sy = surfaceY + kotlin.math.sin((surfaceFreq * sx + phaseShift).toDouble()).toFloat() * surfaceAmp
-            lineTo(sx, sy)
-            sx -= 4f
-        }
-        close()
-    }
-    canvas.drawPath(airPath, paint)
-
-    // Bubbles — filled + outline for e-ink visibility (4-frame cycle)
-    val bubbleBasePositions = floatArrayOf(0.15f, 0.35f, 0.55f, 0.75f)
-    for (i in 0 until 4) {
-        val bx = width * (bubbleBasePositions[i] + (i % 2) * 0.05f) +
-            (if (creatureFrame % 2 == 0) 2f else -2f) * (i % 2 * 2 - 1)
-        val baseY = surfaceY + height * (0.05f + i * 0.08f)
-        val by = baseY - creatureFrame * height * 0.015f
-        val r = 3f + i * 0.8f
-        // Inner highlight
-        paint.style = Paint.Style.FILL
-        paint.color = einkPick(GRAY_AIR, COLOR_AIR)
-        canvas.drawCircle(bx, by, r * 0.5f, paint)
-        // Outer ring
-        paint.style = Paint.Style.STROKE
-        paint.color = einkPick(GRAY_BUBBLE, COLOR_BUBBLE)
-        paint.strokeWidth = 1.0f
-        canvas.drawCircle(bx, by, r, paint)
-    }
-
-    // Sand floor — subtle darker band at bottom for visual grounding
-    paint.style = Paint.Style.FILL
-    paint.color = einkPick(GRAY_SAND, COLOR_SAND)
-    canvas.drawRect(0f, height * 0.82f, width.toFloat(), height.toFloat(), paint)
-
-    // Light rays — 2 fixed-position gray gradient rectangles
-    drawEinkLightRays(canvas, paint, width, height, creatureFrame)
-
-    // Water surface line — 2px wave at y=4%
-    drawEinkWaterSurface(canvas, paint, width, height, creatureFrame)
-
-    // Environment (4-frame cycle for seaweed sway)
-    drawEinkSeaweed(canvas, paint, width, height, creatureFrame)
-    drawEinkRocks(canvas, paint, width, height)
-    drawEinkGravel(canvas, paint, width, height)
-
-    // Ground cover grass
-    drawEinkGrass(canvas, paint, width, height, creatureFrame)
 
     // Back-layer fish (behind creatures for 3D depth)
     drawEinkDataParticles(canvas, paint, width, height, state.tetra, state.agents.size, state.crayfish, animFrame, layer = 0, fishSchool = fishSchool)
@@ -387,7 +309,7 @@ private fun renderEinkFrame(
 
     // Snap to native 16-level grayscale — only on B&W e-ink state-change renders.
     // Color e-ink: skip to preserve RGB colors for CFA rendering.
-    if (!skipDither && !einkColorEnabled) {
+    if (!skipDither && !einkColorEnabled && habitat == null) {
         DitherEngine.snapToNearestGray(bitmap)
     }
 
@@ -395,6 +317,100 @@ private fun renderEinkFrame(
 }
 
 // --- Environment ---
+
+private fun drawEinkEnvironment(
+    canvas: android.graphics.Canvas, paint: Paint, width: Int, height: Int, animFrame: Float,
+) {
+    // Water background — entire frame is the aquarium (no inner border)
+    canvas.drawColor(einkPick(GRAY_WATER_BG, COLOR_WATER_BG))
+
+    // Color e-ink: ukiyo-e style water depth lines for paper-print texture
+    if (einkColorEnabled) {
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.0f
+        val waveColor = 0xFF7AAAC0.toInt()  // slightly darker than water bg
+        paint.color = waveColor
+        for (i in 1..5) {
+            val lineY = height * (0.15f + i * 0.12f)
+            val wavePath = android.graphics.Path().apply {
+                moveTo(0f, lineY)
+                var x = 0f
+                while (x <= width) {
+                    val y = lineY + kotlin.math.sin((x * 0.015f + i * 0.8f).toDouble()).toFloat() * 2.5f
+                    lineTo(x, y)
+                    x += 3f
+                }
+            }
+            canvas.drawPath(wavePath, paint)
+        }
+    }
+
+    // Water surface — flat air region above water line, wave only on the boundary
+    val discreteFrame = floor(animFrame).toInt()
+    val creatureFrame = discreteFrame.floorMod(4)
+    val surfaceY = height * 0.08f
+    val surfaceAmp = height * 0.012f
+    val surfaceFreq = (2.0 * kotlin.math.PI / (width * 0.5)).toFloat()
+    val phaseShift = creatureFrame * kotlin.math.PI.toFloat() / 2f
+
+    // Air fill — everything above the sine wave curve.
+    // The contrast between GRAY_AIR (0xEE) and GRAY_WATER_BG (0xDD) forms a natural
+    // subtle water surface. No separate wave stroke needed (it was too prominent on e-ink).
+    paint.style = Paint.Style.FILL
+    paint.color = einkPick(GRAY_AIR, COLOR_AIR)
+    val airPath = android.graphics.Path().apply {
+        moveTo(0f, 0f)
+        lineTo(width.toFloat(), 0f)
+        // Trace sine wave from right to left (bottom edge of air region)
+        var sx = width.toFloat()
+        while (sx >= 0f) {
+            val sy = surfaceY + kotlin.math.sin((surfaceFreq * sx + phaseShift).toDouble()).toFloat() * surfaceAmp
+            lineTo(sx, sy)
+            sx -= 4f
+        }
+        close()
+    }
+    canvas.drawPath(airPath, paint)
+
+    // Bubbles — filled + outline for e-ink visibility (4-frame cycle)
+    val bubbleBasePositions = floatArrayOf(0.15f, 0.35f, 0.55f, 0.75f)
+    for (i in 0 until 4) {
+        val bx = width * (bubbleBasePositions[i] + (i % 2) * 0.05f) +
+            (if (creatureFrame % 2 == 0) 2f else -2f) * (i % 2 * 2 - 1)
+        val baseY = surfaceY + height * (0.05f + i * 0.08f)
+        val by = baseY - creatureFrame * height * 0.015f
+        val r = 3f + i * 0.8f
+        // Inner highlight
+        paint.style = Paint.Style.FILL
+        paint.color = einkPick(GRAY_AIR, COLOR_AIR)
+        canvas.drawCircle(bx, by, r * 0.5f, paint)
+        // Outer ring
+        paint.style = Paint.Style.STROKE
+        paint.color = einkPick(GRAY_BUBBLE, COLOR_BUBBLE)
+        paint.strokeWidth = 1.0f
+        canvas.drawCircle(bx, by, r, paint)
+    }
+
+    // Sand floor — subtle darker band at bottom for visual grounding
+    paint.style = Paint.Style.FILL
+    paint.color = einkPick(GRAY_SAND, COLOR_SAND)
+    canvas.drawRect(0f, height * 0.82f, width.toFloat(), height.toFloat(), paint)
+
+    // Light rays — 2 fixed-position gray gradient rectangles
+    drawEinkLightRays(canvas, paint, width, height, creatureFrame)
+
+    // Water surface line — 2px wave at y=4%
+    drawEinkWaterSurface(canvas, paint, width, height, creatureFrame)
+
+    // Environment (4-frame cycle for seaweed sway)
+    drawEinkSeaweed(canvas, paint, width, height, creatureFrame)
+    drawEinkRocks(canvas, paint, width, height)
+    drawEinkGravel(canvas, paint, width, height)
+
+    // Ground cover grass
+    drawEinkGrass(canvas, paint, width, height, creatureFrame)
+}
+
 
 private fun drawEinkRocks(canvas: android.graphics.Canvas, paint: Paint, w: Int, h: Int) {
     val bottomY = h * 0.82f
@@ -646,7 +662,7 @@ private fun drawEinkOctopus(
     canvas.translate(cx, cy)
     canvas.scale(svgScale, svgScale)
     canvas.translate(-CreatureGeometry.OCTOPUS_VIEWBOX / 2f, -CreatureGeometry.OCTOPUS_VIEWBOX / 2f)
-    canvas.drawPath(CreatureGeometry.octopusNativePath, paint)
+    drawAquariumMark(canvas, paint, CreatureGeometry.octopusNativePath)
     canvas.restore()
 
     // Name tag FIRST (behind bubble) — multi-session only
@@ -802,7 +818,7 @@ private fun drawEinkCloud(
         postTranslate(cx - markSize / 2f, cy - markSize / 2f)
     }
     path.transform(matrix)
-    canvas.drawPath(path, paint)
+    drawAquariumMark(canvas, paint, path)
 
     // Effective body extents for positioning
     val bodyHeight = markSize / 2f
@@ -905,7 +921,7 @@ private fun drawEinkOpenCode(
             -dev.agentdeck.terrarium.CreatureGeometry.KIRO_VIEWBOX / 2f,
             -dev.agentdeck.terrarium.CreatureGeometry.KIRO_VIEWBOX / 2f,
         )
-        canvas.drawPath(dev.agentdeck.terrarium.CreatureGeometry.kiroNativePath, paint)
+        drawAquariumMark(canvas, paint, dev.agentdeck.terrarium.CreatureGeometry.kiroNativePath)
         canvas.restore()
 
         if (displayName != null) {
@@ -1086,14 +1102,14 @@ private fun drawEinkAntigravity(
         paint.strokeWidth = 1.55f
         paint.strokeJoin = Paint.Join.ROUND
         paint.color = 0xFF1F2A30.toInt()
-        canvas.drawPath(dev.agentdeck.terrarium.CreatureGeometry.antigravityNativePath, paint)
+        drawAquariumMark(canvas, paint, dev.agentdeck.terrarium.CreatureGeometry.antigravityNativePath)
         paint.strokeWidth = 0.55f
         paint.color = 0xFFF6FAFC.toInt()
-        canvas.drawPath(dev.agentdeck.terrarium.CreatureGeometry.antigravityNativePath, paint)
+        drawAquariumMark(canvas, paint, dev.agentdeck.terrarium.CreatureGeometry.antigravityNativePath)
         paint.style = Paint.Style.FILL
         paint.shader = antigravityShader
     }
-    canvas.drawPath(dev.agentdeck.terrarium.CreatureGeometry.antigravityNativePath, paint)
+    drawAquariumMark(canvas, paint, dev.agentdeck.terrarium.CreatureGeometry.antigravityNativePath)
     canvas.restore()
     paint.shader = null
     paint.style = Paint.Style.FILL
@@ -1174,8 +1190,8 @@ private fun drawEinkCrayfish(
         einkPick(GRAY_CRAY_BODY, COLOR_CRAY_BODY)
     }
     paint.alpha = if (state == CrayfishVisualState.DORMANT) 105 else 255
-    for (path in CreatureGeometry.openClawBodyNativePaths) canvas.drawPath(path, paint)
-    for (path in CreatureGeometry.openClawEyeNativePaths) canvas.drawPath(path, paint)
+    for (path in CreatureGeometry.openClawBodyNativePaths) drawAquariumMark(canvas, paint, path)
+    for (path in CreatureGeometry.openClawEyeNativePaths) drawAquariumMark(canvas, paint, path)
     paint.alpha = 255
 
     canvas.restore() // main transform
@@ -1295,7 +1311,7 @@ private fun drawEinkFish(
         cubicTo(-length * 0.25f, height, length * 0.65f, height, length, 0f)
         close()
     }
-    canvas.drawPath(body, paint)
+    drawAquariumMark(canvas, paint, body)
     val fin = android.graphics.Path().apply {
         moveTo(-length * 0.85f, tail * 0.25f)
         lineTo(-length - size * 0.60f * side, tail - height * 0.75f)
