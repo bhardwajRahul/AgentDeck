@@ -286,8 +286,34 @@ the user was asked to connect USB while other verification continued.
 - Final previews confirm the visible z.ai heading on round AMOLED and the
   filled TTGO usage cards. All changed firmware images are development
   candidates, not a newly published ESP32 release.
-- 86box completed OTA and reported `1.4.0 / bcd37b4c-dirty` over serial after
-  reboot. The remaining target updates are being applied sequentially.
+- PR #362's ten CI checks passed, including Android, ESP32 simulator, iOS,
+  macOS, Windows native runtimes, full workspace tests and design regression.
+
+## Hardware delivery receipts (2026-09-22)
+
+The firmware was built before the source commit, so its embedded identity is
+`1.4.0 / bcd37b4c-dirty`; implementation is preserved in `fb6e2ed8`.
+86box and IPS 3.5 completed OTA. Round AMOLED timed out at OTA chunk 8;
+the CLI's inherited no-reset USB handshake also failed. Espressif's default
+reset connected successfully, detected a 16 MB chip (the SSOT image declares
+8 MB, within capacity), and verified the merged image after writing. Its Wi-Fi
+configuration was re-provisioned from the saved daemon settings afterward.
+
+T-Display Pro's radio returned while serial was suspended, but OTA begin still
+timed out. It and NM-EPD-420 received verified merged images over USB. Their
+existing NVS partition geometry was checked against the new partition tables;
+settings were backed up privately, restored and verified, then the temporary
+backups were deleted. Fresh serial device information confirmed the new build
+on all five boards. No blanket flash erase was used.
+
+TTGO also completed OTA and reported the new build after reboot. The final
+delivery status, including IPS 10, is tracked in
+[PR #362](https://github.com/puritysb/AgentDeck/pull/362).
+Pantone and Crema remain on their existing installs: Wi-Fi ADB refuses the
+connection and neither has appeared over USB. Lenovo has the signed Android
+1.4.1 (19) candidate. The public newer-APK download/install flow still needs a
+future release to exercise end to end; live checks and local installation were
+verified separately.
 
 ## 2026-09-21 — Device and npm 1.4.0 delivery
 
