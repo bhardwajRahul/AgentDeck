@@ -9,6 +9,7 @@ import android.graphics.Shader
 import android.view.View
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
@@ -32,19 +33,12 @@ import dev.agentdeck.terrarium.CreatureNameTagStyle
 import dev.agentdeck.terrarium.creatureNameTagMetric
 import dev.agentdeck.terrarium.resolveCreatureNameTagLayout
 import android.util.Log
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.floor
 
-/** E-ink animation frame interval (ms). 400ms for smoother movement (~2.5fps). */
-private const val EINK_ANIM_FRAME_MS = 400L
-
-/**
- * Color e-ink can display browser video by switching into a fast refresh path.
- * Match that behavior with a modest 10fps loop; motion speed is scaled back to
- * the 400ms logical frame clock so creatures do not move faster than B&W e-ink.
- */
-private const val COLOR_EINK_ANIM_FRAME_MS = 100L
+/** Motion time unit stays independent of how often a panel presents frames. */
+private const val EINK_MOTION_UNIT_MS = 400L
+private const val EINK_PARTIAL_FRAME_MS = 100L
 
 /** Total animation cycle frames — fish patrol uses the full range, creatures use % 4. */
 private const val EINK_ANIM_CYCLE = 32
@@ -56,11 +50,12 @@ private const val EINK_ANIM_CYCLE = 32
 // Codex and OpenCode also preserve their canonical geometry; Codex uses the
 // cached path below while OpenCode's rectangular ring is equivalent primitives.
 
-internal fun einkAnimationFrameIntervalMs(colorEink: Boolean): Long =
-    if (colorEink) COLOR_EINK_ANIM_FRAME_MS else EINK_ANIM_FRAME_MS
+/** LCD previews run on every vsync; physical EPDs receive at most 10 partial updates/s. */
+internal fun einkAnimationFrameIntervalMs(physicalEink: Boolean): Long =
+    if (physicalEink) EINK_PARTIAL_FRAME_MS else 0L
 
 internal fun einkAnimationFrameAdvance(elapsedMs: Long): Float =
-    (elapsedMs.coerceAtLeast(0).toFloat() / EINK_ANIM_FRAME_MS).coerceAtMost(1.5f)
+    (elapsedMs.coerceAtLeast(0).toFloat() / EINK_MOTION_UNIT_MS).coerceAtMost(1.5f)
 
 private fun frameMod4(frame: Float): Int = floor(frame).toInt().floorMod(4)
 
@@ -96,7 +91,7 @@ fun EinkTerrariumView(
         var reusableBitmap by remember { mutableStateOf<Bitmap?>(null) }
         var animFrame by remember { mutableFloatStateOf(0f) }
         val currentState by rememberUpdatedState(state)
-        // Persistent boids fish school — survives recomposition, state lives across frames
+        // Persistent swimming state — survives recomposition, state lives across frames
         val fishSchool = remember { EinkFishSchool() }
 
         val hasActiveCreatures = state.octopus != OctopusVisualState.SLEEPING ||
@@ -106,11 +101,7 @@ fun EinkTerrariumView(
             state.antigravityCreatures.any { it.visualState != OctopusVisualState.SLEEPING }
         val isAnimating = hasActiveCreatures && !snapshotMode
 
-        // Animation loop — platform-specific:
-        // B&W e-ink: 2.5fps GC16 partial animation (400ms).
-        // Color Kaleido/Gallery: 10fps fast partial animation, but the logical
-        // motion clock stays at 400ms so browser-video-capable panels get smoother
-        // interpolation without making fish and creatures sprint.
+        // Vsync pacing drops overdue frames instead of adding render time to a sleep.
         LaunchedEffect(isAnimating, snapshotMode, widthPx, heightPx) {
             if (!isAnimating) {
                 // Static or host-asleep snapshot state: render once and let the
@@ -122,13 +113,15 @@ fun EinkTerrariumView(
                 onFrameRendered?.invoke(false)
                 return@LaunchedEffect
             }
-            val frameInterval = einkAnimationFrameIntervalMs(einkColorEnabled)
+            val frameInterval = einkAnimationFrameIntervalMs(EinkRefreshHelper.isPhysicalEink(hostView))
             var lastFrameAt = android.os.SystemClock.uptimeMillis()
             while (isActive) {
+                withFrameNanos { }
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastFrameAt < frameInterval) continue
                 try {
                     val bmp = reusableBitmap?.takeIf { it.width == widthPx && it.height == heightPx }
                         ?: Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also { reusableBitmap = it }
-                    val now = android.os.SystemClock.uptimeMillis()
                     val frameAdvance = einkAnimationFrameAdvance(now - lastFrameAt)
                     lastFrameAt = now
                     animFrame = (animFrame + frameAdvance) % EINK_ANIM_CYCLE.toFloat()
@@ -137,19 +130,18 @@ fun EinkTerrariumView(
                     fishSchool.update(streaming, frameAdvance,
                         hovering = s.tetra == TetraVisualState.HOVERING)
                     renderedBitmap = renderEinkFrame(currentState, widthPx, heightPx, animFrame, bmp,
-                        skipDither = einkColorEnabled, fishSchool = fishSchool)
+                        skipDither = true, fishSchool = fishSchool)
                     hostView.postInvalidate()
                     onFrameRendered?.invoke(true)
                 } catch (e: Exception) {
                     android.util.Log.e("EinkAnim", "Animation loop crash", e)
                 }
-                delay(frameInterval)
             }
         }
 
         // Force immediate re-render on state change (e.g. FLOATING→WORKING).
         // The animation loop picks up currentState automatically, but we also render
-        // one frame immediately so the transition isn't delayed by up to 600ms.
+        // one frame immediately so the transition does not wait for the next animation frame.
         val agentsKey = state.agents.map { it.visualState }
         val cloudsKey = state.cloudCreatures.map { it.visualState }
         val openCodeKey = state.openCodeCreatures.map { it.visualState }
@@ -1343,29 +1335,25 @@ private fun drawEinkFish(
  */
 object EinkRefreshHelper {
 
+    private var physicalEink: Boolean? = null
+
+    /** Layout override is not a display controller: probe the panel without that override. */
+    fun isPhysicalEink(view: View): Boolean = physicalEink ?: run {
+        dev.agentdeck.util.DeviceProfile.detect(view.context.applicationContext).isEink
+            .also { physicalEink = it }
+    }
+
     // Rockchip EPD mode constants (string values for EinkManager.setMode)
     private const val RK_EPD_FULL_GC16 = "2"
     private const val RK_EPD_A2 = "12"
     private const val RK_EPD_DU = "14"
 
-    // B&W animation policy — user priority: minimize flash, accept slower
-    // motion / more residual ghost.
-    //
-    // - No periodic full-frame GC16 cleanup. Forced full refresh on Rockchip
-    //   is GC16-only (sendOneFullFrame is hardcoded), and any cadence that
-    //   produces visible flashes was unwanted regardless of length. Natural
-    //   GC16 events (ATTENTION onset, agent state transition, explicit
-    //   [requestFullRefresh] calls) handle cleanup when they occur; pure-
-    //   idle terrarium stretches accept accumulated ghost as the trade-off.
-    //
-    // - Per-frame waveform: DU partial (4-level), not GC16 partial. The
-    //   4-level transition has noticeably less per-frame contrast inversion
-    //   than 16-level, so individual creature/fish frames read as a quiet
-    //   settle rather than a micro-flash. Grayscale detail compresses to
-    //   4 levels (creature shading flatter), accepted trade-off.
+    // Animation uses A2 partial updates on both monochrome and color panels.
+    // Full/normal refresh is reserved for state changes, never a per-frame flash.
 
     /** Full/normal refresh — clears ghosting and exits fast animation mode. */
     fun requestFullRefresh(view: View) {
+        if (!isPhysicalEink(view)) { view.invalidate(); return }
         // B&W e-ink gets an explicit full-frame GC16 flash. Color e-ink uses
         // the same mode switch without forcing a full monochrome frame, which
         // restores quality after animation/A2 frames.
@@ -1411,6 +1399,7 @@ object EinkRefreshHelper {
 
     /** A2 mode — fastest binary refresh, ideal for state markers and timeline. */
     fun requestA2Refresh(view: View) {
+        if (!isPhysicalEink(view)) { view.invalidate(); return }
         if (tryRockchipRefresh(view, RK_EPD_A2)) return
 
         try {
@@ -1432,29 +1421,15 @@ object EinkRefreshHelper {
         view.invalidate()
     }
 
-    /** Animation refresh — platform-specific:
-     *  B&W e-ink: DU partial (4-level) on every supported vendor path —
-     *    Rockchip mode "14", Onyx UpdateMode.DU, Kobo "sys.eink.update=DU".
-     *    Each path delivers a low-contrast partial transition per frame,
-     *    so flash is minimized uniformly across vendors (not just Rockchip).
-     *    No periodic cleanup; ghost accumulates between natural GC16 events
-     *    (ATTENTION onset, state transition). Trade-off: flash min > fidelity.
-     *  Color e-ink: fast animation/A2 mode. Self-cleaning per frame.
-     */
+    /** Fast partial animation confined to the aquarium view; no periodic full flash. */
     fun requestAnimationRefresh(view: View) {
-        if (einkColorEnabled) {
-            requestA2Refresh(view)
-            return
-        }
-        // Delegate to the shared DU path — already wired for Rockchip + Onyx;
-        // Kobo branch added below in [requestDURefresh] so all three vendors
-        // honor the flash-min animation policy.
-        requestDURefresh(view)
+        requestA2Refresh(view)
     }
 
     /** DU mode — fast monochrome refresh, ideal for usage gauges, footer,
      *  and B&W animation frames (flash-min policy). */
     fun requestDURefresh(view: View) {
+        if (!isPhysicalEink(view)) { view.invalidate(); return }
         if (tryRockchipRefresh(view, RK_EPD_DU)) return
 
         try {

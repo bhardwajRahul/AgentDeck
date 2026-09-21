@@ -51,13 +51,14 @@ class EinkFishSchool {
             streaming -> 1.15
             else -> 1.0
         }
-        // 25ms integration is invisible at both 100ms and 400ms display cadence.
+        // 3.125ms integration is invisible at both 100ms and 400ms display cadence.
         // Double phase and bounded angles also avoid long-running float drift.
-        while (remainder >= 0.0625) {
-            pace += (targetPace - pace) * 0.018
-            phase = (phase + 0.040 * pace * 0.0625) % (2 * PI)
-            tailPhase = (tailPhase + 1.30 * pace * 0.0625) % (2 * PI)
-            remainder -= 0.0625
+        while (remainder >= 0.0078125) {
+            // Keep the ~1.4s speed response independent of integration frequency.
+            pace += (targetPace - pace) * 0.002267919
+            phase = (phase + 0.040 * pace * 0.0078125) % (2 * PI)
+            tailPhase = (tailPhase + 1.30 * pace * 0.0078125) % (2 * PI)
+            remainder -= 0.0078125
         }
         project()
     }

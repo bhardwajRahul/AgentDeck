@@ -238,7 +238,7 @@ fun EinkAnimatedRefreshZone(
                 )
                 // B&W e-ink: software layer for EPD grayscale path.
                 // Color e-ink keeps a GPU layer so RKCFA can sample the color framebuffer.
-                if (!einkColorEnabled) {
+                if (!einkColorEnabled && EinkRefreshHelper.isPhysicalEink(this)) {
                     setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                 }
                 val composeView = ComposeView(context).apply {

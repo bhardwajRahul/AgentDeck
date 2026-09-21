@@ -8,9 +8,9 @@ import kotlin.math.hypot
 class EinkAnimationTimingTest {
 
     @Test
-    fun `color e-ink animation uses video-like cadence`() {
-        assertEquals(400L, einkAnimationFrameIntervalMs(colorEink = false))
-        assertEquals(100L, einkAnimationFrameIntervalMs(colorEink = true))
+    fun `LCD uses vsync and physical e-ink uses fast partial cadence`() {
+        assertEquals(0L, einkAnimationFrameIntervalMs(physicalEink = false))
+        assertEquals(100L, einkAnimationFrameIntervalMs(physicalEink = true))
     }
 
     @Test
@@ -93,6 +93,16 @@ class EinkAnimationTimingTest {
                 assertTrue(kotlin.math.abs(fish.facing - old.third) <= 0.05f)
                 assertTrue(fish.x in 0.15f..0.85f && fish.y in 0.20f..0.51f)
             }
+        }
+    }
+
+    @Test
+    fun `fish advance on every 60Hz frame without coarse simulation stalls`() {
+        val school = EinkFishSchool()
+        repeat(120) {
+            val before = school.fish.first().x
+            school.update(false, stepScale = 16f / 400f)
+            assertTrue(school.fish.first().x != before)
         }
     }
 
