@@ -45,6 +45,15 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
+## 2026-09-21 — npm 1.4.0 · Stream Deck 1.4.0 · Android 1.4.0 · ESP32 1.4.0 · Ulanzi 1.4.0
+
+- Add optional z.ai Coding Plan usage across the Node daemon, Stream Deck keys and dials, Ulanzi keys, Android dashboards and ESP32 displays, including reset countdowns and MCP tool-call usage where space permits.
+- Keep z.ai readings tied to the configured account; retire removed credentials and expired readings, and preserve consistent quota and subscription rows across session relays.
+- Improve Stream Deck connection recovery by bounding initial handshakes, quarantining failed endpoints, retiring pending sockets before retry and cancelling retries on explicit disconnect.
+- Improve compact three-provider layouts and provider selection while preserving existing action identifiers and profiles.
+- Include Node daemon session ordering, asynchronous device probes and serial handover/flash preflight improvements accumulated since npm 1.3.5.
+- Apple 1.4.0 remains a separate submission. Ulanzi 1.4.0 replaces the pending review version; marketplace approval and public availability are tracked separately from these artifacts.
+
 ## 2026-09-21 — Apple 1.4.0
 
 - Adds optional z.ai GLM Coding Plan usage on Mac and paired iPhone/iPad.
