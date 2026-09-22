@@ -93,7 +93,13 @@ final class AquariumShoal {
         let linear = c - a
         let quadratic = a * 2 - b * 5 + c * 4 - d
         let cubic = -a + b * 3 - c * 3 + d
-        let p = (b * 2 + linear * t + quadratic * (t * t) + cubic * (t * t * t)) * 0.5
+        let tSquared: Float = t * t
+        let tCubed: Float = tSquared * t
+        var p: SIMD2<Float> = b * 2
+        p += linear * t
+        p += quadratic * tSquared
+        p += cubic * tCubed
+        p *= 0.5
         // Match the authored bowl and sand ribbon, including the rear slope.
         let gardenY = -p.y
         let rise = max(0, gardenY - 2)
@@ -101,11 +107,15 @@ final class AquariumShoal {
         let v = (gardenY + 7) / 11
         if v >= 0 && v <= 1 {
             let center = 0.3 + 1.15 * sin(v * 3.5)
-            let width = (4 * (1 - v) + 0.35) * (1 + 0.055 * sin(v * 31))
+            let taper: Float = 4 * (1 - v) + 0.35
+            let ripple: Float = 1 + 0.055 * sin(v * 31)
+            let width: Float = taper * ripple
             let u = (p.x - center) / width + 0.5
             if u > 0 && u < 1 {
                 let edge = min(1, min(u, 1 - u) * width / 0.08)
-                height += 0.025 * edge * edge * (3 - 2 * edge) + 0.05 * sin(.pi * u)
+                let edgeHeight: Float = 0.025 * edge * edge * (3 - 2 * edge)
+                let ribbonHeight: Float = 0.05 * sin(Float.pi * u)
+                height += edgeHeight + ribbonHeight
             }
         }
         return [p.x, height + 0.008, p.y]
