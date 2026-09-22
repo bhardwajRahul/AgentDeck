@@ -161,6 +161,7 @@ final class AquariumResidents {
         let dt = min(max(delta, 0), 1.0 / 20)
         time += dt
         let blend = Float(1 - exp(-dt * 3))
+        var wakes: [AquariumShoal.WorkWake] = []
         for item in descriptors {
             guard let entity = residents[item.id], var target = targets[item.id], var motion = motions[item.id] else { continue }
             motion.effort += ((item.activity == .working ? 1 : 0) - motion.effort) * blend
@@ -171,20 +172,31 @@ final class AquariumResidents {
             motion.phase += Float(dt) * (0.65 + motion.effort * 1.7)
             let phase = motion.phase
             motions[item.id] = motion
+            // A short power stroke followed by a longer recovery. The same stroke
+            // drives the pose and water disturbance, so fish react to visible action.
+            let stroke = pow(max(0, sin(phase)), 6) * motion.effort
+            let workSwing = sin(phase) * motion.effort
             let grounded = Self.isGrounded(item.kind)
             let residentSize = entity.scale.x
             // Bottom dwellers pace horizontally with planted feet. No vertical
             // sine wave, spring settling, roll, or whole-body scale at contact.
-            target.x += sin(phase * 0.5) * residentSize * (grounded ? motion.effort * 0.12 : 0.25)
-            if !grounded { target.z += sin(phase * 0.5) * 0.12 }
+            target.x += sin(phase * 0.5) * residentSize * (grounded ? motion.effort * 0.20 : 0.25)
+            if !grounded {
+                target.x += workSwing * residentSize * 0.16
+                target.z += sin(phase * 0.5) * 0.12 + stroke * residentSize * 0.24
+            }
+            if stroke > 0.001 {
+                wakes.append(.init(position: entity.position, strength: stroke, radius: max(1.2, residentSize * 2.8)))
+            }
             entity.position += (target - entity.position) * blend
             if grounded { entity.position.y = target.y }
             if let body = entity.findEntity(named: "body") {
-                let yaw = sin(phase * 0.5) * (grounded ? motion.effort * 0.10 : 0.35)
+                let yaw = sin(phase * 0.5) * (grounded ? motion.effort * 0.24 : 0.35)
                 let orientation = simd_quatf(angle: yaw, axis: [0,1,0])
-                    * simd_quatf(angle: grounded ? 0 : motion.fatigue * 0.16, axis: [1,0,0])
+                    * simd_quatf(angle: grounded ? 0 : motion.fatigue * 0.16 + workSwing * 0.18, axis: [1,0,0])
+                    * simd_quatf(angle: grounded ? 0 : -workSwing * 0.16, axis: [0,0,1])
                 body.orientation = simd_slerp(body.orientation, orientation, blend)
-                let breath = grounded ? Float(0) : sin(phase * 1.3) * 0.009
+                let breath = grounded ? Float(0) : sin(phase * 1.3) * 0.009 + workSwing * 0.075
                 body.scale = [1 + breath, 1 - breath * 0.6, 1 + breath]
             }
             for (index, pose) in (joints[item.id] ?? []).enumerated() {
@@ -201,7 +213,7 @@ final class AquariumResidents {
                     joint.orientation = pose.rest.rotation * simd_quatf(angle: stride * 0.12 * motion.effort, axis: [0,1,0])
                 } else {
                     let lift = motion.attention * 0.40 - motion.fatigue * 0.25
-                    joint.orientation = pose.rest.rotation * simd_quatf(angle: side * (lift + wave * (0.025 + motion.effort * 0.22)), axis: [0,0,1])
+                    joint.orientation = pose.rest.rotation * simd_quatf(angle: side * (lift + wave * 0.025 + motion.effort * (0.20 + sin(phase) * 0.58)), axis: [0,0,1])
                 }
             }
             // Only awaiting attention pulses; other status colors stay steady.
@@ -210,7 +222,7 @@ final class AquariumResidents {
                 label.scale = .init(repeating: pulse)
             }
         }
-        shoal.step(dt, residents: residents.values.map { $0.position })
+        shoal.step(dt, residents: residents.values.map { $0.position }, wakes: wakes)
     }
 
     /// Slots are separated in camera projection, then unprojected to depth tiers.

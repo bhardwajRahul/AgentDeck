@@ -114,6 +114,65 @@ final class TerrariumCloudFoldTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkStrokeStartlesSchoolAndSettlesAfterWorkStops() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz"))
+        let calm = AquariumShoal(), working = AquariumShoal()
+        calm.load(try await Entity(contentsOf: url))
+        working.load(try await Entity(contentsOf: url))
+        // Same resident position in both scenes: only its work stroke differs.
+        let resident = calm.positions[0] + SIMD3<Float>(-0.5, -1.2, 0)
+        for _ in 0..<45 {
+            calm.step(1.0 / 60, residents: [resident])
+            working.step(1.0 / 60, residents: [resident], wakes: [.init(position: resident, strength: 1, radius: 2.4)])
+        }
+        XCTAssertGreaterThan(working.alertness.max() ?? 0, 0.25)
+        XCTAssertGreaterThan(simd_distance(calm.positions[0], working.positions[0]), 0.15)
+        XCTAssertGreaterThan(simd_length(working.velocities[0]), simd_length(calm.velocities[0]) + 0.1)
+        for _ in 0..<600 { working.step(1.0 / 60, residents: [resident]) }
+        XCTAssertLessThan(working.alertness.max() ?? 1, 0.001)
+        for velocity in working.velocities { XCTAssertLessThan(simd_length(velocity), 0.81) }
+        // Repeated strokes, including from below the school, stay inside the tank.
+        for frame in 0..<3600 {
+            let strength = pow(max(0, sin(Float(frame) / 60 * 2.35)), 6)
+            working.step(1.0 / 60, residents: [resident], wakes: [.init(position: resident, strength: strength, radius: 2.4)])
+            for position in working.positions {
+                XCTAssertLessThan(abs(position.x), 5.5)
+                XCTAssertLessThan(abs(position.z), 3.7)
+                XCTAssertGreaterThan(position.y, 0.5)
+                XCTAssertLessThan(position.y, 4.5)
+            }
+        }
+    }
+
+    @MainActor
+    func testWorkingResidentsDriveSchoolAndPauseTogether() async throws {
+        let scene = AquariumResidents()
+        scene.loadTemplates(try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz"))))
+        scene.shoal.load(try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz"))))
+        var dashboard = DashboardState()
+        dashboard.state = .idle
+        dashboard.siblingSessions = [session(id: "working", project: "Work", agentType: "codex-cli")]
+        scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
+        let body = try XCTUnwrap(scene.residents["working"]?.findEntity(named: "body"))
+        var peakAlarm: Float = 0
+        var minScale: Float = 1, maxScale: Float = 1
+        for _ in 0..<600 {
+            scene.step(1.0 / 60)
+            peakAlarm = max(peakAlarm, scene.shoal.alertness.max() ?? 0)
+            minScale = min(minScale, body.scale.x)
+            maxScale = max(maxScale, body.scale.x)
+        }
+        XCTAssertGreaterThan(peakAlarm, 0.15, "Live working state must reach fish, not just a test-only wake")
+        XCTAssertGreaterThan(maxScale - minScale, 0.1, "Working silhouette must visibly compress and release")
+        scene.animate = false
+        let positions = scene.shoal.positions
+        let pose = body.transform
+        scene.step(1)
+        XCTAssertEqual(scene.shoal.positions, positions)
+        XCTAssertEqual(body.transform, pose)
+    }
+
+    @MainActor
     func testNativeStateTransitionArticulatesWithoutJumping() async throws {
         let library = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz")))
         let scene = AquariumResidents()
