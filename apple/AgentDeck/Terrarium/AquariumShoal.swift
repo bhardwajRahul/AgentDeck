@@ -13,6 +13,8 @@ final class AquariumShoal {
     }
     let root = Entity()
     private var fish: [Entity] = []
+    private(set) var snail: Entity?
+    private var snailTime: Double = 0
     private var tails: [Entity?] = []
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var velocities: [SIMD3<Float>] = []
@@ -26,6 +28,24 @@ final class AquariumShoal {
         func find(_ node: Entity) -> [Entity] {
             if node.name.lowercased().replacingOccurrences(of: "_", with: " ").hasPrefix("fish yaw") { return [node] }
             return node.children.flatMap { find($0) }
+        }
+        func findSnail(_ node: Entity) -> Entity? {
+            if node.name.replacingOccurrences(of: "_", with: " ").lowercased() == "fauna snail" { return node }
+            return node.children.compactMap { findSnail($0) }.first
+        }
+        if snail == nil, let source = findSnail(habitat) {
+            let body = source.clone(recursive: true)
+            body.stopAllAnimations(recursive: true)
+            body.transform = Transform(matrix: source.transformMatrix(relativeTo: nil))
+            body.position = .zero
+            body.scale *= 0.60
+            let walker = Entity()
+            walker.name = "wandering-snail"
+            walker.addChild(body)
+            root.addChild(walker)
+            source.isEnabled = false
+            snail = walker
+            updateSnail()
         }
         let sources = find(habitat).sorted { $0.name < $1.name }
         guard let source = sources.first else { return }
@@ -58,9 +78,54 @@ final class AquariumShoal {
         }
     }
 
+    /// A six-minute ground circuit around both planted islands. Depth occlusion
+    /// comes from the scene itself; never fade or teleport the animal for visibility.
+    static func snailPosition(at seconds: Double) -> SIMD3<Float> {
+        let route: [SIMD2<Float>] = [
+            [-4.9, 1.4], [-5.5, -0.3], [-5.6, -2.7], [-3.5, -3.8],
+            [-0.5, -3.7], [2, -4.3], [5.4, -4.5], [5.7, -1.5],
+            [5, 1.4], [2.8, 2.6], [-0.8, 2.6], [-3.7, 2.2]
+        ]
+        let phase = Float((seconds.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) / 360) * Float(route.count)
+        let index = Int(phase) % route.count, t = phase - floor(phase)
+        let a = route[(index + route.count - 1) % route.count]
+        let b = route[index], c = route[(index + 1) % route.count], d = route[(index + 2) % route.count]
+        let linear = c - a
+        let quadratic = a * 2 - b * 5 + c * 4 - d
+        let cubic = -a + b * 3 - c * 3 + d
+        let p = (b * 2 + linear * t + quadratic * (t * t) + cubic * (t * t * t)) * 0.5
+        // Match the authored bowl and sand ribbon, including the rear slope.
+        let gardenY = -p.y
+        let rise = max(0, gardenY - 2)
+        var height = rise * rise * 0.16 - 0.10
+        let v = (gardenY + 7) / 11
+        if v >= 0 && v <= 1 {
+            let center = 0.3 + 1.15 * sin(v * 3.5)
+            let width = (4 * (1 - v) + 0.35) * (1 + 0.055 * sin(v * 31))
+            let u = (p.x - center) / width + 0.5
+            if u > 0 && u < 1 {
+                let edge = min(1, min(u, 1 - u) * width / 0.08)
+                height += 0.025 * edge * edge * (3 - 2 * edge) + 0.05 * sin(.pi * u)
+            }
+        }
+        return [p.x, height + 0.008, p.y]
+    }
+
+    private func updateSnail() {
+        guard let snail else { return }
+        let position = Self.snailPosition(at: snailTime)
+        let direction = Self.snailPosition(at: snailTime + 0.2) - Self.snailPosition(at: snailTime - 0.2)
+        let yaw = atan2(-direction.z, direction.x)
+        let pitch = atan2(direction.y, simd_length(SIMD2(direction.x, direction.z)))
+        snail.position = position
+        snail.orientation = simd_quatf(angle: yaw, axis: [0,1,0]) * simd_quatf(angle: pitch, axis: [0,0,1])
+    }
+
     func step(_ delta: Double, residents: [SIMD3<Float>], wakes: [WorkWake] = []) {
         let dt = Float(min(max(delta, 0), 1.0 / 20))
         time += dt
+        snailTime += Double(dt)
+        updateSnail()
         let oldPositions = positions
         let oldVelocities = velocities
         let oldAlertness = alertness

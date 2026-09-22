@@ -110,6 +110,33 @@ final class TerrariumCloudFoldTests: XCTestCase {
     }
 
     @MainActor
+    func testSmallSnailTraversesFrontAndHiddenRearGroundWithoutLoopJump() async throws {
+        let habitat = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz")))
+        let shoal = AquariumShoal()
+        shoal.load(habitat)
+        let snail = try XCTUnwrap(shoal.snail)
+        XCTAssertEqual(snail.children.first?.scale.x ?? 0, 0.6, accuracy: 0.01)
+        var front = false, rear = false, left = false, right = false
+        for second in 0..<3600 {
+            let t = Double(second) / 10
+            let p = AquariumShoal.snailPosition(at: t)
+            let next = AquariumShoal.snailPosition(at: t + 0.1)
+            XCTAssertLessThan(simd_distance(p, next), 0.025, "Slow continuous ground motion, including the loop seam")
+            XCTAssertGreaterThanOrEqual(p.y, -0.093)
+            XCTAssertLessThan(abs(p.x), 6.2)
+            front = front || p.z > 2; rear = rear || p.z < -3
+            left = left || p.x < -4; right = right || p.x > 4
+        }
+        XCTAssertTrue(front && rear && left && right)
+        XCTAssertLessThan(simd_distance(AquariumShoal.snailPosition(at: 0), AquariumShoal.snailPosition(at: 360)), 0.0001)
+        let before = snail.position
+        for _ in 0..<120 { shoal.step(1.0 / 60, residents: []) }
+        let forward = snail.orientation.act(SIMD3<Float>(1,0,0))
+        XCTAssertGreaterThan(simd_dot(snail.position - before, forward), 0)
+        XCTAssertEqual(shoal.root.children.filter { $0.name == "wandering-snail" }.count, 1)
+    }
+
+    @MainActor
     func testNativeShoalReactsAndStaysBounded() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz"))
         let habitat = try await Entity(contentsOf: url)

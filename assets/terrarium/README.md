@@ -163,15 +163,17 @@ rebased to the peduncle; other fins receive the same thin volume. This prevents
 back-face loss and body-centered tail orbiting. An edge-on fin may still look
 thin naturally; no billboard or always-facing-camera replacement is used.
 
-The native garden includes one rounded spiral-shell snail with a readable face
-and short moving eyestalks. The shrimp experiment was removed following visual
-feedback; do not restore it when rebuilding the garden. The snail follows a slow
-closed path on the retained habitat rock, facing the path tangent instead of
-sliding backwards. Unwrapped heading keeps rotation continuous across the loop.
-The builder checks evaluated movement against the facing direction and checks
-start/end transforms. Existing habitat pause/Reduce Motion behavior applies.
-This decorative inhabitant never represents session identity or status. Materials
-resolve existing design tokens.
+The native garden includes one rounded spiral-shell snail. The shrimp experiment
+was removed following visual feedback; do not restore it when rebuilding. Apple
+extracts a single runtime snail from the asset and hides its authored counterpart.
+It is rendered at 60% of the authored size. `AquariumShoal` replaces the short
+baked rock loop with a six-minute continuous ground circuit, passing in front of
+and behind both planted islands. Position follows the authored bowl/sand height;
+heading and pitch follow the path tangent. Ordinary depth occlusion can hide it
+behind rocks or plants. There is no forced visibility or visibility teleport.
+The native controller inherits the resident scene's pause/Reduce Motion behavior.
+This is a bounded authored route, not arbitrary-mesh surface navigation. The
+Blender rock loop remains an authoring preview, not the native movement source.
 
 The Apple import regression checks actual exported fin volume and hinge position,
 fauna counts and animation availability. Blender mesh inspection verifies closed
