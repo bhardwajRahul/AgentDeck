@@ -133,7 +133,8 @@ fun MonitorScreen(
     displayPrefs: DisplayPreferences,
 ) {
     val dashboardType by displayPrefs.dashboardTypeFlow.collectAsState(initial = dev.agentdeck.data.DashboardType.Default)
-    val nativeAquarium = dashboardType == dev.agentdeck.data.DashboardType.Aquarium3D
+    var aquariumUnavailable by remember(dashboardType) { mutableStateOf(false) }
+    val nativeAquarium = dashboardType == dev.agentdeck.data.DashboardType.Aquarium3D && !aquariumUnavailable
     val dashState by stateHolder.state.collectAsState()
     val timelineEntries by TimelineStore.instance.entries.collectAsState()
     // Child activity for the creature decoration, wire census first.
@@ -271,7 +272,10 @@ fun MonitorScreen(
     ) {
         // Layer 1: Terrarium background (always renders)
         if (nativeAquarium) {
-            dev.agentdeck.AquariumBackground(Modifier.fillMaxSize())
+            dev.agentdeck.AquariumBackground(
+                Modifier.fillMaxWidth().fillMaxHeight(
+                    if (showTimeline && !hudHidden) 1f - TerrariumLayout.SAND_HEIGHT_FRACTION else 1f),
+                terrariumState, dashState.focusedSessionId, onUnavailable = { aquariumUnavailable = true })
         } else ColorTerrariumBackground(
             state = terrariumState,
             mainCrayfish = mainCrayfish,
@@ -314,7 +318,7 @@ fun MonitorScreen(
             )
         } else {
             // Layer 2: Timeline over sand area
-            if (showTimeline) {
+            if (showTimeline && (!nativeAquarium || !hudHidden)) {
                 TimelineStrip(
                     entries = timelineEntries,
                     filter = timelineFilter,

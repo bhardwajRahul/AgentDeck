@@ -5,6 +5,7 @@
 /// Cross-platform terrarium rules. See shared/src/terrarium-rules.ts for
 /// what each value means and the clearance invariant they encode.
 enum TerrariumRules {
+    static let nativeResidentLimit: Int = 8
     static let crayfishHomeX: Float = 0.78
     static let crayfishSittingY: Float = 0.64
     static let crayfishWidthFraction: Float = 0.11

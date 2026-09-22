@@ -39,6 +39,7 @@ export function emitSwift(rules) {
 /// Cross-platform terrarium rules. See shared/src/terrarium-rules.ts for
 /// what each value means and the clearance invariant they encode.
 enum TerrariumRules {
+    static let nativeResidentLimit: Int = ${rules.nativeResidentLimit}
     static let crayfishHomeX: Float = ${f(c.homeX)}
     static let crayfishSittingY: Float = ${f(c.sittingY)}
     static let crayfishWidthFraction: Float = ${f(c.widthFrac)}
@@ -62,6 +63,7 @@ package dev.agentdeck.terrarium
  * what each value means and the clearance invariant they encode.
  */
 object TerrariumRules {
+    const val NATIVE_RESIDENT_LIMIT = ${rules.nativeResidentLimit}
     const val CRAYFISH_HOME_X = ${f(c.homeX)}f
     const val CRAYFISH_SITTING_Y = ${f(c.sittingY)}f
     const val CRAYFISH_WIDTH_FRACTION = ${f(c.widthFrac)}f

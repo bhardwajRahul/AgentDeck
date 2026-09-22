@@ -8,6 +8,7 @@ package dev.agentdeck.terrarium
  * what each value means and the clearance invariant they encode.
  */
 object TerrariumRules {
+    const val NATIVE_RESIDENT_LIMIT = 8
     const val CRAYFISH_HOME_X = 0.78f
     const val CRAYFISH_SITTING_Y = 0.64f
     const val CRAYFISH_WIDTH_FRACTION = 0.11f

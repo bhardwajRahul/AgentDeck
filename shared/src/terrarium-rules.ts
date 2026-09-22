@@ -47,6 +47,8 @@
  *   invariant: clearMaxX + resterMaxWidthFrac/2 < crayfish claw left edge.
  */
 export const TERRARIUM_RULES = {
+  /** Native 3D foreground budget; the full roster remains independently accessible. */
+  nativeResidentLimit: 8,
   crayfish: {
     /** Unified dashboard home center X (Swift/Android agreed on 0.78). */
     homeX: 0.78,

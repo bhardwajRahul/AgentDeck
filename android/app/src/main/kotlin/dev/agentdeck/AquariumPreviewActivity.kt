@@ -46,11 +46,11 @@ class AquariumPreviewActivity : Activity() {
 }
 
 @Composable
-fun AquariumBackground(modifier: Modifier = Modifier) {
+fun AquariumBackground(modifier: Modifier = Modifier, state: dev.agentdeck.terrarium.TerrariumState? = null, focusedId: String? = null, onUnavailable: () -> Unit = {}) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val surface = remember(context) { AquariumSurface(context) }
-    AndroidView(factory = { surface }, modifier = modifier)
+    AndroidView(factory = { surface }, modifier = modifier, update = { if (!it.available || (state != null && !it.sync(state, focusedId))) onUnavailable() })
     DisposableEffect(owner, surface) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -66,10 +66,22 @@ fun AquariumBackground(modifier: Modifier = Modifier) {
 }
 
 class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
+    var available = false
+        private set
     private var viewer: ModelViewer? = null
+    private var waterEntities = intArrayOf()
     private var fillLight: IndirectLight? = null
+    private var backdrop: com.google.android.filament.Skybox? = null
+    private var residents: dev.agentdeck.terrarium.AquariumResidents? = null
+    private val labels = object : android.view.View(context) {
+        override fun onDraw(canvas: android.graphics.Canvas) { residents?.drawLabels(canvas) }
+    }
     private var active = false
     private var lastFrame = 0L
+    private var lastBudgetCheck = 0L
+    private var constrained = false
+    private var renderSurface: SurfaceView? = null
+    private var bufferSize = 0 to 0
     private var reduceMotion = false
     private val power by lazy { context.getSystemService(PowerManager::class.java) }
     private var elapsedSeconds = 0f
@@ -84,17 +96,39 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
                     // ModelViewer's detach listener destroys the engine after this
                     // callback. Release our light before that listener runs.
                     pause()
+                    releaseResidents()
                     releaseLighting()
                     viewer = null
                     super.onDetachedFromWindow()
                 }
             }
+            renderSurface = surface
             root.addView(surface, FrameLayout.LayoutParams(-1, -1))
             val model = ModelViewer(surface, manipulator = null)
             viewer = model
             model.autoPlayAnimations = false
+            // Keep the habitat affordable on older tablet GPUs. UI and labels
+            // remain at display resolution; only the native surface is scaled.
+            model.view.multiSampleAntiAliasingOptions = com.google.android.filament.View.MultiSampleAntiAliasingOptions().apply { enabled = false }
+            model.view.ambientOcclusionOptions = com.google.android.filament.View.AmbientOcclusionOptions().apply { enabled = false }
+            model.view.bloomOptions = com.google.android.filament.View.BloomOptions().apply { enabled = false }
+            model.view.antiAliasing = com.google.android.filament.View.AntiAliasing.FXAA
+            val lightManager = model.engine.lightManager
+            val lightInstance = lightManager.getInstance(model.light)
+            val intensity = lightManager.getIntensity(lightInstance)
+            val color = lightManager.getColor(lightInstance, FloatArray(3))
+            lightManager.destroy(model.light)
+            com.google.android.filament.LightManager.Builder(com.google.android.filament.LightManager.Type.SUN)
+                .color(color[0], color[1], color[2]).intensity(intensity)
+                .castShadows(true)
+                .shadowOptions(com.google.android.filament.LightManager.ShadowOptions().apply { mapSize = 512 })
+                .build(model.engine, model.light)
             val bytes = context.assets.open("living-aquarium.glb").use { it.readBytes() }
             model.loadModelGlb(ByteBuffer.allocateDirect(bytes.size).apply { put(bytes); flip() })
+            val water = dev.agentdeck.ui.theme.DesignTokens.Ink.s900
+            backdrop = com.google.android.filament.Skybox.Builder()
+                .color(water.red, water.green, water.blue, 1f).build(model.engine)
+            model.scene.skybox = backdrop
             model.cameraFocalLength = 42f
             model.camera.lookAt(0.0, 4.8, 14.0, 0.0, 1.65, -0.7, 0.0, 1.0, 0.0)
             model.engine.lightManager.setDirection(
@@ -102,6 +136,13 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
             fillLight = IndirectLight.Builder().irradiance(1, floatArrayOf(0.8f, 0.9f, 1f))
                 .intensity(25_000f).build(model.engine)
             model.scene.indirectLight = fillLight
+            residents = dev.agentdeck.terrarium.AquariumResidents(context, model)
+            root.addView(labels, FrameLayout.LayoutParams(-1, -1))
+            waterEntities = model.asset?.entities?.filter { entity ->
+                val name = model.asset?.getName(entity).orEmpty().lowercase()
+                name.contains("garden") && name.contains("water")
+            }?.toIntArray() ?: intArrayOf()
+            available = true
             android.util.Log.i("Aquarium3D", "Native model loaded; animations=${model.animator?.animationCount}")
         } catch (error: Exception) {
             android.util.Log.e("Aquarium3D", "Could not open aquarium", error)
@@ -112,10 +153,23 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
         }
     }
 
+    fun sync(state: dev.agentdeck.terrarium.TerrariumState, focusedId: String?): Boolean {
+        if (!available) return false
+        return try {
+            residents?.sync(state, focusedId)
+            true
+        } catch (error: Exception) {
+            available = false
+            android.util.Log.e("Aquarium3D", "Resident loading failed; using the standard dashboard", error)
+            false
+        }
+    }
+
     fun resume() {
         if (active) return
         active = true
         lastFrame = 0L
+        lastBudgetCheck = 0L
         reduceMotion = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         choreographer.postFrameCallback(this)
     }
@@ -128,8 +182,19 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
     override fun doFrame(frameTimeNanos: Long) {
         if (!active) return
         choreographer.postFrameCallback(this)
-        val lowPower = power.isPowerSaveMode || power.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
-        if (lastFrame != 0L && frameTimeNanos - lastFrame < if (lowPower) 33_000_000L else 15_000_000L) return
+        // Power queries cross Binder; sample them outside the per-frame hot path.
+        if (lastBudgetCheck == 0L || frameTimeNanos - lastBudgetCheck >= 2_000_000_000L) {
+            lastBudgetCheck = frameTimeNanos
+            constrained = power.isPowerSaveMode || power.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
+            val maxEdge = if (constrained) 960 else 1440
+            val scale = minOf(1f, maxEdge.toFloat() / maxOf(width, height, 1))
+            val next = (width * scale).toInt().coerceAtLeast(1) to (height * scale).toInt().coerceAtLeast(1)
+            if (next != bufferSize) {
+                bufferSize = next
+                renderSurface?.holder?.setFixedSize(next.first, next.second)
+            }
+        }
+        if (lastFrame != 0L && frameTimeNanos - lastFrame < if (constrained) 32_000_000L else 15_000_000L) return
         val dt = if (lastFrame == 0L) 0f else ((frameTimeNanos - lastFrame) / 1e9f).coerceAtMost(0.1f)
         lastFrame = frameTimeNanos
         if (!reduceMotion) elapsedSeconds += dt
@@ -140,21 +205,35 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
                     animator.updateBoneMatrices()
                 }
             }
+            residents?.step(if (reduceMotion) 0f else dt, width.toFloat() / height.coerceAtLeast(1))
             model.render(frameTimeNanos)
+            // The authored enclosure is finite; a wide tablet must not expose
+            // its black exterior. The native skybox supplies continuous water.
+            model.scene.removeEntities(waterEntities)
+            labels.invalidate()
         }
     }
 
+    private fun releaseResidents() {
+        residents?.dispose()
+        residents = null
+    }
+
     private fun releaseLighting() {
-        val light = fillLight ?: return
+        val light = fillLight
         fillLight = null
         viewer?.let { model ->
             model.scene.indirectLight = null
-            model.engine.destroyIndirectLight(light)
+            if (light != null) model.engine.destroyIndirectLight(light)
+            model.scene.skybox = null
+            backdrop?.let { model.engine.destroySkybox(it) }
+            backdrop = null
         }
     }
 
     fun dispose() {
         pause()
+        releaseResidents()
         releaseLighting()
         viewer = null
         // The child surface owns ModelViewer's engine-detach lifecycle.

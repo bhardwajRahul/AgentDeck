@@ -10,6 +10,19 @@ import RealityKit
 /// `(agentType=codex-cli, projectName)` group.
 final class TerrariumCloudFoldTests: XCTestCase {
 
+    func testCrowdedForegroundKeepsFocusAndWaitingSessionsWithoutProjectMerging() {
+        let items = (0..<48).map {
+            AquariumResident(id: "session-\($0)", kind: "codex", title: "Same project",
+                             activity: $0 == 20 ? .waiting : .idle)
+        }
+        let visible = AquariumResident.foreground(items, focusedID: "session-47")
+        XCTAssertEqual(visible.count, TerrariumRules.nativeResidentLimit)
+        XCTAssertEqual(visible.first?.id, "session-47")
+        XCTAssertEqual(visible[1].id, "session-20")
+        XCTAssertEqual(visible, AquariumResident.foreground(items.reversed(), focusedID: "session-47"))
+        XCTAssertEqual(items.count, 48)
+    }
+
     @MainActor
     func testNativeResidentAssetsAndLiveReconciliation() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz"))

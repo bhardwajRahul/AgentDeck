@@ -29,6 +29,7 @@ struct MonitorScreen: View {
     /// Dashboard interaction stays consistent even though macOS has extra
     /// windows and host-side controls.
     @State private var hudHidden = false
+    @State private var attentionHeight: CGFloat = 0
     @State private var previousAgentState: AgentConnectionState = .disconnected
     @StateObject private var toastManager = ToastManager()
 
@@ -155,18 +156,15 @@ struct MonitorScreen: View {
     private var terrariumLayer: some View {
         if preferences.effectiveDashboardType == .aquarium3D {
             if #available(iOS 18.0, macOS 15.0, *) {
-                ZStack {
-                    LivingAquariumScene(terrariumState: terrariumState, onCreatureTapped: handleCreatureTap, onBackgroundTapped: backgroundTapHandler)
-                    // The live HUD uses the dark aquarium palette. Keep text
-                    // readable independently of the model's lighting/materials.
-                    TerrariumColors.deepSea.opacity(0.12).allowsHitTesting(false)
-                    LinearGradient(stops: [
-                        .init(color: TerrariumColors.deepSea.opacity(0.12), location: 0),
-                        .init(color: .clear, location: 0.4),
-                        .init(color: TerrariumColors.deepSea.opacity(0.85), location: 0.72),
-                        .init(color: TerrariumColors.deepSea.opacity(0.95), location: 1),
-                    ], startPoint: .top, endPoint: .bottom)
-                    .allowsHitTesting(false)
+                GeometryReader { geometry in
+                    let bottom = preferences.showTimeline && !hudHidden ? geometry.size.height * MonitorLayout.sandFraction : 0
+                    let top = featuredAwaitingSession == nil ? 0 : attentionHeight + 24
+                    ZStack(alignment: .top) {
+                        TerrariumColors.deepSea
+                        LivingAquariumScene(terrariumState: terrariumState, onCreatureTapped: handleCreatureTap, onBackgroundTapped: backgroundTapHandler)
+                            .frame(height: max(1, geometry.size.height - bottom - top))
+                            .padding(.top, top)
+                    }
                 }
                 .ignoresSafeArea()
             }
@@ -211,8 +209,8 @@ struct MonitorScreen: View {
                 TimelineStripView()
                     .frame(height: geo.size.height * MonitorLayout.sandFraction)
             }
-            .opacity(disconnected ? 0 : 1)
-            .allowsHitTesting(!disconnected)
+            .opacity(disconnected || (preferences.effectiveDashboardType == .aquarium3D && hudHidden) ? 0 : 1)
+            .allowsHitTesting(!disconnected && !(preferences.effectiveDashboardType == .aquarium3D && hudHidden))
         }
     }
 
@@ -246,6 +244,11 @@ struct MonitorScreen: View {
                     onFocus: { stateHolder.sendCommand(.focusSession(sessionId: featured.id)) }
                 )
                 .frame(maxWidth: landscape ? 460 : .infinity)
+                .background(GeometryReader { size in
+                    Color.clear
+                        .onAppear { attentionHeight = size.size.height }
+                        .onChange(of: size.size.height) { _, height in attentionHeight = height }
+                })
                 .padding(.horizontal, landscape ? 0 : 12)
                 .padding(.top, landscape ? 14 : 10)
                 Spacer()

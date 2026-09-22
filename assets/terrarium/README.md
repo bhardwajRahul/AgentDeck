@@ -179,3 +179,26 @@ The Apple import regression checks actual exported fin volume and hinge position
 fauna counts and animation availability. Blender mesh inspection verifies closed
 caudal boundaries. Frame pacing and every possible viewing angle still require
 visual evaluation; these structural checks do not establish photorealism.
+
+## Android native residents and performance
+
+`export-android-residents.py` exports the approved `3d-residents.blend` source
+into six individual glTF assets under `android/app/src/main/assets/residents/`.
+It restricts export to the selected resident in the active scene; other Blender
+scenes must not leak a default cube into the template. Asset tests verify this.
+The planted Android habitat is exported from the committed `dark-garden.blend`.
+
+Both native clients use the generated foreground budget of eight residents,
+prioritizing selection and input requests without removing sessions from the
+roster. Android uses a separate Filament surface for the habitat and creatures;
+labels and dashboard panels retain display resolution. The surface's long edge
+is bounded to 1440 pixels normally and 960 under power/thermal constraints.
+A 512-pixel shadow map, disabled MSAA/AO/bloom and FXAA reduce GPU work. Thermal
+and power state are sampled every two seconds rather than on every frame.
+The e-ink renderer remains separate.
+
+On the connected Lenovo tablet, SurfaceFlinger measured native scene cadence
+improving from 8.380 to 29.836 fps with thermal status 3 in both samples;
+main UI cadence improved from 13.211 to 58.522 fps. Normal-temperature 60 fps
+is a target, not a measured guarantee. The user confirmed visibly smoother
+movement after installation.

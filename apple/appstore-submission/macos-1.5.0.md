@@ -1,10 +1,10 @@
 # macOS 1.5.0 release preparation
 
-Status: local build and preview validated; submission held for crowd-layout refinement. Not uploaded, submitted, or live.
+Status: local release preparation and branch audit in progress. Native crowd bounds are implemented; final device and Release archive checks remain. Not uploaded, submitted, or live.
 
 ## Scope
 
-macOS only. The shared Apple source marketing version is 1.5.0; no iOS delivery is requested. Use the manual Apple Release workflow with platform `macos`. The familiar dashboard remains the default. The new layout is explicitly labeled **3D aquarium · Preview** in Settings → Dashboard.
+The requested scope now includes macOS and iOS. The shared Apple source marketing version is 1.5.0. Use the manual Apple Release workflow with platform `all`. The familiar dashboard remains the default. The new layout is explicitly labeled **3D aquarium · Preview** in Settings → Dashboard.
 
 ## What’s New — English
 
@@ -26,11 +26,11 @@ The optional layout is available in Settings → Dashboard → Dashboard type �
 
 The video is a real macOS app window capture using the deterministic local demo feed, without real workspace names or conversations. Encode the store preview at 1920×1080, 30 fps, H.264 High level 4.0, 10–12 Mbps, with a silent AAC track. The updated 28.7-second cut includes 13.2 seconds of aquarium, 12.8 seconds of Collaboration (current task followed by a selected earlier task and its summary), and 2.7 seconds of Dashboard settings. Keep the unedited capture locally for provenance. Verify the final file with the submission validator before upload.
 
-## Crowd review — release follow-up
+## Initial crowd review — historical finding
 
 A synthetic runtime probe supplied 20 threads across 12 independent workspaces. Nine Codex CLI threads in Workspace 02 folded into one `×9` creature; the full session list retained the individual entries. The resulting 12-creature scene shrank its labels and placed its top row behind the attention panel. Existing 12/24/48-slot geometry tests cover creature-to-creature clearance, not HUD occlusion or readable text size.
 
-Before submission, refine the crowded layout and visually check 10, 20 and 40 independent sessions plus parent/child bursts. Preserve independent session identity. Treat explicit parent/child relationships separately from the existing provider/project fold: matching project names alone is not proof of parentage. Keep selection and attention visible, retain stable positions, and avoid silently hiding a waiting child inside an active group. The 3D projection currently shows the available helper count as text; it does not implement a general interactive family-group UI.
+The initial follow-up called for refining the crowded layout and visually checking 10, 20 and 40 independent sessions plus parent/child bursts. Preserve independent session identity. Treat explicit parent/child relationships separately from the existing provider/project fold: matching project names alone is not proof of parentage. Keep selection and attention visible, retain stable positions, and avoid silently hiding a waiting child inside an active group. The 3D projection currently shows the available helper count as text; it does not implement a general interactive family-group UI.
 
 Suggested direction: a readable foreground group for selected/attention sessions, quieter rear placement for other independent sessions, and an expandable parent group with helper count and aggregate status. Density reduction must not eliminate any session from the roster or lose its focus target. Do not claim this proposed behavior is already implemented.
 
@@ -38,10 +38,16 @@ Suggested direction: a readable foreground group for selected/attention sessions
 
 Improved the existing opt-in lens with actionable session choices before selection and confirmed peer shortcuts near the parent. Input requests sort first; peer status comes from the current roster, separately from historical relation phases. The view does not create teams from shared projects or claim to orchestrate agents. Task titles are kept separate from result summaries. Navigation to a peer and back was verified in the native app with synthetic data.
 
-Initial targeted XCTest: 15 passed; the existing offscreen `testRenderCollaborationHistoryAtRailWidth` failed with the previously documented macOS `InvalidTransition` error. Real-window rendering was checked instead; the failing test is not reported as passing. Full TypeScript checks passed (4,671 tests, 2 skipped). Store submission remains pending the crowded-aquarium refinement and Release archive checks.
+Initial targeted XCTest: 15 passed; the existing offscreen `testRenderCollaborationHistoryAtRailWidth` failed with the previously documented macOS `InvalidTransition` error. Real-window rendering was checked instead; the failing test is not reported as passing. Full TypeScript checks passed (4,671 tests, 2 skipped). At that stage, store submission remained pending crowded-aquarium refinement and Release archive checks.
 
 ## Collaboration strengthening and default-layout decision
 
 Added a picker for the latest eight tasks, retaining an explicit historical selection across polling. A missing or wrong-session record never substitutes another task. Task summaries are shown independently of titles. The four large live census cards now live in a collapsed detail section; repeated explanatory text is consolidated. The final targeted run passes 17 tests with the known offscreen renderer test explicitly excluded (its earlier failure remains documented).
 
 Default-layout recommendation: offer 3D as the first experience for verified new macOS installs only after crowd/HUD, Reduce Motion, fallback and performance acceptance. Existing saved choices must win. Existing users without the new dashboard key must retain the classic view. Onboarding completion alone cannot identify every existing user: it may be skipped, incomplete, or from a version predating that flag. When installation history is ambiguous, preserve the classic view and let the user opt in. Rename the legacy option from “Default” to “Classic” only when the new default is actually introduced. No preference migration or default change is implemented in this preparation; the current default remains standard.
+
+## Mobile release expansion
+
+The user authorized iOS and Android tablet store delivery. iOS shares the native RealityKit assets and controller with macOS; Android now imports the same original character source as individual glTF templates. Existing dashboard preferences are retained, and e-ink does not switch to the native 3D renderer. No ESP32, deck plugin, or matrix firmware deployment is required for these app UI changes.
+
+The native foreground is bounded by the generated shared budget of eight residents, with selected/awaiting/working priority and the full roster retained. The scene reserves space for the visible timeline and attention panel on Apple; aquarium viewing also hides the timeline. This is foreground selection, not a new parent/child grouping or inferred collaboration feature. Device and archive verification remain required before submission.

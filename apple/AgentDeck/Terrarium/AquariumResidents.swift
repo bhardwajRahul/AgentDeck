@@ -10,6 +10,19 @@ struct AquariumResident: Equatable {
     let activity: Activity
     var helpers: Int = 0
 
+    static func foreground(_ items: [Self], focusedID: String?) -> [Self] {
+        func priority(_ item: Self) -> Int {
+            if item.id == focusedID || (item.id == "crayfish" && focusedID == "openclaw-gateway") { return 0 }
+            if item.activity == .waiting { return 1 }
+            if item.activity == .working { return 2 }
+            return 3
+        }
+        return Array(items.sorted {
+            let a = priority($0), b = priority($1)
+            return a == b ? $0.id < $1.id : a < b
+        }.prefix(TerrariumRules.nativeResidentLimit))
+    }
+
     static func project(_ state: TerrariumState) -> [Self] {
         var items: [Self] = state.creatures.map {
             Self(id: $0.id, kind: "claudecode", title: $0.projectName ?? "Claude", activity: $0.state == .asking ? .waiting : $0.state == .working ? .working : .idle, helpers: $0.subagentActivity.activeCount)
@@ -77,7 +90,7 @@ final class AquariumResidents {
     var templateCount: Int { templates.count }
 
     func sync(_ state: TerrariumState, aspect: Float) {
-        let next = AquariumResident.project(state)
+        let next = AquariumResident.foreground(AquariumResident.project(state), focusedID: state.focusedSessionId)
         let ids = Set(next.map(\.id))
         for id in Array(residents.keys) where !ids.contains(id) {
             residents.removeValue(forKey: id)?.removeFromParent()
@@ -314,6 +327,10 @@ final class AquariumResidents {
     private func makeLabel(_ title: String, activity: AquariumResident.Activity, helpers: Int) -> Entity {
         let group = Entity()
         group.name = "label"
+        let backing = ModelEntity(mesh: .generateBox(size: [2.05, 0.48, 0.008], cornerRadius: 0.06),
+            materials: [UnlitMaterial(color: nativeColor(TerrariumColors.deepSea), applyPostProcessToneMap: false)])
+        backing.position = [0, 0.80, 0.38]
+        group.addChild(backing)
         let color: Color = switch activity {
         case .waiting: DesignTokens.Status.awaiting
         case .working: DesignTokens.Status.processing
@@ -322,7 +339,7 @@ final class AquariumResidents {
         }
         for (index, text) in [title, activity.rawValue + (helpers > 0 ? " · \(helpers) agents" : "")].enumerated() {
             let mesh = MeshResource.generateText(text, extrusionDepth: 0.002, font: .systemFont(ofSize: index == 0 ? 0.16 : 0.105))
-            let label = ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: nativeColor(index == 0 ? TerrariumColors.hudText : color))])
+            let label = ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: nativeColor(index == 0 ? TerrariumColors.hudText : color), applyPostProcessToneMap: false)])
             let bounds = label.visualBounds(relativeTo: label)
             let fit = min(1, 1.9 / max(0.01, bounds.extents.x))
             label.scale = .init(repeating: fit)

@@ -27,6 +27,7 @@ struct LivingAquariumScene: View {
     var onCreatureTapped: ((String) -> Void)?
     var onBackgroundTapped: (() -> Void)?
     @State private var residents = AquariumResidents()
+    @State private var sceneCamera: PerspectiveCamera?
     @State private var cancelUpdate: (() -> Void)?
     @State private var visible = false
 
@@ -40,9 +41,10 @@ struct LivingAquariumScene: View {
             RealityView { content in
                 content.camera = .virtual
                 let camera = PerspectiveCamera()
-                camera.camera.fieldOfViewInDegrees = 38
+                camera.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > 2 ? 24 : 38
                 camera.look(at: [0, 1.65, -0.7], from: [0, 4.8, 14], relativeTo: nil)
                 content.add(camera)
+                sceneCamera = camera
                 let background = Entity()
                 background.name = "aquarium-background"
                 background.position.z = -5
@@ -89,6 +91,7 @@ struct LivingAquariumScene: View {
                     failure = "The 3D aquarium could not be opened. Your dashboard is still available."
                 }
             } update: { _ in
+                sceneCamera?.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > 2 ? 24 : 38
                 residents.sync(terrariumState, aspect: Float(geometry.size.width / max(1, geometry.size.height)))
             }
             .gesture(SpatialTapGesture().targetedToAnyEntity().onEnded { value in
@@ -101,6 +104,18 @@ struct LivingAquariumScene: View {
                                   onCreatureTapped: onCreatureTapped, onBackgroundTapped: onBackgroundTapped)
                     Text(failure).padding().background(.regularMaterial)
                 }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            let count = AquariumResident.project(terrariumState).count
+            if count > TerrariumRules.nativeResidentLimit {
+                Text("\(count) residents · Select a session in the list to bring it into view")
+                    .font(.caption)
+                    .foregroundStyle(TerrariumColors.hudText)
+                    .padding(8)
+                    .background(TerrariumColors.deepSea.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 8)
+                    .allowsHitTesting(false)
             }
         }
         // The async loader captures the initial environment. Reconcile playback
@@ -128,7 +143,7 @@ struct LivingAquariumScene: View {
             #else
             let color = UIColor(TerrariumColors.deepSea)
             #endif
-            model.materials = [UnlitMaterial(color: color)]
+            model.materials = [UnlitMaterial(color: color, applyPostProcessToneMap: false)]
             entity.components.set(model)
         }
         for child in entity.children { applyWaterMaterial(to: child) }
