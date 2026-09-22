@@ -193,19 +193,12 @@ final class AquariumResidents {
                 let side: Float = name.hasSuffix("_0") ? -1 : 1
                 let wave = sin(phase * 2 + Float(index) * 1.8)
                 joint.transform = pose.rest
-                if name.hasPrefix("joint_eye") {
-                    joint.scale.y *= 1 - pow(max(0, cos(phase * 0.62)), 80) * 0.90
-                } else if name.hasPrefix("joint_foot") {
-                    // Alternate tripod steps; swing feet only rise above rest.
+                if name.hasPrefix("joint_foot") {
+                    // Alternate original-foot steps; swing feet only rise above rest.
                     let number = Int(name.split(separator: "_").last ?? "0") ?? 0
                     let stride = sin(phase * 2 + Float(number % 2) * .pi)
                     joint.position.y += max(0, stride) * 0.045 * motion.effort
                     joint.orientation = pose.rest.rotation * simd_quatf(angle: stride * 0.12 * motion.effort, axis: [0,1,0])
-                } else if name.hasPrefix("joint_fin") {
-                    // Slow station keeping, stronger paired strokes while working.
-                    joint.orientation = pose.rest.rotation * simd_quatf(angle: side * sin(phase * 2) * (0.16 + motion.effort * 0.20), axis: [0,0,1])
-                } else if name.hasPrefix("joint_tentacle") {
-                    joint.orientation = pose.rest.rotation * simd_quatf(angle: wave * (0.08 + motion.effort * 0.10), axis: [1,0,0])
                 } else {
                     let lift = motion.attention * 0.40 - motion.fatigue * 0.25
                     joint.orientation = pose.rest.rotation * simd_quatf(angle: side * (lift + wave * (0.025 + motion.effort * 0.22)), axis: [0,0,1])

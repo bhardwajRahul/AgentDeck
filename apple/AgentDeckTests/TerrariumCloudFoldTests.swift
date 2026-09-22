@@ -165,7 +165,7 @@ final class TerrariumCloudFoldTests: XCTestCase {
         for _ in 0..<360 {
             scene.step(1.0 / 60)
             XCTAssertEqual(resident.position.y, initialY, accuracy: 0.0001)
-            // At least one tripod is planted; swing feet never penetrate the rock.
+            // Original pixel feet alternate contact; no new legs replace them.
             XCTAssertEqual(body.visualBounds(relativeTo: scene.root).min.y, surface, accuracy: 0.025)
             XCTAssertEqual(support.position, supportPosition)
         }
@@ -174,7 +174,7 @@ final class TerrariumCloudFoldTests: XCTestCase {
     }
 
     @MainActor
-    func testSwimmerUsesFinsWithoutVerticalHoverLoop() async throws {
+    func testCanonicalCloudMovesWithoutInventedFinsOrVerticalHoverLoop() async throws {
         let library = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz")))
         let scene = AquariumResidents()
         scene.loadTemplates(library)
@@ -183,13 +183,31 @@ final class TerrariumCloudFoldTests: XCTestCase {
         dashboard.siblingSessions = [session(id: "swimmer", project: "Swimmer")]
         scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
         let resident = try XCTUnwrap(scene.residents["swimmer"])
-        let fin = try XCTUnwrap(resident.findEntity(named: "joint_fin_0"))
+        let fin = try XCTUnwrap(resident.findEntity(named: "body"))
+        XCTAssertNil(resident.findEntity(named: "joint_fin_0"))
+        XCTAssertNil(resident.findEntity(named: "joint_tentacle_0"))
         let initialY = resident.position.y
         let initialFin = fin.orientation
         for _ in 0..<90 { scene.step(1.0 / 60) }
         XCTAssertEqual(resident.position.y, initialY, accuracy: 0.0001)
         XCTAssertGreaterThan(abs((initialFin.inverse * fin.orientation).angle), 0.03)
         XCTAssertNil(scene.root.findEntity(named: "substrate|swimmer"))
+    }
+
+    @MainActor
+    func testCanonicalCharactersHaveNoReplacementAnatomy() async throws {
+        let library = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz")))
+        func names(_ node: Entity) -> [String] { [node.name] + node.children.flatMap { names($0) } }
+        let allNames = names(library)
+        for forbidden in ["canonical_badge", "eye_socket", "tentacle", "cloud_lobe", "dorsal", "back_segment", "underside", "joint_fin"] {
+            XCTAssertFalse(allNames.contains { $0.contains(forbidden) }, "Do not replace original character anatomy: " + forbidden)
+        }
+        let claude = try XCTUnwrap(library.findEntity(named: "resident_claudecode"))
+        let bounds = claude.visualBounds(relativeTo: nil).extents
+        XCTAssertGreaterThan(bounds.x / bounds.y, 1.5, "Retain the original wide pixel silhouette")
+        XCTAssertEqual(names(claude).filter { $0.hasPrefix("joint_foot_") }.count, 4)
+        XCTAssertNotNil(library.findEntity(named: "joint_claw_0"))
+        XCTAssertNotNil(library.findEntity(named: "joint_claw_1"))
     }
 
     func testNativeProjectionDoesNotInventAbsentGateway() {

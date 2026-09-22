@@ -101,38 +101,38 @@ Sustained GPU/power profiling remains future work. Android and physical e-ink as
 
 ## Native 3D residents (Apple)
 
-`build-3d-residents.py` now authors complete aquatic characters with smooth
-ellipsoidal mantles/carapaces, tapered legs/tentacles, paired fins and grouped
-blinking eyes. The old extruded silhouette, convex rear casing and remeshed
-back relief have been removed. Canonical SVGs from `design/brand` remain intact
-as small chest badges; color comes from `design/tokens.css`. It writes editable
+**Character identity is an invariant.** Preserve each original character's full
+silhouette, face, proportions and brand color. Do not replace it with another
+animal or reduce the original to a badge. The aquatic-body experiment was
+rejected by the user and is superseded by this restoration.
+
+`build-3d-residents.py` imports the original six SVGs from `design/brand` as the
+actual full-size character geometry. It adds restrained extrusion and edge
+softening; rear closures follow the original outer contour without convex
+casings, bumps or a second body. Facial details stay on the front. No invented
+eyes, fins, tentacles, shells or chest badges are added. It writes editable
 `3d-residents.blend` and bundled `3d-residents.usdz`:
 
 ```sh
 blender --background --python assets/terrarium/build-3d-residents.py
 ```
 
-These are stylized aquatic characters, not anatomical reconstructions. Front,
-side and back are all volumetric; the badge is not the body silhouette. The
-native template loader preserves USD ancestor axis conversion when cloning.
-SVG point radii are reset after unit normalization before extrusion.
+Claude's original pixel arms and four feet are split at their existing body
+junctions, retaining the rest silhouette. OpenClaw's original SVG claw paths
+receive pivots. Other characters retain their source shapes with restrained
+whole-character motion. The native template loader preserves USD ancestor
+axis conversion; SVG point radii are reset after normalization before extrusion.
 
 `AquariumResidents.swift` projects canonical TerrariumState residents, preserving
-Codex folding and OpenClaw presence. Claude/OpenClaw rest on fixed, flat-topped
-substrate rocks. Imported foot bounds determine their contact height; idle feet
-remain planted and working feet use alternating tripod steps. Bottom dwellers
-have no vertical bob, roll or whole-body breathing scale. Swimming residents
-occupy the water above the substrate with paired fin strokes and trailing
-tentacle motion, without a vertical sine-wave hover loop. Per-session phase
-and blended effort/attention/fatigue remain continuous across state updates.
-Dense bottom rows have bounded height/depth rather than unbounded reef growth.
+Codex folding and OpenClaw presence. Original bottom characters retain fixed
+substrate contact; there is no vertical bob, roll or whole-body breathing scale
+at contact. Water characters retain their original cloud/ghost/mark forms,
+without fins or tentacles. Per-session phase and state blending remain continuous.
+Dense bottom rows have bounded height/depth. Native picking, label width limits,
+accessible SwiftUI roster, Reduce Motion, scene pause and 2D fallback remain.
 
-Native collision targets retain existing session-focus commands; empty-water
-picking toggles the HUD. Labels fit their slots, while the accessible SwiftUI
-roster remains available. Reduce Motion and scene visibility pause animation;
-load failure retains the live 2D fallback. macOS is installed and visually
-reviewed. iOS compiles but was not physically reviewed in this iteration;
-Android/e-ink retain their previous renderers.
+macOS is installed and visually reviewed. iOS compiles but was not physically
+reviewed in this iteration; Android/e-ink retain their previous renderers.
 
 `AquariumShoal.swift` extracts the authored fish geometry and replaces the seven
 baked fish routes with fourteen runtime swimmers. Bounded continuous steering,
@@ -150,4 +150,6 @@ still require visual/device profiling;
 the layout test alone does not establish performance at that density.
 
 Contact regression tests verify idle/working feet against the actual generated
-substrate surface, fixed support positions, removal and non-bobbing fin motion.
+substrate surface, fixed support positions, removal and non-bobbing original
+cloud motion. Character-identity checks reject replacement anatomy and preserve
+Claude’s wide pixel proportions and original four feet.

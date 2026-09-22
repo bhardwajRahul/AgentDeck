@@ -10,6 +10,17 @@ The native aquarium is embedded below the existing live information/control over
 
 Verification: workspace build/typecheck and all 4671 Vitest tests passed (2 skipped); Android 406 tests passed, including preference-ID/fallback/capability regression coverage. Lenovo verified Default → 3D → Default → 3D switching without a new crash after the detach fix, and cold-start selection restoration. The updated iPad build was installed and launched. Paper-mode inspection also caught LCD system-bar overlap and a missing selector in the dedicated reader settings; added safe-area padding and a selector/recovery path to that settings surface; Paper → 3D recovery was then verified on Lenovo. iOS/macOS native builds passed. Protocol generation, token mirrors and documentation gates are checked alongside the final native builds. No wire-format, daemon lifecycle or ESP32 firmware change is involved.
 
+## 2026-09-22 — Restore original character identity in 3D
+
+- User explicitly rejected the new aquatic animals: 3D must preserve the original characters. Removed substitute bodies, googly eyes, fins, tentacles and chest badges.
+- Full-size canonical SVG silhouettes/faces/colors again define every character. Restrained thickness and a rear closure within the original outline replace the unrelated back anatomy. Claude's original arms/four feet and OpenClaw's original claw paths receive pivots; no new limbs are invented.
+- Retained non-bobbing contact/state motion, fixed substrate, native picking and fish reactions. Removed runtime branches specific to the rejected anatomy.
+- Blender front/back review and macOS installation verify restoration. Native identity regression rejects substitute anatomy and checks original Claude proportions/four feet, alongside contact/state/motion coverage. macOS/iOS builds and workspace checks run; iOS not physically deployed and no store release.
+- Validation: 31 focused XCTest cases pass; macOS/iOS builds pass. Full Vitest passes 4,671 tests (2 skipped) with one worker. Parallel runs twice hit the existing live-loopback test’s unsafe assumption that `port + 1` is unused; the isolated file also passes. No unrelated test code was changed.
+- Durable design constraint recorded in the asset README: preserve the original full character, never substitute a different animal wearing its logo.
+
+See [native asset notes](assets/terrarium/README.md#native-3d-residents-apple).
+
 ## 2026-09-22 — Crema native refresh and static reader habitat
 
 - Crema S optical feedback: prior animation stuttered/ghosted; after the first patch the user reported acceptable ghosting with some flicker and accepted leaving mild flicker. Panel behavior cannot be established from ADB screenshots.
