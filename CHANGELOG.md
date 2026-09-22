@@ -50,6 +50,15 @@ bumped, superseded by 1.0.17, and never published, so it exists only in git.
 - ESP32: compact horizontal usage gauges on 86 Box, IPS 3.5 and round AMOLED; visible GLM usage on IPS 10 and NM-EPD-420; proportional card fills on TTGO; five-window layouts without clipping or array overflow on T-Display Pro.
 - iDotMatrix: display the fresh GLM credit quota in both Node and native macOS renderers.
 
+## 2026-09-23 — Apple 1.5.0
+
+- macOS: choose the familiar dashboard or an optional 3D aquarium from Dashboard settings; preserve the selected layout across launches.
+- Show live agent sessions as their original characters in a planted 3D habitat, with clearer working and attention states and readable information panels.
+- Add reactive schooling fish with solid hinged fins and a smaller ground-roaming snail that passes behind rocks and plants.
+- Preserve session selection, accessibility through the session roster, Reduce Motion and inactive-scene pausing, with a standard-dashboard fallback when 3D content cannot load.
+- Improve fresh GLM credit-quota display on connected iDotMatrix devices.
+- This delivery targets macOS. No iOS submission is included in this release preparation.
+
 ## 2026-09-21 — Android 1.4.1
 
 - E-ink usage rows explicitly identify GLM and include it in the provider summary.
