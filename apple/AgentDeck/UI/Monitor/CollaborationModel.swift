@@ -12,7 +12,10 @@ struct CollaborationTask: Decodable, Sendable, Identifiable {
     let summary: String?
     let endedAt: Double?
 
-    var displayTitle: String { summary ?? title ?? "No task title observed yet" }
+    var displayTitle: String {
+        [title, summary].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? "No task title observed yet"
+    }
 }
 
 struct CollaborationDetail: Decodable, Sendable {
@@ -74,6 +77,31 @@ struct CollaborationRelation: Identifiable, Equatable, Sendable {
 }
 
 enum CollaborationProjection {
+    /// Navigation uses confirmed peer identity, never project-name similarity.
+    /// Historical relations establish a link; the roster supplies current state.
+    static func relatedSessions(_ relations: [CollaborationRelation], roster: [SessionInfo], excluding sessionId: String) -> [SessionInfo] {
+        let peers = Set(relations.filter { !$0.isLaunchObservation }.compactMap(\.peerSessionId)
+            .map { ObservedAgentRules.rawSessionId($0) }.filter { !$0.isEmpty })
+        let selected = ObservedAgentRules.rawSessionId(sessionId)
+        return prioritizedSessions(roster.filter {
+            let raw = ObservedAgentRules.rawSessionId($0.id)
+            return raw != selected && peers.contains(raw)
+        })
+    }
+
+    static func prioritizedSessions(_ sessions: [SessionInfo]) -> [SessionInfo] {
+        func priority(_ s: SessionInfo) -> Int {
+            if s.state?.hasPrefix("awaiting") == true { return 0 }
+            if s.state == "processing" { return 1 }
+            if (s.subagents?.active ?? 0) > 0 || (s.coordination?.spawnedActive ?? 0) > 0 || (s.coordination?.backgroundJobs ?? 0) > 0 { return 2 }
+            return 3
+        }
+        return sessions.sorted {
+            let a = priority($0), b = priority($1)
+            return a == b ? $0.id < $1.id : a < b
+        }
+    }
+
     /// Only typed child evidence attributed to THIS task/session can create a
     /// branch. A historical start is not proof a child is still running.
     static func children(sample: CollaborationSample?, sessionId: String, taskId: String) -> [CollaborationChild] {

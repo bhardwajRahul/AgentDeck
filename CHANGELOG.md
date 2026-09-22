@@ -57,6 +57,7 @@ bumped, superseded by 1.0.17, and never published, so it exists only in git.
 - Add reactive schooling fish with solid hinged fins and a smaller ground-roaming snail that passes behind rocks and plants.
 - Preserve session selection, accessibility through the session roster, Reduce Motion and inactive-scene pausing, with a standard-dashboard fallback when 3D content cannot load.
 - Improve fresh GLM credit-quota display on connected iDotMatrix devices.
+- Make Collaboration easier to enter and navigate: surface confirmed related sessions with their current state and input requests first, while keeping task history separate from live activity. Revisit the latest eight tasks, retain a historical selection during refresh, and inspect task summaries with compact live-activity details.
 - This delivery targets macOS. No iOS submission is included in this release preparation.
 
 ## 2026-09-21 — Android 1.4.1
