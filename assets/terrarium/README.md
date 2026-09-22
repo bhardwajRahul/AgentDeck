@@ -101,38 +101,38 @@ Sustained GPU/power profiling remains future work. Android and physical e-ink as
 
 ## Native 3D residents (Apple)
 
-`build-3d-residents.py` imports the six canonical SVGs from `design/brand`, reads
-brand colors from `design/tokens.css` and authors closed tapered rear shells,
-remeshed continuous bodies, and named appendage/eye pivots. Runtime meshes are
-decimated after sculpting; the canonical front marks remain unchanged. It writes editable `3d-residents.blend` and bundled
-`apple/AgentDeck/Resources/Aquarium/3d-residents.usdz`:
+`build-3d-residents.py` now authors complete aquatic characters with smooth
+ellipsoidal mantles/carapaces, tapered legs/tentacles, paired fins and grouped
+blinking eyes. The old extruded silhouette, convex rear casing and remeshed
+back relief have been removed. Canonical SVGs from `design/brand` remain intact
+as small chest badges; color comes from `design/tokens.css`. It writes editable
+`3d-residents.blend` and bundled `3d-residents.usdz`:
 
 ```sh
 blender --background --python assets/terrarium/build-3d-residents.py
 ```
 
-These are stylized solid mascots, not photorealistic anatomical models. Canonical
-marks remain actual geometry; no flat billboard or Canvas draws the residents.
-The native template loader preserves the USD ancestor axis conversion when
-cloning. Import curve point radii must be reset after unit normalization, before
-extrusion, or bevel/extrusion inflates by the SVG scale factor.
+These are stylized aquatic characters, not anatomical reconstructions. Front,
+side and back are all volumetric; the badge is not the body silhouette. The
+native template loader preserves USD ancestor axis conversion when cloning.
+SVG point radii are reset after unit normalization before extrusion.
 
-`AquariumResidents.swift` projects only the canonical TerrariumState roster,
-preserving Codex folding and OpenClaw presence. It reconciles arrivals/departures,
-shows live activity and observed active child counts, lays residents out within
-the HUD's central region using projection-spaced depth tiers and persistent
-roster order. Integrated per-session motion phases blend working, waiting and
-error poses without restarting the cycle; breathing, blinking and appendage
-strokes continue independently of scene updates to the roster. Only waiting attention pulses. Native collision targets route to existing
-session-focus commands; the empty-water target toggles the HUD. Reduce Motion and
-scene visibility pause animation. A load failure retains the live 2D fallback.
+`AquariumResidents.swift` projects canonical TerrariumState residents, preserving
+Codex folding and OpenClaw presence. Claude/OpenClaw rest on fixed, flat-topped
+substrate rocks. Imported foot bounds determine their contact height; idle feet
+remain planted and working feet use alternating tripod steps. Bottom dwellers
+have no vertical bob, roll or whole-body breathing scale. Swimming residents
+occupy the water above the substrate with paired fin strokes and trailing
+tentacle motion, without a vertical sine-wave hover loop. Per-session phase
+and blended effort/attention/fatigue remain continuous across state updates.
+Dense bottom rows have bounded height/depth rather than unbounded reef growth.
 
-Geometry and labels share the camera/depth buffer; information panels remain
-SwiftUI for readability and accessibility. The roster remains the accessible
-alternative to direct 3D picking. macOS installation/visual picking is verified;
-iOS shares the implementation and compiles, but this iteration was not installed
-on iPad. Android/e-ink retain their previous renderers. Fish morph deformation and
-sustained frame-time/thermal profiling remain separate follow-ups.
+Native collision targets retain existing session-focus commands; empty-water
+picking toggles the HUD. Labels fit their slots, while the accessible SwiftUI
+roster remains available. Reduce Motion and scene visibility pause animation;
+load failure retains the live 2D fallback. macOS is installed and visually
+reviewed. iOS compiles but was not physically reviewed in this iteration;
+Android/e-ink retain their previous renderers.
 
 `AquariumShoal.swift` extracts the authored fish geometry and replaces the seven
 baked fish routes with fourteen runtime swimmers. Bounded continuous steering,
@@ -145,5 +145,9 @@ or collision against every plant mesh.
 Regression coverage checks projection clearance for 1–48 residents in portrait
 and landscape, roster-update stability, state-transition continuity, reduced
 motion, asset extraction, and two-minute shoal bounds with resident disturbance.
-48-resident readability and frame time still require visual/device profiling;
+Crowded mixed bottom/water composition, 48-resident readability and frame time
+still require visual/device profiling;
 the layout test alone does not establish performance at that density.
+
+Contact regression tests verify idle/working feet against the actual generated
+substrate surface, fixed support positions, removal and non-bobbing fin motion.

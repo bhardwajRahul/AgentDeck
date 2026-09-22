@@ -63,6 +63,12 @@ final class TerrariumCloudFoldTests: XCTestCase {
     func testNativeCrowdHasProjectionClearanceAndDepth() {
         for count in [1, 4, 8, 12, 24, 48] {
             for aspect: Float in [0.6, 1.0, 1.8] {
+                let bottom = AquariumResidents.bottomLayout(count: count, aspect: aspect)
+                XCTAssertEqual(bottom.positions.count, count)
+                for p in bottom.positions {
+                    XCTAssertLessThanOrEqual(p.y, 2.46, "Dense substrate must not grow out of the scene")
+                    XCTAssertGreaterThanOrEqual(p.z, -3.01)
+                }
                 let layout = AquariumResidents.layout(count: count, aspect: aspect)
                 XCTAssertEqual(layout.positions.count, count)
                 let projected = layout.positions.map { p -> SIMD2<Float> in
@@ -132,6 +138,58 @@ final class TerrariumCloudFoldTests: XCTestCase {
         let stopped = arm.orientation
         scene.step(1)
         XCTAssertEqual(arm.orientation, stopped)
+    }
+
+    @MainActor
+    func testBottomDwellersRemainPlantedInsteadOfBobbing() async throws {
+        let library = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz")))
+        let scene = AquariumResidents()
+        scene.loadTemplates(library)
+        var dashboard = DashboardState()
+        dashboard.state = .idle
+        dashboard.siblingSessions = [session(id: "walker", project: "Walker", state: "idle", agentType: "claude-code")]
+        scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
+        let resident = try XCTUnwrap(scene.residents["walker"])
+        let support = try XCTUnwrap(scene.root.findEntity(named: "substrate|walker"))
+        let body = try XCTUnwrap(resident.findEntity(named: "body"))
+        let initialY = resident.position.y
+        let supportPosition = support.position
+        let surface = support.visualBounds(relativeTo: scene.root).max.y
+        for _ in 0..<180 {
+            scene.step(1.0 / 60)
+            XCTAssertEqual(resident.position.y, initialY, accuracy: 0.0001)
+            XCTAssertEqual(body.visualBounds(relativeTo: scene.root).min.y, surface, accuracy: 0.015)
+        }
+        dashboard.siblingSessions = [session(id: "walker", project: "Walker", state: "processing", agentType: "claude-code")]
+        scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
+        for _ in 0..<360 {
+            scene.step(1.0 / 60)
+            XCTAssertEqual(resident.position.y, initialY, accuracy: 0.0001)
+            // At least one tripod is planted; swing feet never penetrate the rock.
+            XCTAssertEqual(body.visualBounds(relativeTo: scene.root).min.y, surface, accuracy: 0.025)
+            XCTAssertEqual(support.position, supportPosition)
+        }
+        scene.sync(TerrariumState(), aspect: 1.6)
+        XCTAssertNil(scene.root.findEntity(named: "substrate|walker"))
+    }
+
+    @MainActor
+    func testSwimmerUsesFinsWithoutVerticalHoverLoop() async throws {
+        let library = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz")))
+        let scene = AquariumResidents()
+        scene.loadTemplates(library)
+        var dashboard = DashboardState()
+        dashboard.state = .idle
+        dashboard.siblingSessions = [session(id: "swimmer", project: "Swimmer")]
+        scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
+        let resident = try XCTUnwrap(scene.residents["swimmer"])
+        let fin = try XCTUnwrap(resident.findEntity(named: "joint_fin_0"))
+        let initialY = resident.position.y
+        let initialFin = fin.orientation
+        for _ in 0..<90 { scene.step(1.0 / 60) }
+        XCTAssertEqual(resident.position.y, initialY, accuracy: 0.0001)
+        XCTAssertGreaterThan(abs((initialFin.inverse * fin.orientation).angle), 0.03)
+        XCTAssertNil(scene.root.findEntity(named: "substrate|swimmer"))
     }
 
     func testNativeProjectionDoesNotInventAbsentGateway() {

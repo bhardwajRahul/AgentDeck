@@ -49,7 +49,13 @@ final class AquariumResidents {
         var fatigue: Float = 0
     }
     private var motions: [String: Motion] = [:]
-    private var joints: [String: [Entity]] = [:]
+    private struct Joint {
+        let entity: Entity
+        let rest: Transform
+    }
+    private var joints: [String: [Joint]] = [:]
+    private var supports: [String: ModelEntity] = [:]
+    private var footHeights: [String: Float] = [:]
     let shoal = AquariumShoal()
     private var time: Double = 0
     private var size: Float = 0.85
@@ -63,6 +69,7 @@ final class AquariumResidents {
                 // when extracting a template, otherwise its face lies flat.
                 template.transform = Transform(matrix: imported.transformMatrix(relativeTo: nil))
                 templates[kind] = template
+                footHeights[kind] = -template.visualBounds(relativeTo: nil).min.y
             }
         }
     }
@@ -77,15 +84,41 @@ final class AquariumResidents {
             targets.removeValue(forKey: id)
             motions.removeValue(forKey: id)
             joints.removeValue(forKey: id)
+            supports.removeValue(forKey: id)?.removeFromParent()
         }
-        let layout = Self.layout(count: next.count, aspect: aspect)
-        size = layout.size
+
         // Existing residents retain their relative order when sessions arrive or depart.
         let existing = slotOrder.filter(ids.contains)
         slotOrder = existing + next.map(\.id).filter { !existing.contains($0) }
+        let bottomIDs = slotOrder.filter { id in next.contains { $0.id == id && Self.isGrounded($0.kind) } }
+        let waterIDs = slotOrder.filter { !bottomIDs.contains($0) }
+        let waterLayout = Self.layout(count: waterIDs.count, aspect: aspect)
+        let bottomLayout = Self.bottomLayout(count: bottomIDs.count, aspect: aspect)
         for item in next {
-            let index = slotOrder.firstIndex(of: item.id) ?? 0
-            targets[item.id] = layout.positions[index]
+            let grounded = Self.isGrounded(item.kind)
+            if grounded {
+                let index = bottomIDs.firstIndex(of: item.id) ?? 0
+                let surface = bottomLayout.positions[index]
+                size = bottomLayout.size
+                targets[item.id] = surface + [0, (footHeights[item.kind] ?? 0.43) * size, 0]
+                // A broad, flat-topped substrate rock is fixed in habitat space.
+                // It does not follow the resident's pacing or breathing.
+                if supports[item.id] == nil {
+                    let support = Self.makeSubstrate()
+                    support.name = "substrate|" + item.id
+                    root.addChild(support)
+                    supports[item.id] = support
+                }
+                supports[item.id]?.position = [surface.x, 0, surface.z]
+                supports[item.id]?.scale = [max(0.65, size * 1.35), surface.y, max(0.55, size)]
+            } else {
+                let index = waterIDs.firstIndex(of: item.id) ?? 0
+                size = waterLayout.size
+                var position = waterLayout.positions[index]
+                // Water residents occupy the clear region above the substrate.
+                position.y += 0.5
+                targets[item.id] = position
+            }
             if residents[item.id] == nil, let template = templates[item.kind] {
                 let resident = Entity()
                 resident.name = "session|" + item.id
@@ -104,8 +137,8 @@ final class AquariumResidents {
                 root.addChild(resident)
                 residents[item.id] = resident
                 motions[item.id] = Motion(phase: Self.seed(item.id) * 6.28)
-                func collect(_ node: Entity) -> [Entity] {
-                    (node.name.hasPrefix("joint_") ? [node] : []) + node.children.flatMap { collect($0) }
+                func collect(_ node: Entity) -> [Joint] {
+                    (node.name.hasPrefix("joint_") ? [Joint(entity: node, rest: node.transform)] : []) + node.children.flatMap { collect($0) }
                 }
                 joints[item.id] = collect(body)
             }
@@ -138,27 +171,44 @@ final class AquariumResidents {
             motion.phase += Float(dt) * (0.65 + motion.effort * 1.7)
             let phase = motion.phase
             motions[item.id] = motion
-            target.x += sin(phase * 0.37) * size * 0.10
-            target.y += (sin(phase) * 0.08 + motion.attention * 0.10 - motion.fatigue * 0.13) * size
-            target.z += cos(phase * 0.7) * 0.16
+            let grounded = Self.isGrounded(item.kind)
+            let residentSize = entity.scale.x
+            // Bottom dwellers pace horizontally with planted feet. No vertical
+            // sine wave, spring settling, roll, or whole-body scale at contact.
+            target.x += sin(phase * 0.5) * residentSize * (grounded ? motion.effort * 0.12 : 0.25)
+            if !grounded { target.z += sin(phase * 0.5) * 0.12 }
             entity.position += (target - entity.position) * blend
+            if grounded { entity.position.y = target.y }
             if let body = entity.findEntity(named: "body") {
-                let orientation = simd_quatf(angle: sin(phase * 0.43) * 0.32, axis: [0,1,0])
-                    * simd_quatf(angle: motion.fatigue * 0.24 - motion.attention * 0.08, axis: [1,0,0])
-                    * simd_quatf(angle: sin(phase) * (0.035 + motion.effort * 0.025), axis: [0,0,1])
+                let yaw = sin(phase * 0.5) * (grounded ? motion.effort * 0.10 : 0.35)
+                let orientation = simd_quatf(angle: yaw, axis: [0,1,0])
+                    * simd_quatf(angle: grounded ? 0 : motion.fatigue * 0.16, axis: [1,0,0])
                 body.orientation = simd_slerp(body.orientation, orientation, blend)
-                let breath = sin(phase * 1.3) * 0.018
+                let breath = grounded ? Float(0) : sin(phase * 1.3) * 0.009
                 body.scale = [1 + breath, 1 - breath * 0.6, 1 + breath]
             }
-            for (index, joint) in (joints[item.id] ?? []).enumerated() {
-                if joint.name.hasPrefix("joint_eye") {
-                    let blink = pow(max(0, cos(phase * 0.62)), 80)
-                    joint.scale.y = 1 - blink * 0.90
+            for (index, pose) in (joints[item.id] ?? []).enumerated() {
+                let joint = pose.entity
+                let name = joint.name
+                let side: Float = name.hasSuffix("_0") ? -1 : 1
+                let wave = sin(phase * 2 + Float(index) * 1.8)
+                joint.transform = pose.rest
+                if name.hasPrefix("joint_eye") {
+                    joint.scale.y *= 1 - pow(max(0, cos(phase * 0.62)), 80) * 0.90
+                } else if name.hasPrefix("joint_foot") {
+                    // Alternate tripod steps; swing feet only rise above rest.
+                    let number = Int(name.split(separator: "_").last ?? "0") ?? 0
+                    let stride = sin(phase * 2 + Float(number % 2) * .pi)
+                    joint.position.y += max(0, stride) * 0.045 * motion.effort
+                    joint.orientation = pose.rest.rotation * simd_quatf(angle: stride * 0.12 * motion.effort, axis: [0,1,0])
+                } else if name.hasPrefix("joint_fin") {
+                    // Slow station keeping, stronger paired strokes while working.
+                    joint.orientation = pose.rest.rotation * simd_quatf(angle: side * sin(phase * 2) * (0.16 + motion.effort * 0.20), axis: [0,0,1])
+                } else if name.hasPrefix("joint_tentacle") {
+                    joint.orientation = pose.rest.rotation * simd_quatf(angle: wave * (0.08 + motion.effort * 0.10), axis: [1,0,0])
                 } else {
-                    let side: Float = joint.name.contains("_0") ? -1 : 1
-                    let wave = sin(phase * 2 + Float(index) * 1.8)
-                    let lift = motion.attention * 0.48 - motion.fatigue * 0.35
-                    joint.orientation = simd_quatf(angle: side * (lift + wave * (0.08 + motion.effort * 0.28)), axis: [0,0,1])
+                    let lift = motion.attention * 0.40 - motion.fatigue * 0.25
+                    joint.orientation = pose.rest.rotation * simd_quatf(angle: side * (lift + wave * (0.025 + motion.effort * 0.22)), axis: [0,0,1])
                 }
             }
             // Only awaiting attention pulses; other status colors stay steady.
@@ -188,6 +238,58 @@ final class AquariumResidents {
             return [x * perspective, 4.8 + (y - 4.8) * perspective, z]
         }
         return (positions, size)
+    }
+
+    static func isGrounded(_ kind: String) -> Bool {
+        kind == "claudecode" || kind == "openclaw"
+    }
+
+    static func bottomLayout(count: Int, aspect: Float) -> (positions: [SIMD3<Float>], size: Float) {
+        guard count > 0 else { return ([], 0.85) }
+        let width = min(6.2, max(1.6, 5.5 * aspect))
+        let columns = min(count, max(1, Int(ceil(sqrt(Float(count) * width / 4)))))
+        let rows = (count + columns - 1) / columns
+        let rise = min(0.48, 1.5 / Float(max(1, rows - 1)))
+        let depth = min(1.4, 4 / Float(max(1, rows - 1)))
+        let size = min(0.85, width / Float(columns) * 0.40, 1.8 / sqrt(Float(count)))
+        return ((0..<count).map { index in
+            let row = index / columns
+            let rowCount = min(columns, count - row * columns)
+            return SIMD3<Float>((Float(index % columns) - Float(rowCount - 1) / 2) * width / Float(columns),
+                                0.95 + Float(row) * rise, 1.0 - Float(row) * depth)
+        }, size)
+    }
+
+    private static func makeSubstrate() -> ModelEntity {
+        var vertices: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        let sides = 24
+        for (radius, height): (Float, Float) in [(0.82, 1), (1, 0.86), (1.12, 0)] {
+            for i in 0..<sides {
+                let angle = Float(i) / Float(sides) * 2 * .pi
+                let edge = radius * (1 + sin(angle * 3 + 0.4) * 0.045)
+                vertices.append([cos(angle) * edge, height, sin(angle) * edge])
+            }
+        }
+        vertices.append([0, 1, 0])
+        for i in 0..<sides {
+            let next = (i + 1) % sides
+            indices += [72, UInt32(next), UInt32(i)]
+            for row in 0..<2 {
+                let a = UInt32(row * sides + i), b = UInt32(row * sides + next)
+                indices += [a, b, b + 24, a, b + 24, a + 24]
+            }
+        }
+        var descriptor = MeshDescriptor(name: "Substrate resting shelf")
+        descriptor.positions = MeshBuffers.Positions(vertices)
+        descriptor.primitives = .triangles(indices)
+        let mesh = (try? MeshResource.generate(from: [descriptor])) ?? .generateBox(size: [1.6,1,1.6])
+        #if os(macOS)
+        let color = NSColor(DesignTokens.Ink.s700)
+        #else
+        let color = UIColor(DesignTokens.Ink.s700)
+        #endif
+        return ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: color, roughness: 0.9, isMetallic: false)])
     }
 
     private static func seed(_ id: String) -> Float {
