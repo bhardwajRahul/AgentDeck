@@ -102,8 +102,9 @@ Sustained GPU/power profiling remains future work. Android and physical e-ink as
 ## Native 3D residents (Apple)
 
 `build-3d-residents.py` imports the six canonical SVGs from `design/brand`, reads
-brand colors from `design/tokens.css` and authors beveled geometry with rounded
-body parts. It writes editable `3d-residents.blend` and bundled
+brand colors from `design/tokens.css` and authors closed tapered rear shells,
+remeshed continuous bodies, and named appendage/eye pivots. Runtime meshes are
+decimated after sculpting; the canonical front marks remain unchanged. It writes editable `3d-residents.blend` and bundled
 `apple/AgentDeck/Resources/Aquarium/3d-residents.usdz`:
 
 ```sh
@@ -119,8 +120,10 @@ extrusion, or bevel/extrusion inflates by the SVG scale factor.
 `AquariumResidents.swift` projects only the canonical TerrariumState roster,
 preserving Codex folding and OpenClaw presence. It reconciles arrivals/departures,
 shows live activity and observed active child counts, lays residents out within
-the HUD's central region, and animates modest depth/rotation at native scene
-updates. Only waiting attention pulses. Native collision targets route to existing
+the HUD's central region using projection-spaced depth tiers and persistent
+roster order. Integrated per-session motion phases blend working, waiting and
+error poses without restarting the cycle; breathing, blinking and appendage
+strokes continue independently of scene updates to the roster. Only waiting attention pulses. Native collision targets route to existing
 session-focus commands; the empty-water target toggles the HUD. Reduce Motion and
 scene visibility pause animation. A load failure retains the live 2D fallback.
 
@@ -130,3 +133,17 @@ alternative to direct 3D picking. macOS installation/visual picking is verified;
 iOS shares the implementation and compiles, but this iteration was not installed
 on iPad. Android/e-ink retain their previous renderers. Fish morph deformation and
 sustained frame-time/thermal profiling remain separate follow-ups.
+
+`AquariumShoal.swift` extracts the authored fish geometry and replaces the seven
+baked fish routes with fourteen runtime swimmers. Bounded continuous steering,
+neighbor separation/alignment, soft water bounds and resident avoidance create
+local changes in flow; tail strokes follow integrated phase. Habitat plant
+animation remains on the original USD scene clip. Fish remain decorative and
+do not imply agent activity. This is a behavioral simulation, not fluid dynamics
+or collision against every plant mesh.
+
+Regression coverage checks projection clearance for 1–48 residents in portrait
+and landscape, roster-update stability, state-transition continuity, reduced
+motion, asset extraction, and two-minute shoal bounds with resident disturbance.
+48-resident readability and frame time still require visual/device profiling;
+the layout test alone does not establish performance at that density.

@@ -64,6 +64,8 @@ struct LivingAquariumScene: View {
                     let root = try await Entity(contentsOf: url)
                     applyWaterMaterial(to: root)
                     content.add(root)
+                    residents.shoal.load(root)
+                    content.add(residents.shoal.root)
                     // USDZ exposes the same tracks through global and per-node libraries.
                     // Playing all of them overlays competing transforms; use one scene clip.
                     var playback: [AnimationPlaybackController] = []

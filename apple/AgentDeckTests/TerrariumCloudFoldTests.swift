@@ -49,8 +49,89 @@ final class TerrariumCloudFoldTests: XCTestCase {
         let position = resident.position
         scene.step(1)
         XCTAssertEqual(resident.position, position, "Reduce Motion/scene pause must freeze swimming")
+        state.siblingSessions.append(session(id: "aaa-new", project: "New"))
+        let expanded = state.toTerrariumState()
+        scene.sync(expanded, aspect: 1.6)
+        let retainedSlot = resident.position
+        scene.sync(expanded, aspect: 1.6)
+        XCTAssertEqual(resident.position, retainedSlot, "Repeated state snapshots must not reorder retained residents")
         scene.sync(TerrariumState(), aspect: 1.6)
         XCTAssertTrue(scene.residents.isEmpty, "Departed sessions must remove their 3D entities")
+    }
+
+    @MainActor
+    func testNativeCrowdHasProjectionClearanceAndDepth() {
+        for count in [1, 4, 8, 12, 24, 48] {
+            for aspect: Float in [0.6, 1.0, 1.8] {
+                let layout = AquariumResidents.layout(count: count, aspect: aspect)
+                XCTAssertEqual(layout.positions.count, count)
+                let projected = layout.positions.map { p -> SIMD2<Float> in
+                    let factor = 13 / (14 - p.z)
+                    return [p.x * factor, 4.8 + (p.y - 4.8) * factor]
+                }
+                for i in projected.indices {
+                    for j in projected.indices where j > i {
+                        let gap = abs(projected[i] - projected[j])
+                        // 1.9-wide labels and bounded sway must fit in each slot.
+                        XCTAssertTrue(gap.x > layout.size * 2.05 || gap.y > layout.size * 1.7,
+                                      "Projected overlap at count \(count), aspect \(aspect)")
+                    }
+                }
+                if count > 1 { XCTAssertGreaterThan(Set(layout.positions.map(\.z)).count, 1) }
+            }
+        }
+    }
+
+    @MainActor
+    func testNativeShoalReactsAndStaysBounded() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz"))
+        let habitat = try await Entity(contentsOf: url)
+        let calm = AquariumShoal(), disturbed = AquariumShoal()
+        calm.load(habitat)
+        disturbed.load(try await Entity(contentsOf: url))
+        XCTAssertEqual(calm.positions.count, 14, "Imported fish must be found, not silently removed")
+        let obstacle = calm.positions[0] + SIMD3<Float>(0.20, 0, 0)
+        for _ in 0..<180 {
+            calm.step(1.0 / 60, residents: [])
+            disturbed.step(1.0 / 60, residents: [obstacle])
+        }
+        XCTAssertGreaterThan(simd_distance(calm.positions[0], disturbed.positions[0]), 0.15)
+        for _ in 0..<7200 { disturbed.step(1.0 / 60, residents: [obstacle]) }
+        for (position, velocity) in zip(disturbed.positions, disturbed.velocities) {
+            XCTAssertLessThan(abs(position.x), 5.5)
+            XCTAssertLessThan(abs(position.z), 3.7)
+            XCTAssertGreaterThan(position.y, 0.5)
+            XCTAssertLessThan(position.y, 4.5)
+            XCTAssertGreaterThan(simd_length(velocity), 0.30, "Fish must cruise, not stall at force equilibrium")
+            XCTAssertLessThan(simd_length(velocity), 0.81)
+        }
+    }
+
+    @MainActor
+    func testNativeStateTransitionArticulatesWithoutJumping() async throws {
+        let library = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz")))
+        let scene = AquariumResidents()
+        scene.loadTemplates(library)
+        var dashboard = DashboardState()
+        dashboard.state = .idle
+        dashboard.siblingSessions = [session(id: "motion", project: "Motion", agentType: "claude-code")]
+        scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
+        let resident = try XCTUnwrap(scene.residents["motion"])
+        let arm = try XCTUnwrap(resident.findEntity(named: "joint_arm_0"))
+        for _ in 0..<120 { scene.step(1.0 / 60) }
+        let workingPose = arm.orientation
+        let previousPosition = resident.position
+        dashboard.siblingSessions = [session(id: "motion", project: "Motion", state: "awaiting_permission", agentType: "claude-code")]
+        scene.sync(dashboard.toTerrariumState(), aspect: 1.6)
+        scene.step(1.0 / 60)
+        XCTAssertLessThan(simd_distance(resident.position, previousPosition), 0.02)
+        XCTAssertLessThan(abs((workingPose.inverse * arm.orientation).angle), 0.10)
+        for _ in 0..<180 { scene.step(1.0 / 60) }
+        XCTAssertGreaterThan(abs((workingPose.inverse * arm.orientation).angle), 0.15)
+        scene.animate = false
+        let stopped = arm.orientation
+        scene.step(1)
+        XCTAssertEqual(arm.orientation, stopped)
     }
 
     func testNativeProjectionDoesNotInventAbsentGateway() {

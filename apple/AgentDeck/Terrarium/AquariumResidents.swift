@@ -40,7 +40,17 @@ final class AquariumResidents {
     private var templates: [String: Entity] = [:]
     private(set) var residents: [String: Entity] = [:]
     private var descriptors: [AquariumResident] = []
+    private var slotOrder: [String] = []
     private var targets: [String: SIMD3<Float>] = [:]
+    private struct Motion {
+        var phase: Float
+        var effort: Float = 0
+        var attention: Float = 0
+        var fatigue: Float = 0
+    }
+    private var motions: [String: Motion] = [:]
+    private var joints: [String: [Entity]] = [:]
+    let shoal = AquariumShoal()
     private var time: Double = 0
     private var size: Float = 0.85
     var animate = true
@@ -65,17 +75,17 @@ final class AquariumResidents {
         for id in Array(residents.keys) where !ids.contains(id) {
             residents.removeValue(forKey: id)?.removeFromParent()
             targets.removeValue(forKey: id)
+            motions.removeValue(forKey: id)
+            joints.removeValue(forKey: id)
         }
-        let columns = min(3, max(1, next.count))
-        let rows = max(1, (next.count + columns - 1) / columns)
-        let width = min(6.2, max(1.6, 5.5 * aspect))
-        size = min(0.95, width / Float(columns) * 0.48, 2.9 / Float(rows) * 0.54)
-        for (index, item) in next.enumerated() {
-            let row = index / columns
-            let rowCount = min(columns, next.count - row * columns)
-            let x = (Float(index % columns) - Float(rowCount - 1) / 2) * width / Float(columns)
-            let y: Float = rows == 1 ? 2.7 : 3.7 - Float(row) * 1.9 / Float(max(1, rows - 1))
-            targets[item.id] = [x, y, 1.0]
+        let layout = Self.layout(count: next.count, aspect: aspect)
+        size = layout.size
+        // Existing residents retain their relative order when sessions arrive or depart.
+        let existing = slotOrder.filter(ids.contains)
+        slotOrder = existing + next.map(\.id).filter { !existing.contains($0) }
+        for item in next {
+            let index = slotOrder.firstIndex(of: item.id) ?? 0
+            targets[item.id] = layout.positions[index]
             if residents[item.id] == nil, let template = templates[item.kind] {
                 let resident = Entity()
                 resident.name = "session|" + item.id
@@ -88,11 +98,16 @@ final class AquariumResidents {
                 let focus = ModelEntity(mesh: .generateSphere(radius: 0.63), materials: [UnlitMaterial(color: nativeColor(TerrariumColors.tetraNeon).withAlphaComponent(0.16))])
                 focus.name = "focus"
                 focus.scale = [1, 1, 0.05]
-                focus.position.z = -0.17
+                focus.position.z = -0.65
                 resident.addChild(focus)
                 resident.position = targets[item.id]!
                 root.addChild(resident)
                 residents[item.id] = resident
+                motions[item.id] = Motion(phase: Self.seed(item.id) * 6.28)
+                func collect(_ node: Entity) -> [Entity] {
+                    (node.name.hasPrefix("joint_") ? [node] : []) + node.children.flatMap { collect($0) }
+                }
+                joints[item.id] = collect(body)
             }
             guard let resident = residents[item.id] else { continue }
             resident.scale = .init(repeating: size)
@@ -112,18 +127,39 @@ final class AquariumResidents {
         // Bound integration after occlusion/sleep; no wall-clock jump on resume.
         let dt = min(max(delta, 0), 1.0 / 20)
         time += dt
-        for (index, item) in descriptors.enumerated() {
-            guard let entity = residents[item.id], var target = targets[item.id] else { continue }
-            let phase = Float(time) * (item.activity == .working ? 0.85 : 0.4) + Float(index) * 1.73
-            target.y += sin(phase) * 0.07
-            target.z += cos(phase * 0.7) * 0.09
-            let blend = Float(1 - exp(-dt * 4))
+        let blend = Float(1 - exp(-dt * 3))
+        for item in descriptors {
+            guard let entity = residents[item.id], var target = targets[item.id], var motion = motions[item.id] else { continue }
+            motion.effort += ((item.activity == .working ? 1 : 0) - motion.effort) * blend
+            motion.attention += ((item.activity == .waiting ? 1 : 0) - motion.attention) * blend
+            motion.fatigue += ((item.activity == .error ? 1 : 0) - motion.fatigue) * blend
+            // Integrate phase rather than multiplying time by a state-dependent rate.
+            // State transitions and changes in the roster must never snap a pose.
+            motion.phase += Float(dt) * (0.65 + motion.effort * 1.7)
+            let phase = motion.phase
+            motions[item.id] = motion
+            target.x += sin(phase * 0.37) * size * 0.10
+            target.y += (sin(phase) * 0.08 + motion.attention * 0.10 - motion.fatigue * 0.13) * size
+            target.z += cos(phase * 0.7) * 0.16
             entity.position += (target - entity.position) * blend
             if let body = entity.findEntity(named: "body") {
-                // All geometry receives the scene light and genuine perspective.
-                let orientation = simd_quatf(angle: sin(phase * 0.7) * 0.22, axis: [0,1,0])
-                    * simd_quatf(angle: sin(phase) * 0.045, axis: [0,0,1])
+                let orientation = simd_quatf(angle: sin(phase * 0.43) * 0.32, axis: [0,1,0])
+                    * simd_quatf(angle: motion.fatigue * 0.24 - motion.attention * 0.08, axis: [1,0,0])
+                    * simd_quatf(angle: sin(phase) * (0.035 + motion.effort * 0.025), axis: [0,0,1])
                 body.orientation = simd_slerp(body.orientation, orientation, blend)
+                let breath = sin(phase * 1.3) * 0.018
+                body.scale = [1 + breath, 1 - breath * 0.6, 1 + breath]
+            }
+            for (index, joint) in (joints[item.id] ?? []).enumerated() {
+                if joint.name.hasPrefix("joint_eye") {
+                    let blink = pow(max(0, cos(phase * 0.62)), 80)
+                    joint.scale.y = 1 - blink * 0.90
+                } else {
+                    let side: Float = joint.name.contains("_0") ? -1 : 1
+                    let wave = sin(phase * 2 + Float(index) * 1.8)
+                    let lift = motion.attention * 0.48 - motion.fatigue * 0.35
+                    joint.orientation = simd_quatf(angle: side * (lift + wave * (0.08 + motion.effort * 0.28)), axis: [0,0,1])
+                }
             }
             // Only awaiting attention pulses; other status colors stay steady.
             if let label = entity.findEntity(named: "label") {
@@ -131,6 +167,32 @@ final class AquariumResidents {
                 label.scale = .init(repeating: pulse)
             }
         }
+        shoal.step(dt, residents: residents.values.map { $0.position })
+    }
+
+    /// Slots are separated in camera projection, then unprojected to depth tiers.
+    /// Merely changing world Z causes distant rows to overlap in screen space.
+    static func layout(count: Int, aspect: Float) -> (positions: [SIMD3<Float>], size: Float) {
+        guard count > 0 else { return ([], 0.85) }
+        let width = min(6.2, max(1.6, 5.5 * aspect))
+        let columns = min(count, max(1, Int(ceil(sqrt(Float(count) * width / 3.5)))))
+        let rows = (count + columns - 1) / columns
+        let size = min(0.95, width / Float(columns) * 0.43, 2.9 / Float(rows) * 0.46)
+        let positions = (0..<count).map { index -> SIMD3<Float> in
+            let row = index / columns
+            let rowCount = min(columns, count - row * columns)
+            let x = (Float(index % columns) - Float(rowCount - 1) / 2) * width / Float(columns)
+            let y: Float = rows == 1 ? 2.7 : 3.8 - Float(row) * 2.1 / Float(rows - 1)
+            let z = Float((index + row) % 3) * 0.65 - 0.30
+            let perspective = (14 - z) / 13
+            return [x * perspective, 4.8 + (y - 4.8) * perspective, z]
+        }
+        return (positions, size)
+    }
+
+    private static func seed(_ id: String) -> Float {
+        let hash = id.utf8.reduce(UInt32(2166136261)) { ($0 ^ UInt32($1)) &* 16777619 }
+        return Float(hash % 10000) / 10000
     }
 
     static func sessionID(for entity: Entity) -> String? {
@@ -155,7 +217,9 @@ final class AquariumResidents {
             let mesh = MeshResource.generateText(text, extrusionDepth: 0.002, font: .systemFont(ofSize: index == 0 ? 0.16 : 0.105))
             let label = ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: nativeColor(index == 0 ? TerrariumColors.hudText : color))])
             let bounds = label.visualBounds(relativeTo: label)
-            label.position = [-bounds.center.x, index == 0 ? 0.83 : 0.64, 0.08]
+            let fit = min(1, 1.9 / max(0.01, bounds.extents.x))
+            label.scale = .init(repeating: fit)
+            label.position = [-bounds.center.x * fit, index == 0 ? 0.83 : 0.64, 0.40]
             group.addChild(label)
         }
         return group

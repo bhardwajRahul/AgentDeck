@@ -142,6 +142,7 @@
 		3935F4C5BEE0F6FA479AB2A6 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 908DB05568DE4E828CD7FCE6 /* Logger.swift */; };
 		39DE6C000AD9F73337D71752 /* PairingKnockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBAF5DDA8E8BC581088C6AAD /* PairingKnockStore.swift */; };
 		3A0913B4B8FD471CDFD77631 /* WifiConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DA1104DBFD7C9FA0C79A5D /* WifiConfig.swift */; };
+		3A341BC1D4421CE024022F05 /* AquariumShoal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C095A676EC89446C067731C /* AquariumShoal.swift */; };
 		3AB4FFE7850E2A1AB615E162 /* ApmeParseJudgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DB04CEEDD6C769AD9056561 /* ApmeParseJudgeTests.swift */; };
 		3B811EEE60C3BC211B2A5373 /* ApmeClassifierRules.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C6550B652E631866F47C813 /* ApmeClassifierRules.generated.swift */; };
 		3C1F74B5C8002F65FFDA282F /* ProcessEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32CE020EB705544FFD580DD9 /* ProcessEnumerator.swift */; };
@@ -242,6 +243,7 @@
 		62F20845F1953514EFB1C11B /* SingletonGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B5C866AF54937CD8E433F49 /* SingletonGuard.swift */; };
 		634EEC168E46C62A2DBD1ACA /* FormatUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2994478DEFAA4A1CC8EC54D /* FormatUtils.swift */; };
 		63934274932C59864347F6AB /* LocalKiroObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DCDE7C19F4BE7649995B33 /* LocalKiroObserver.swift */; };
+		6530D175E50846D9A760CF72 /* AquariumShoal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C095A676EC89446C067731C /* AquariumShoal.swift */; };
 		65A2A3F48CA716B2950481B9 /* ZaiQuotaRules.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1715E68E852E233131E1E1C3 /* ZaiQuotaRules.generated.swift */; };
 		65A8A69BC77EC2A72BAA51E6 /* MdnsAdvertisementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AA98B9C59A1E5068133D134 /* MdnsAdvertisementTests.swift */; };
 		6678969903C6A061CFE809EA /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D17A24E0C5B16A097D62E9 /* AuthManager.swift */; };
@@ -656,6 +658,7 @@
 		2AD17B846036A2F78B153024 /* ApmeActivityHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApmeActivityHistory.swift; sourceTree = "<group>"; };
 		2B5C866AF54937CD8E433F49 /* SingletonGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingletonGuard.swift; sourceTree = "<group>"; };
 		2B6B05AD3CC720BD76A681F9 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		2C095A676EC89446C067731C /* AquariumShoal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AquariumShoal.swift; sourceTree = "<group>"; };
 		2C734B04F5E770B8B5FE2B70 /* SwiftSurfaceProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftSurfaceProtocolTests.swift; sourceTree = "<group>"; };
 		2D2F35C5E4DF5DAE1C93F54B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2D66C7EEA9726686205AF8EC /* DockVisibilityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockVisibilityController.swift; sourceTree = "<group>"; };
@@ -1071,6 +1074,7 @@
 			children = (
 				A8A8B97F270C72DDB67D85B5 /* AquariumPreview.swift */,
 				3C41CE28781400748CBA9AE6 /* AquariumResidents.swift */,
+				2C095A676EC89446C067731C /* AquariumShoal.swift */,
 				6DDD4BFFE8B182F5EEBC3365 /* CreatureLayout.swift */,
 				403CDDF7DDFCF5D8702491EA /* TerrariumConfig.swift */,
 				481253E76BD28E883C65121F /* TerrariumRenderer.swift */,
@@ -1901,6 +1905,7 @@
 				5BFDAB0CCA8D688B1435F42D /* AppReviewPrompt.swift in Sources */,
 				4B1AADA88205A8EBD2E50248 /* AquariumPreview.swift in Sources */,
 				C39BADC18C8D030A110B5158 /* AquariumResidents.swift in Sources */,
+				3A341BC1D4421CE024022F05 /* AquariumShoal.swift in Sources */,
 				9B95E3162542EDD34CF868C1 /* AquariumSurface.swift in Sources */,
 				0A2C81CEDF264AFA229180E4 /* AttentionNotifier.swift in Sources */,
 				69EEBFCB47436C161B442D2B /* AttentionTheaterHUD.swift in Sources */,
@@ -2119,6 +2124,7 @@
 				C15C5DEDCFB41B9DF3E9E29C /* AppReviewPrompt.swift in Sources */,
 				47DF5B56CB54AC70C7FAD723 /* AquariumPreview.swift in Sources */,
 				C15BFCC30330EE47DC42BA03 /* AquariumResidents.swift in Sources */,
+				6530D175E50846D9A760CF72 /* AquariumShoal.swift in Sources */,
 				0264C182D89757B656DFE108 /* AquariumSurface.swift in Sources */,
 				1CB839431F35EF9304A1EEBF /* AttentionNotifier.swift in Sources */,
 				BEC7F51CDA512FE9DFB90F63 /* AttentionTheaterHUD.swift in Sources */,
