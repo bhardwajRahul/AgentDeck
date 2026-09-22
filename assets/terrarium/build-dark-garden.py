@@ -117,5 +117,7 @@ for o in s.objects:
 s.frame_set(1)
 s.render.resolution_x=1280;s.render.resolution_y=800;s.render.resolution_percentage=100
 s.render.engine='CYCLES';s.cycles.samples=24
+import runpy
+runpy.run_path(str(ROOT/'assets/terrarium/enhance-garden-fauna.py'))
 bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/'assets/terrarium/dark-garden.blend'))
 print('Saved dark garden with portable plant transform animation')

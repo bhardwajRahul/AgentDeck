@@ -153,3 +153,26 @@ Contact regression tests verify idle/working feet against the actual generated
 substrate surface, fixed support positions, removal and non-bobbing original
 cloud motion. Character-identity checks reject replacement anatomy and preserve
 Claude’s wide pixel proportions and original four feet.
+
+
+### Solid fins and quiet freshwater fauna
+
+`build-dark-garden.py` invokes `enhance-garden-fauna.py` before saving. The
+caudal membrane is closed with 0.045 Blender-unit thickness and its origin is
+rebased to the peduncle; other fins receive the same thin volume. This prevents
+back-face loss and body-centered tail orbiting. An edge-on fin may still look
+thin naturally; no billboard or always-facing-camera replacement is used.
+
+The native garden includes one rock-grazing snail and two substrate-foraging
+shrimp. Shell spiral, eyestalks, segmented abdomens, tail fans, antennae and legs
+are solid geometry. Bounded transform tracks close over the existing 24-second
+habitat clip and follow its pause/Reduce Motion behavior. They are decorative
+freshwater inhabitants, never session identities or status indicators. Materials
+resolve existing design tokens. The snail follows the retained habitat rock,
+not the dynamically laid-out session platforms; shrimp graze the side rocks.
+The information overlay can obscure side details in the normal dashboard.
+
+The Apple import regression checks actual exported fin volume and hinge position,
+fauna counts and animation availability. Blender mesh inspection verifies closed
+caudal boundaries. Frame pacing and every possible viewing angle still require
+visual evaluation; these structural checks do not establish photorealism.

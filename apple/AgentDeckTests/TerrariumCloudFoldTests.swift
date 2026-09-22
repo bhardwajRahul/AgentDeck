@@ -89,6 +89,27 @@ final class TerrariumCloudFoldTests: XCTestCase {
     }
 
     @MainActor
+    func testHabitatFinsHaveVolumeAndHingesAndIncludesBottomFauna() async throws {
+        let habitat = try await Entity(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz")))
+        func nodes(_ node: Entity) -> [Entity] { [node] + node.children.flatMap { nodes($0) } }
+        let all = nodes(habitat)
+        let tails = all.filter { $0.name.lowercased().contains("caudal") && $0 is ModelEntity }
+        XCTAssertGreaterThanOrEqual(tails.count, 7)
+        for tail in tails {
+            let extent = tail.visualBounds(relativeTo: tail).extents
+            XCTAssertGreaterThan(min(extent.x, extent.y, extent.z), 0.02, "A flat membrane disappears edge-on")
+            var fish = tail.parent
+            while let node = fish, !node.name.lowercased().replacingOccurrences(of: "_", with: " ").hasPrefix("fish yaw") { fish = node.parent }
+            let owner = try XCTUnwrap(fish)
+            XCTAssertLessThan(tail.position(relativeTo: owner).x, -0.5, "The tail must pivot at the peduncle, not the body center")
+        }
+        let names = all.map { $0.name.replacingOccurrences(of: "_", with: " ").lowercased() }
+        XCTAssertEqual(names.filter { $0 == "fauna snail" }.count, 1)
+        XCTAssertEqual(names.filter { $0.hasPrefix("fauna shrimp ") }.count, 2)
+        XCTAssertFalse(habitat.availableAnimations.isEmpty, "Foraging and feeler motion must survive USD export")
+    }
+
+    @MainActor
     func testNativeShoalReactsAndStaysBounded() async throws {
         let url = try XCTUnwrap(Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz"))
         let habitat = try await Entity(contentsOf: url)
