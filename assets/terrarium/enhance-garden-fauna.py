@@ -36,8 +36,8 @@ def material(name, token, roughness):
 shell=material('shell','tide-300',.44)
 stripe=material('shell bands','ink-700',.58)
 flesh=material('foot','kelp-500',.65)
-carapace=material('carapace','tide-200',.34)
 eye=material('eyes','ink-900',.3)
+highlight=material('eye whites','tide-50',.32)
 
 def root(name, location):
     o=bpy.data.objects.new(name,None);scene.collection.objects.link(o);o.location=location;return o
@@ -58,61 +58,55 @@ def strand(name,parent,points,radius,mat):
     bpy.ops.object.convert(target='MESH')
     return o
 
-# A low foreground grazing snail; its sole stays on the substrate. A spiral
-# grows continuously out of the shell rather than floating as a separate ring.
-snail=root('Fauna snail',(-3.1,-.02,.93))
-ellipsoid('Snail foot',snail,(0,0,.075),(.32,.15,.075),flesh)
-ellipsoid('Snail shell',snail,(-.08,0,.24),(.23,.18,.22),shell)
-spiral=[]
-for i in range(100):
-    t=i/99;angle=t*math.tau*2.2;r=.012+.17*t
-    spiral.append((-.08+math.cos(angle)*r,-.155-.024*(1-t),.24+math.sin(angle)*r))
-strand('Snail shell spiral',snail,spiral,.014,stripe)
-for side in (-1,1):
-    feeler=root('Snail feeler', (0,0,0));feeler.parent=snail;feeler.location=(.19,side*.075,.11)
-    strand('Snail eyestalk',feeler,[(0,0,0),(.06,side*.03,.08),(.09,side*.045,.14)],.012,flesh)
-    ellipsoid('Snail eye',feeler,(.09,side*.045,.14),(.018,.018,.018),eye)
-    for frame in range(1,722,15):
-        feeler.rotation_euler[1]=.12*math.sin((frame-1)/720*math.tau*2+side)
-        feeler.keyframe_insert(data_path='rotation_euler',frame=frame)
-for frame in range(1,722,15):
-    t=(frame-1)/720*math.tau
-    sx=-3.1+.17*math.sin(t);sy=-.02+.07*math.cos(t)
-    # Match the retained left habitat rock, independent of session platforms.
-    sz=.35+.65*math.sqrt(max(0,1-((sx+3.1)/1.5)**2-((sy-.4)/.8)**2))+.02
-    snail.location=(sx,sy,sz)
-    snail.rotation_euler[2]=.18*math.sin(t)
-    snail.keyframe_insert(data_path='location',frame=frame);snail.keyframe_insert(data_path='rotation_euler',frame=frame)
-
-# Two bottom-foraging shrimp: segmented abdomen, tail fan, fine walking legs
-# and antennae. Keep the central session stage clear, all parts solid meshes.
-for index,(x,y) in enumerate([(-3.85,-.02),(3.3,2.15)]):
-    shrimp=root('Fauna shrimp '+str(index),(x,y,-.09))
-    shrimp.scale=(.8,.8,.8)
-    ellipsoid('Shrimp thorax',shrimp,(.13,0,.16),(.22,.105,.13),carapace)
-    for n in range(5):
-        ellipsoid('Shrimp abdominal segment',shrimp,(-.08-n*.07,0,.14-n*.012),(.08,.095-n*.012,.095-n*.01),carapace)
-    for side in (-1,0,1):
-        fan=ellipsoid('Shrimp tail fan',shrimp,(-.43,side*.058,.055),(.10,.047,.018),shell)
-        fan.rotation_euler[2]=side*.45
-    for side in (-1,1):
-        ellipsoid('Shrimp eye',shrimp,(.27,side*.075,.22),(.025,.022,.025),eye)
-        strand('Shrimp antenna',shrimp,[(.25,side*.05,.20),(.45,side*.16,.28),(.73,side*.23,.26)],.008,shell)
-        for n in range(4):
-            leg=root('Shrimp leg',(0,0,0));leg.parent=shrimp;leg.location=(.18-n*.10,side*.06,.14)
-            strand('Shrimp walking limb',leg,[(0,0,0),(.015,side*.11,-.04),(.06,side*.16,-.13)],.009,carapace)
-            for frame in range(1,722,5):
-                phase=(frame-1)/720*math.tau*12+n*1.5+side
-                leg.rotation_euler[2]=.20*math.sin(phase)
-                leg.keyframe_insert(data_path='rotation_euler',frame=frame)
+def forage(obj, center, radii, rock, offset=0):
+    """Follow a slow closed path nose-first; unwrap yaw across the loop seam."""
+    previous = None
     for frame in range(1,722,5):
-        t=(frame-1)/720*math.tau
-        # Small slow foraging circuit rather than constant midwater hovering.
-        sx=x+.12*math.sin(t+index);sy=y+.04*math.cos(t+index)
-        cx,cy,cz,rx,ry,rz=((-3.1,.4,.35,1.5,.8,.65) if index==0 else (3.3,2.5,.2,.95,.65,.5))
-        sz=cz+rz*math.sqrt(max(0,1-((sx-cx)/rx)**2-((sy-cy)/ry)**2))+.01
-        shrimp.location=(sx,sy,sz)
-        shrimp.rotation_euler[2]=(.4 if index==0 else -.5)+.25*math.sin(t+index)
-        shrimp.keyframe_insert(data_path='location',frame=frame);shrimp.keyframe_insert(data_path='rotation_euler',frame=frame)
+        t=(frame-1)/720*math.tau+offset
+        x=center[0]+radii[0]*math.sin(t);y=center[1]+radii[1]*math.cos(t)
+        cx,cy,cz,rx,ry,rz=rock
+        z=cz+rz*math.sqrt(max(0,1-((x-cx)/rx)**2-((y-cy)/ry)**2))+.015
+        heading=math.atan2(-radii[1]*math.sin(t),radii[0]*math.cos(t))
+        if previous is not None:
+            heading=previous+(heading-previous+math.pi)%math.tau-math.pi
+        previous=heading
+        obj.location=(x,y,z);obj.rotation_euler[2]=heading
+        obj.keyframe_insert(data_path='location',frame=frame)
+        obj.keyframe_insert(data_path='rotation_euler',frame=frame)
+
+left_rock=(-3.1,.4,.35,1.5,.8,.65)
+# Rounded head and shorter eyestalks make the face legible at dashboard scale.
+snail=root('Fauna snail',(-3.1,-.02,.93))
+ellipsoid('Snail foot',snail,(0,0,.075),(.30,.16,.075),flesh)
+ellipsoid('Snail head',snail,(.20,0,.14),(.135,.13,.115),flesh)
+ellipsoid('Snail shell',snail,(-.09,0,.27),(.25,.205,.25),shell)
+for side in (-1,1):
+    spiral=[]
+    for i in range(100):
+        t=i/99;angle=t*math.tau*1.8;r=.012+.18*t
+        spiral.append((-.09+math.cos(angle)*r,side*(.185+.02*(1-t)),.27+math.sin(angle)*r))
+    strand('Snail shell spiral',snail,spiral,.012,stripe)
+    feeler=root('Snail feeler',(0,0,0));feeler.parent=snail;feeler.location=(.21,side*.075,.19)
+    strand('Snail eyestalk',feeler,[(0,0,0),(.025,side*.02,.055),(.035,side*.03,.09)],.017,flesh)
+    ellipsoid('Snail eye white',feeler,(.035,side*.03,.10),(.043,.043,.047),highlight)
+    ellipsoid('Snail pupil',feeler,(.066,side*.042,.10),(.018,.025,.028),eye)
+    for frame in range(1,722,15):
+        feeler.rotation_euler[1]=.08*math.sin((frame-1)/720*math.tau*2+side)
+        feeler.keyframe_insert(data_path='rotation_euler',frame=frame)
+forage(snail,(-3.1,-.02),(.24,.12),left_rock)
+
+# Check evaluated animation, not merely the path formula: no backwards slide,
+# no position/orientation discontinuity when the 24-second clip repeats.
+for animal in [o for o in scene.objects if o.name.startswith('Fauna ')]:
+    for frame in range(1,719,7):
+        scene.frame_set(frame)
+        start=animal.matrix_world.translation.copy()
+        forward=animal.matrix_world.to_3x3() @ Vector((1,0,0))
+        scene.frame_set(frame+1)
+        displacement=animal.matrix_world.translation-start
+        assert displacement.dot(forward)>0, (animal.name,frame,'backwards')
+    scene.frame_set(1);start=animal.matrix_world.copy()
+    scene.frame_set(721);end=animal.matrix_world.copy()
+    assert max(abs(start[i][j]-end[i][j]) for i in range(4) for j in range(4))<.0001, animal.name
 scene.frame_set(1)
-print('Solid hinged fins; one grazing snail and two foraging shrimp authored')
+print('Rounded snail; forward-only motion and loop seams verified; shrimp omitted')

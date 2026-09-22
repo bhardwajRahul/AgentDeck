@@ -10,6 +10,13 @@
 - Relevant native suite: 34 tests pass. Workspace build/typecheck and serial full Vitest: 4,671 pass, 2 skip. macOS/iOS asset builds pass; macOS installed for visual inspection. iOS was not physically deployed. Android/e-ink assets and original agent models remain unchanged.
 - Structural volume/pivot checks and sampled native frames do not prove every angle or sustained frame pacing; edge-on fins naturally remain thin. No photorealism or fluid-simulation claim.
 
+## 2026-09-22 — Remove shrimp and correct snail motion
+
+- User rejected the shrimp's appearance/movement and suggested removing it. Removed both shrimp and their authoring branches; native import coverage now explicitly requires zero shrimp so regeneration cannot silently restore them.
+- Rounded the snail's head/shell, shortened eyestalks and enlarged the paired eyes for dashboard-scale readability. Preserved the agent characters and the solid hinged fish fins.
+- Replaced position-only oscillation with a slow closed path whose heading follows its tangent. Unwrapped yaw avoids a full-turn discontinuity at the seam. Blender authoring checks evaluated forward displacement and start/end transform continuity, catching the previous backward-slide behavior.
+- Shared Apple asset rebuilt; macOS installed for visual review. 34 focused native tests and 4,671 workspace tests pass (2 skipped); macOS/iOS builds and workspace build/typecheck pass. No Android/e-ink or store deployment.
+
 ## 2026-09-22 — Persistent dashboard type selection
 
 Settings now selects a device-local dashboard type rather than launching a separate 3D demo. Apple offers Default and 3D aquarium (Preview) on supported OS versions. Android LCD additionally offers Paper; physical readers retain their existing panel-specific dashboard and refresh policy. Stable IDs (`standard`, `paper`, `aquarium3d`) are separate from labels, persisted through existing preferences, and resolved through capability-aware catalogs. Missing/future/unsupported values fall back to the existing default without rewriting the saved choice.

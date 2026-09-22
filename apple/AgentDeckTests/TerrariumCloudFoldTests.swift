@@ -105,7 +105,7 @@ final class TerrariumCloudFoldTests: XCTestCase {
         }
         let names = all.map { $0.name.replacingOccurrences(of: "_", with: " ").lowercased() }
         XCTAssertEqual(names.filter { $0 == "fauna snail" }.count, 1)
-        XCTAssertEqual(names.filter { $0.hasPrefix("fauna shrimp ") }.count, 2)
+        XCTAssertEqual(names.filter { $0.hasPrefix("fauna shrimp ") }.count, 0, "Rejected shrimp must not return in generated assets")
         XCTAssertFalse(habitat.availableAnimations.isEmpty, "Foraging and feeler motion must survive USD export")
     }
 

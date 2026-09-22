@@ -163,14 +163,15 @@ rebased to the peduncle; other fins receive the same thin volume. This prevents
 back-face loss and body-centered tail orbiting. An edge-on fin may still look
 thin naturally; no billboard or always-facing-camera replacement is used.
 
-The native garden includes one rock-grazing snail and two substrate-foraging
-shrimp. Shell spiral, eyestalks, segmented abdomens, tail fans, antennae and legs
-are solid geometry. Bounded transform tracks close over the existing 24-second
-habitat clip and follow its pause/Reduce Motion behavior. They are decorative
-freshwater inhabitants, never session identities or status indicators. Materials
-resolve existing design tokens. The snail follows the retained habitat rock,
-not the dynamically laid-out session platforms; shrimp graze the side rocks.
-The information overlay can obscure side details in the normal dashboard.
+The native garden includes one rounded spiral-shell snail with a readable face
+and short moving eyestalks. The shrimp experiment was removed following visual
+feedback; do not restore it when rebuilding the garden. The snail follows a slow
+closed path on the retained habitat rock, facing the path tangent instead of
+sliding backwards. Unwrapped heading keeps rotation continuous across the loop.
+The builder checks evaluated movement against the facing direction and checks
+start/end transforms. Existing habitat pause/Reduce Motion behavior applies.
+This decorative inhabitant never represents session identity or status. Materials
+resolve existing design tokens.
 
 The Apple import regression checks actual exported fin volume and hinge position,
 fauna counts and animation availability. Blender mesh inspection verifies closed
