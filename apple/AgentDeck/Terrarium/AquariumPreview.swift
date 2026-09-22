@@ -23,56 +23,96 @@ struct AquariumPreview: View {
 
 @available(iOS 18.0, macOS 15.0, *)
 struct LivingAquariumScene: View {
+    var terrariumState = TerrariumState()
+    var onCreatureTapped: ((String) -> Void)?
+    var onBackgroundTapped: (() -> Void)?
+    @State private var residents = AquariumResidents()
+    @State private var cancelUpdate: (() -> Void)?
+    @State private var visible = false
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var controllers: [AnimationPlaybackController] = []
     @State private var failure: String?
 
     var body: some View {
-        RealityView { content in
-            content.camera = .virtual
-            let camera = PerspectiveCamera()
-            camera.camera.fieldOfViewInDegrees = 38
-            camera.look(at: [0, 1.65, -0.7], from: [0, 4.8, 14], relativeTo: nil)
-            content.add(camera)
-            let sun = DirectionalLight()
-            sun.light.intensity = 5_000
-            sun.look(at: [0, 0, 0], from: [-4, 8, 5], relativeTo: nil)
-            content.add(sun)
-            let fill = DirectionalLight()
-            fill.light.intensity = 900
-            fill.look(at: [0, 1, 0], from: [4, 4, -4], relativeTo: nil)
-            content.add(fill)
-            do {
-                guard let url = Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz") else {
-                    throw CocoaError(.fileNoSuchFile)
+        GeometryReader { geometry in
+            RealityView { content in
+                content.camera = .virtual
+                let camera = PerspectiveCamera()
+                camera.camera.fieldOfViewInDegrees = 38
+                camera.look(at: [0, 1.65, -0.7], from: [0, 4.8, 14], relativeTo: nil)
+                content.add(camera)
+                let background = Entity()
+                background.name = "aquarium-background"
+                background.position.z = -5
+                background.components.set(CollisionComponent(shapes: [.generateBox(size: [100,100,0.01])]))
+                background.components.set(InputTargetComponent())
+                content.add(background)
+                let sun = DirectionalLight()
+                sun.light.intensity = 5_000
+                sun.look(at: [0, 0, 0], from: [-4, 8, 5], relativeTo: nil)
+                content.add(sun)
+                let fill = DirectionalLight()
+                fill.light.intensity = 900
+                fill.look(at: [0, 1, 0], from: [4, 4, -4], relativeTo: nil)
+                content.add(fill)
+                do {
+                    guard let url = Bundle.main.url(forResource: "living-aquarium", withExtension: "usdz") else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    let root = try await Entity(contentsOf: url)
+                    applyWaterMaterial(to: root)
+                    content.add(root)
+                    // USDZ exposes the same tracks through global and per-node libraries.
+                    // Playing all of them overlays competing transforms; use one scene clip.
+                    var playback: [AnimationPlaybackController] = []
+                    if let animation = root.availableAnimations.first {
+                        playback.append(root.playAnimation(animation.repeat(), startsPaused: true))
+                    }
+                    controllers = playback
+                    guard let residentURL = Bundle.main.url(forResource: "3d-residents", withExtension: "usdz") else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    let library = try await Entity(contentsOf: residentURL)
+                    residents.loadTemplates(library)
+                    guard residents.templateCount == 6 else { throw CocoaError(.fileReadCorruptFile) }
+                    content.add(residents.root)
+                    residents.sync(terrariumState, aspect: Float(geometry.size.width / max(1, geometry.size.height)))
+                    let subscription = content.subscribe(to: SceneEvents.Update.self) { [weak residents] event in
+                        residents?.step(event.deltaTime)
+                    }
+                    cancelUpdate = { subscription.cancel() }
+                } catch {
+                    failure = "The 3D aquarium could not be opened. Your dashboard is still available."
                 }
-                let root = try await Entity(contentsOf: url)
-                applyWaterMaterial(to: root)
-                content.add(root)
-                // USDZ exposes the same tracks through global and per-node libraries.
-                // Playing all of them overlays competing transforms; use one scene clip.
-                var playback: [AnimationPlaybackController] = []
-                if let animation = root.availableAnimations.first {
-                    playback.append(root.playAnimation(animation.repeat(), startsPaused: true))
-                }
-                controllers = playback
-            } catch {
-                failure = "The 3D aquarium could not be opened. Your dashboard is still available."
+            } update: { _ in
+                residents.sync(terrariumState, aspect: Float(geometry.size.width / max(1, geometry.size.height)))
             }
-        }
-        .overlay {
-            if let failure { Text(failure).padding().background(.regularMaterial) }
+            .gesture(SpatialTapGesture().targetedToAnyEntity().onEnded { value in
+                if let id = AquariumResidents.sessionID(for: value.entity) { onCreatureTapped?(id) }
+                else if value.entity.name == "aquarium-background" { onBackgroundTapped?() }
+            })
+            .overlay {
+                if let failure {
+                    TerrariumView(terrariumState: terrariumState, includeHabitat: false,
+                                  onCreatureTapped: onCreatureTapped, onBackgroundTapped: onBackgroundTapped)
+                    Text(failure).padding().background(.regularMaterial)
+                }
+            }
         }
         // The async loader captures the initial environment. Reconcile playback
         // in the refreshed view so a background → active transition during load
         // cannot leave the newly-created controller paused forever.
+        .onAppear { visible = true; updatePlayback() }
         .onChange(of: controllers.count) { _, _ in updatePlayback() }
         .onChange(of: reduceMotion) { _, _ in updatePlayback() }
         .onChange(of: scenePhase) { _, _ in updatePlayback() }
         .onDisappear {
-            for controller in controllers { controller.stop() }
-            controllers.removeAll()
+            visible = false
+            updatePlayback()
+            cancelUpdate?()
+            cancelUpdate = nil
         }
     }
 
@@ -93,8 +133,16 @@ struct LivingAquariumScene: View {
     }
 
     private func updatePlayback() {
+        let playing = visible && !reduceMotion && scenePhase == .active
+        residents.animate = playing
+        if playing, cancelUpdate == nil, let scene = residents.root.scene {
+            let subscription = scene.subscribe(to: SceneEvents.Update.self) { [weak residents] event in
+                residents?.step(event.deltaTime)
+            }
+            cancelUpdate = { subscription.cancel() }
+        }
         for controller in controllers {
-            if reduceMotion || scenePhase != .active { controller.pause() }
+            if !playing { controller.pause() }
             else { controller.resume() }
         }
     }

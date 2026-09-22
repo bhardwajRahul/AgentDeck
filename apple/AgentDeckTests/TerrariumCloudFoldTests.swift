@@ -1,5 +1,6 @@
 #if os(macOS)
 import XCTest
+import RealityKit
 @testable import AgentDeck
 
 /// Verify the render-time Codex creature fold introduced to suppress phantom
@@ -8,6 +9,59 @@ import XCTest
 /// simultaneous Cloud sprites; the fold collapses them to one creature per
 /// `(agentType=codex-cli, projectName)` group.
 final class TerrariumCloudFoldTests: XCTestCase {
+
+    @MainActor
+    func testNativeResidentAssetsAndLiveReconciliation() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "3d-residents", withExtension: "usdz"))
+        let library = try await Entity(contentsOf: url)
+        for kind in ["claudecode", "codex", "openclaw", "opencode", "antigravity", "kiro"] {
+            let template = try XCTUnwrap(library.findEntity(named: "resident_" + kind))
+            let extent = template.visualBounds(relativeTo: nil).extents
+            XCTAssertGreaterThan(extent.x, 0.3, kind)
+            XCTAssertGreaterThan(extent.y, 0.3, kind)
+            XCTAssertGreaterThan(extent.z, 0.1, "Real depth, not a textured plane: " + kind)
+            XCTAssertLessThan(max(extent.x, extent.y, extent.z), 1.5, "SVG import units/radii: " + kind)
+        }
+        let scene = AquariumResidents()
+        XCTAssertEqual(scene.templateCount, 0)
+        var state = DashboardState()
+        state.state = .idle
+        state.siblingSessions = [session(id: "native", project: "Project", state: "awaiting_permission")]
+        var habitat = state.toTerrariumState()
+        habitat.focusedSessionId = "native"
+        habitat.cloudCreatures[0].subagentActivity.activeCount = 2
+        scene.sync(habitat, aspect: 1.6)
+        XCTAssertTrue(scene.residents.isEmpty)
+        scene.loadTemplates(library)
+        XCTAssertEqual(scene.templateCount, 6)
+        scene.sync(habitat, aspect: 1.6)
+        let resident = try XCTUnwrap(scene.residents["native"])
+        XCTAssertNotNil(resident.findEntity(named: "label"), "Loading templates after state must still create labels")
+        XCTAssertEqual(AquariumResident.project(habitat).first?.activity, .waiting)
+        XCTAssertEqual(AquariumResident.project(habitat).first?.helpers, 2)
+        XCTAssertEqual(AquariumResidents.sessionID(for: try XCTUnwrap(resident.findEntity(named: "body"))), "native")
+        XCTAssertEqual(resident.findEntity(named: "focus")?.isEnabled, true)
+        let body = try XCTUnwrap(resident.findEntity(named: "body"))
+        let bodyBounds = body.visualBounds(relativeTo: resident).extents
+        let sourceBounds = try XCTUnwrap(library.findEntity(named: "resident_codex")).visualBounds(relativeTo: nil).extents
+        XCTAssertEqual(bodyBounds.y, sourceBounds.y, accuracy: 0.001, "Cloned residents must retain USD axis conversion")
+        scene.animate = false
+        let position = resident.position
+        scene.step(1)
+        XCTAssertEqual(resident.position, position, "Reduce Motion/scene pause must freeze swimming")
+        scene.sync(TerrariumState(), aspect: 1.6)
+        XCTAssertTrue(scene.residents.isEmpty, "Departed sessions must remove their 3D entities")
+    }
+
+    func testNativeProjectionDoesNotInventAbsentGateway() {
+        var state = TerrariumState()
+        state.crayfishState = .routing
+        XCTAssertTrue(AquariumResident.project(state).isEmpty)
+        state.crayfishVisible = true
+        state.crayfishState = .sick
+        XCTAssertEqual(AquariumResident.project(state).first?.activity, .error)
+        XCTAssertEqual(AquariumResident.project(state).first?.id, "crayfish")
+    }
 
     func testThreeProcessingCloudsKeepSeparateSwimmingLanes() {
         var state = DashboardState()

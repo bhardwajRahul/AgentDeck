@@ -56,11 +56,9 @@ when selected in Settings → Dashboard type. Selection is device-local and
 persistent; it does not replace session state, connection controls or usage data.
 The standalone preview entry remains a diagnostic compatibility path.
 
-Apple composites the canonical live 2D session creatures over the 3D habitat,
-including state, labels, focus and tap handling. Their transparent central stage
-keeps the side rails, weather and timeline clear. A dark palette scrim preserves
-HUD contrast independently of the imported scene materials. This is a hybrid
-composition, not a set of fully modeled 3D agent creatures.
+Apple now renders live agent meshes and their labels in the same RealityKit scene
+as the habitat. The regular 2D renderer remains the default and a load-failure
+fallback; it is no longer composited into the successful 3D path.
 
 Stable preference IDs are `standard` and `aquarium3d`; Android also offers `paper`
 on LCD. Android's existing effective panel classification still chooses the
@@ -98,5 +96,37 @@ in the actual macOS scene, not inferred from the Blender render.
 Claude's canonical silhouette gains restrained top-left shading. Codex horizontal
 drift is bounded by the neighboring home spacing, preserving distinct marks for
 three simultaneous processing sessions. This does not promise arbitrary-density
-label packing. Fully modeled agent creatures and sustained GPU/power profiling
-remain future work. Android and physical e-ink assets were not replaced here.
+label packing. The native-resident section below supersedes this first hybrid composition.
+Sustained GPU/power profiling remains future work. Android and physical e-ink assets were not replaced here.
+
+## Native 3D residents (Apple)
+
+`build-3d-residents.py` imports the six canonical SVGs from `design/brand`, reads
+brand colors from `design/tokens.css` and authors beveled geometry with rounded
+body parts. It writes editable `3d-residents.blend` and bundled
+`apple/AgentDeck/Resources/Aquarium/3d-residents.usdz`:
+
+```sh
+blender --background --python assets/terrarium/build-3d-residents.py
+```
+
+These are stylized solid mascots, not photorealistic anatomical models. Canonical
+marks remain actual geometry; no flat billboard or Canvas draws the residents.
+The native template loader preserves the USD ancestor axis conversion when
+cloning. Import curve point radii must be reset after unit normalization, before
+extrusion, or bevel/extrusion inflates by the SVG scale factor.
+
+`AquariumResidents.swift` projects only the canonical TerrariumState roster,
+preserving Codex folding and OpenClaw presence. It reconciles arrivals/departures,
+shows live activity and observed active child counts, lays residents out within
+the HUD's central region, and animates modest depth/rotation at native scene
+updates. Only waiting attention pulses. Native collision targets route to existing
+session-focus commands; the empty-water target toggles the HUD. Reduce Motion and
+scene visibility pause animation. A load failure retains the live 2D fallback.
+
+Geometry and labels share the camera/depth buffer; information panels remain
+SwiftUI for readability and accessibility. The roster remains the accessible
+alternative to direct 3D picking. macOS installation/visual picking is verified;
+iOS shares the implementation and compiles, but this iteration was not installed
+on iPad. Android/e-ink retain their previous renderers. Fish morph deformation and
+sustained frame-time/thermal profiling remain separate follow-ups.
