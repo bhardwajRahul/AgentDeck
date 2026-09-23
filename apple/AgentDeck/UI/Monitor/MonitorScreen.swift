@@ -160,7 +160,7 @@ struct MonitorScreen: View {
                     let top = featuredAwaitingSession == nil ? 0 : attentionHeight + 24
                     ZStack(alignment: .top) {
                         TerrariumColors.deepSea
-                        LivingAquariumScene(terrariumState: terrariumState, onCreatureTapped: handleCreatureTap, onBackgroundTapped: backgroundTapHandler)
+                        LivingAquariumScene(viewingMode: hudHidden, terrariumState: terrariumState, onCreatureTapped: handleCreatureTap, onBackgroundTapped: backgroundTapHandler)
                             .frame(height: max(1, geometry.size.height - top))
                             .padding(.top, top)
                         // Keep the habitat continuous behind the timeline, as on macOS.
@@ -172,6 +172,8 @@ struct MonitorScreen: View {
                             .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeDepthFadeShoulderOpacity)), location: CGFloat(TerrariumRules.nativeDepthFadeShoulder)),
                             .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeDepthFadeEndOpacity)), location: 1),
                         ], startPoint: .top, endPoint: .bottom)
+                        .opacity(hudHidden ? 0 : 1)
+                        .animation(.easeInOut(duration: Double(TerrariumRules.nativeViewingResponseSeconds * 3)), value: hudHidden)
                         .allowsHitTesting(false)
                     }
                 }

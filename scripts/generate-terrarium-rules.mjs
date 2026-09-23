@@ -42,6 +42,8 @@ enum TerrariumRules {
     static let nativeResidentLimit: Int = ${rules.nativeResidentLimit}
     static let nativeCameraFov: Float = ${f(rules.nativeCameraFov)}
     static let nativeCameraWideFov: Float = ${f(rules.nativeCameraWideFov)}
+    static let nativeViewingDistance: Float = ${f(rules.nativeViewingDistance)}
+    static let nativeViewingResponseSeconds: Float = ${f(rules.nativeViewingResponseSeconds)}
     static let nativeWaterTint: Float = ${f(rules.nativeWaterTint)}
     static let nativeDepthFadeStart: Float = ${f(rules.nativeDepthFadeStart)}
     static let nativeDepthFadeShoulder: Float = ${f(rules.nativeDepthFadeShoulder)}
@@ -74,6 +76,8 @@ object TerrariumRules {
     const val NATIVE_RESIDENT_LIMIT = ${rules.nativeResidentLimit}
     const val NATIVE_CAMERA_FOV = ${f(rules.nativeCameraFov)}f
     const val NATIVE_CAMERA_WIDE_FOV = ${f(rules.nativeCameraWideFov)}f
+    const val NATIVE_VIEWING_DISTANCE = ${f(rules.nativeViewingDistance)}f
+    const val NATIVE_VIEWING_RESPONSE_SECONDS = ${f(rules.nativeViewingResponseSeconds)}f
     const val NATIVE_WATER_TINT = ${f(rules.nativeWaterTint)}f
     const val NATIVE_DEPTH_FADE_START = ${f(rules.nativeDepthFadeStart)}f
     const val NATIVE_DEPTH_FADE_SHOULDER = ${f(rules.nativeDepthFadeShoulder)}f

@@ -192,7 +192,7 @@ Both native clients use the generated foreground budget of eight residents,
 prioritizing selection and input requests without removing sessions from the
 roster. Android uses a separate Filament surface for the habitat and creatures;
 labels and dashboard panels retain display resolution. The surface's long edge
-is bounded to 1440 pixels normally and 1200 under power/thermal constraints.
+is bounded to 1440 pixels normally and 960 under power/thermal constraints.
 A 512-pixel shadow map, disabled MSAA/AO/bloom and FXAA reduce GPU work. Thermal
 and power state are sampled every two seconds rather than on every frame.
 The e-ink renderer remains separate.
@@ -229,6 +229,7 @@ Bottom residents rest on the same `aquarium_substrate` mesh authored in the
 resident Blender source, exported to USDZ and `residents/substrate.glb`. Imported
 foot bounds determine contact height; fixed shelves do not move with work steps.
 
-The final color/geometry correction measured 30.142 fps at the 1200-pixel
+The cropped-scene color/geometry correction measured 30.142 fps at the 1200-pixel
 thermal budget, versus 30.161 fps at 960 pixels on the same tablet (thermal
-status 3). This improves spatial detail without claiming a higher refresh rate.
+status 3). The subsequent full-canvas composition uses the 960-pixel thermal limit again
+to account for its larger render area.

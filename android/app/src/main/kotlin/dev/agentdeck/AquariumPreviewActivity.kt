@@ -16,6 +16,9 @@ import com.google.android.filament.utils.ModelViewer
 import com.google.android.filament.utils.Utils
 import java.nio.ByteBuffer
 
+import androidx.compose.ui.graphics.toArgb
+import dev.agentdeck.terrarium.TerrariumRules
+import dev.agentdeck.terrarium.TerrariumColors
 import android.content.Context
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -46,11 +49,11 @@ class AquariumPreviewActivity : Activity() {
 }
 
 @Composable
-fun AquariumBackground(modifier: Modifier = Modifier, state: dev.agentdeck.terrarium.TerrariumState? = null, focusedId: String? = null, onUnavailable: () -> Unit = {}) {
+fun AquariumBackground(modifier: Modifier = Modifier, state: dev.agentdeck.terrarium.TerrariumState? = null, focusedId: String? = null, viewingMode: Boolean = false, onUnavailable: () -> Unit = {}) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val surface = remember(context) { AquariumSurface(context) }
-    AndroidView(factory = { surface }, modifier = modifier, update = { if (!it.available || (state != null && !it.sync(state, focusedId))) onUnavailable() })
+    AndroidView(factory = { surface }, modifier = modifier, update = { it.viewingMode = viewingMode; if (!it.available || (state != null && !it.sync(state, focusedId))) onUnavailable() })
     DisposableEffect(owner, surface) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -68,13 +71,32 @@ fun AquariumBackground(modifier: Modifier = Modifier, state: dev.agentdeck.terra
 class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
     var available = false
         private set
+    var viewingMode = false
+    private var viewingDistance = 1f
     private var viewer: ModelViewer? = null
     private var waterEntities = intArrayOf()
     private var fillLight: IndirectLight? = null
     private var backdrop: com.google.android.filament.Skybox? = null
     private var residents: dev.agentdeck.terrarium.AquariumResidents? = null
     private val labels = object : android.view.View(context) {
-        override fun onDraw(canvas: android.graphics.Canvas) { residents?.drawLabels(canvas) }
+        private val depthPaint = android.graphics.Paint()
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            val tint = TerrariumRules.NATIVE_WATER_TINT
+            fun color(depth: Float) = TerrariumColors.DeepSea.copy(alpha = tint + depth * (1f - tint)).toArgb()
+            depthPaint.shader = android.graphics.LinearGradient(0f, 0f, 0f, h.coerceAtLeast(1).toFloat(),
+                intArrayOf(color(tint), color(0f), color(TerrariumRules.NATIVE_DEPTH_FADE_SHOULDER_OPACITY), color(TerrariumRules.NATIVE_DEPTH_FADE_END_OPACITY)),
+                floatArrayOf(0f, TerrariumRules.NATIVE_DEPTH_FADE_START, TerrariumRules.NATIVE_DEPTH_FADE_SHOULDER, 1f),
+                android.graphics.Shader.TileMode.CLAMP)
+        }
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            // Reuse the label layer: no additional full-screen Compose blend,
+            // and labels retain their contrast independently of scene depth.
+            val immersion = ((1f - viewingDistance) / (1f - TerrariumRules.NATIVE_VIEWING_DISTANCE)).coerceIn(0f, 1f)
+            if (immersion > 0f) canvas.drawColor(TerrariumColors.DeepSea.copy(alpha = TerrariumRules.NATIVE_WATER_TINT * immersion).toArgb())
+            depthPaint.alpha = ((1f - immersion) * 255).toInt()
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), depthPaint)
+            if (!viewingMode) residents?.drawLabels(canvas)
+        }
     }
     private var active = false
     private var lastFrame = 0L
@@ -186,7 +208,7 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
         if (lastBudgetCheck == 0L || frameTimeNanos - lastBudgetCheck >= 2_000_000_000L) {
             lastBudgetCheck = frameTimeNanos
             constrained = power.isPowerSaveMode || power.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
-            val maxEdge = if (constrained) 1200 else 1440
+            val maxEdge = if (constrained) 960 else 1440
             val scale = minOf(1f, maxEdge.toFloat() / maxOf(width, height, 1))
             val next = (width * scale).toInt().coerceAtLeast(1) to (height * scale).toInt().coerceAtLeast(1)
             if (next != bufferSize) {
@@ -199,6 +221,11 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
         lastFrame = frameTimeNanos
         if (!reduceMotion) elapsedSeconds += dt
         viewer?.let { model ->
+            val targetDistance = if (viewingMode) TerrariumRules.NATIVE_VIEWING_DISTANCE else 1f
+            val blend = if (reduceMotion) 1f else 1f - kotlin.math.exp(-dt / TerrariumRules.NATIVE_VIEWING_RESPONSE_SECONDS)
+            viewingDistance += (targetDistance - viewingDistance) * blend
+            model.camera.lookAt(0.0, 1.65 + 3.15 * viewingDistance, -0.7 + 14.7 * viewingDistance,
+                0.0, 1.65, -0.7, 0.0, 1.0, 0.0)
             val aspect = width.toDouble() / height.coerceAtLeast(1)
             val fov = if (aspect > dev.agentdeck.terrarium.TerrariumRules.NATIVE_CAMERA_WIDE_ASPECT)
                 dev.agentdeck.terrarium.TerrariumRules.NATIVE_CAMERA_WIDE_FOV else dev.agentdeck.terrarium.TerrariumRules.NATIVE_CAMERA_FOV

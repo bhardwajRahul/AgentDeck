@@ -8,6 +8,8 @@ enum TerrariumRules {
     static let nativeResidentLimit: Int = 8
     static let nativeCameraFov: Float = 38.0
     static let nativeCameraWideFov: Float = 32.0
+    static let nativeViewingDistance: Float = 0.82
+    static let nativeViewingResponseSeconds: Float = 0.18
     static let nativeWaterTint: Float = 0.12
     static let nativeDepthFadeStart: Float = 0.4
     static let nativeDepthFadeShoulder: Float = 0.72

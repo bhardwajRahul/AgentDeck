@@ -111,6 +111,29 @@ The same shared model/camera still passes 29 Apple geometry tests; Android
 unit tests and 4,671 Vitest tests pass. Android floor labels were moved above
 their residents to stay clear of the timeline fade.
 
+## Immersive viewing transition
+
+Restored the tap-to-enlarge behavior as an explicit camera transition rather
+than a side effect of resizing the timeline viewport. The native camera moves
+to 82% of its normal distance with a shared 0.18-second exponential response;
+roughly half a second brings it close to the new framing. A second background
+tap returns to the dashboard framing. Viewing hides resident labels and fades
+out the lower readability gradient. Reduced-motion settings apply the camera
+change immediately. Android draws the depth wash in its existing label layer
+and keeps the 960-pixel thermal limit for the larger full-canvas scene.
+
+The user confirmed the iPad zoom amount feels natural. During a concurrent
+native-build verification run, the unrelated Tier 3 SSE timing test missed its
+short event window; its focused rerun passed all 16 tests. The preceding full
+suite passed 4,671 tests. Final Android native frame cadence after restoring the
+full canvas and reusing its label layer measured 27.098 fps under thermal
+status 3 (not the earlier cropped-canvas 30.142 fps result).
+Android release APK installation and both background-tap directions were
+verified on the connected Lenovo tablet; labels and timeline return with the
+original framing. Android unit tests and 29 Apple resident tests passed.
+The iPad remains on the synthetic six-resident preview for user review; Android
+is back on its normal daemon connection. Store submission is still pending.
+
 ## 2026-09-23 — macOS 1.5.0 preview preparation and crowd review
 
 Prepared Apple marketing version 1.5.0 and a macOS-only manual release workflow selection. Apple tags still archive/upload both platforms; no tag, upload, submission or public release was performed. Added localized release copy and review notes in [the preparation record](apple/appstore-submission/macos-1.5.0.md).

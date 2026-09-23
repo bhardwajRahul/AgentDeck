@@ -23,11 +23,12 @@ struct AquariumPreview: View {
 
 @available(iOS 18.0, macOS 15.0, *)
 struct LivingAquariumScene: View {
+    var viewingMode = false
     var terrariumState = TerrariumState()
     var onCreatureTapped: ((String) -> Void)?
     var onBackgroundTapped: (() -> Void)?
     @State private var residents = AquariumResidents()
-    @State private var sceneCamera: PerspectiveCamera?
+    @State private var cameraRig = AquariumCameraRig()
     @State private var cancelUpdate: (() -> Void)?
     @State private var visible = false
 
@@ -44,7 +45,9 @@ struct LivingAquariumScene: View {
                 camera.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > CGFloat(TerrariumRules.nativeCameraWideAspect) ? TerrariumRules.nativeCameraWideFov : TerrariumRules.nativeCameraFov
                 camera.look(at: [0, 1.65, -0.7], from: [0, 4.8, 14], relativeTo: nil)
                 content.add(camera)
-                sceneCamera = camera
+                cameraRig.camera = camera
+                cameraRig.viewing = viewingMode
+                cameraRig.reduceMotion = reduceMotion
                 let background = Entity()
                 background.name = "aquarium-background"
                 background.position.z = -5
@@ -83,15 +86,19 @@ struct LivingAquariumScene: View {
                     guard residents.templateCount == 6 else { throw CocoaError(.fileReadCorruptFile) }
                     content.add(residents.root)
                     residents.sync(terrariumState, aspect: Float(geometry.size.width / max(1, geometry.size.height)))
-                    let subscription = content.subscribe(to: SceneEvents.Update.self) { [weak residents] event in
+                    let subscription = content.subscribe(to: SceneEvents.Update.self) { [weak residents, weak cameraRig] event in
                         residents?.step(event.deltaTime)
+                        cameraRig?.step(event.deltaTime)
                     }
                     cancelUpdate = { subscription.cancel() }
                 } catch {
                     failure = "The 3D aquarium could not be opened. Your dashboard is still available."
                 }
             } update: { _ in
-                sceneCamera?.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > CGFloat(TerrariumRules.nativeCameraWideAspect) ? TerrariumRules.nativeCameraWideFov : TerrariumRules.nativeCameraFov
+                cameraRig.viewing = viewingMode
+                cameraRig.reduceMotion = reduceMotion
+                residents.labelsVisible = !viewingMode
+                cameraRig.camera?.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > CGFloat(TerrariumRules.nativeCameraWideAspect) ? TerrariumRules.nativeCameraWideFov : TerrariumRules.nativeCameraFov
                 residents.sync(terrariumState, aspect: Float(geometry.size.width / max(1, geometry.size.height)))
             }
             .gesture(SpatialTapGesture().targetedToAnyEntity().onEnded { value in
@@ -108,7 +115,7 @@ struct LivingAquariumScene: View {
         }
         .overlay(alignment: .bottom) {
             let count = AquariumResident.project(terrariumState).count
-            if count > TerrariumRules.nativeResidentLimit {
+            if !viewingMode && count > TerrariumRules.nativeResidentLimit {
                 Text("\(count) residents · Select a session in the list to bring it into view")
                     .font(.caption)
                     .foregroundStyle(TerrariumColors.hudText)
@@ -153,8 +160,9 @@ struct LivingAquariumScene: View {
         let playing = visible && !reduceMotion && scenePhase == .active
         residents.animate = playing
         if playing, cancelUpdate == nil, let scene = residents.root.scene {
-            let subscription = scene.subscribe(to: SceneEvents.Update.self) { [weak residents] event in
+            let subscription = scene.subscribe(to: SceneEvents.Update.self) { [weak residents, weak cameraRig] event in
                 residents?.step(event.deltaTime)
+                cameraRig?.step(event.deltaTime)
             }
             cancelUpdate = { subscription.cancel() }
         }
@@ -162,5 +170,23 @@ struct LivingAquariumScene: View {
             if !playing { controller.pause() }
             else { controller.resume() }
         }
+    }
+}
+
+/// Keep camera motion independent of HUD layout and resident animation state.
+@available(iOS 18.0, macOS 15.0, *)
+@MainActor
+private final class AquariumCameraRig {
+    var camera: PerspectiveCamera?
+    var viewing = false
+    var reduceMotion = false
+    private var distanceScale: Float = 1
+
+    func step(_ seconds: TimeInterval) {
+        let target: Float = viewing ? TerrariumRules.nativeViewingDistance : 1
+        let blend: Float = reduceMotion ? 1 : 1 - exp(-Float(min(seconds, 0.1)) / TerrariumRules.nativeViewingResponseSeconds)
+        distanceScale += (target - distanceScale) * blend
+        camera?.look(at: [0, 1.65, -0.7],
+                     from: [0, 1.65 + 3.15 * distanceScale, -0.7 + 14.7 * distanceScale], relativeTo: nil)
     }
 }

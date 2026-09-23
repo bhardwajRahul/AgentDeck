@@ -54,6 +54,8 @@ export const TERRARIUM_RULES = {
   nativeCameraWideFov: 32,
   nativeCameraWideAspect: 2,
   // Full-canvas underwater wash; shared by native tablet and desktop scenes.
+  nativeViewingDistance: 0.82,
+  nativeViewingResponseSeconds: 0.18,
   nativeWaterTint: 0.12,
   nativeDepthFadeStart: 0.4,
   nativeDepthFadeShoulder: 0.72,

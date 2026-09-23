@@ -11,6 +11,8 @@ object TerrariumRules {
     const val NATIVE_RESIDENT_LIMIT = 8
     const val NATIVE_CAMERA_FOV = 38.0f
     const val NATIVE_CAMERA_WIDE_FOV = 32.0f
+    const val NATIVE_VIEWING_DISTANCE = 0.82f
+    const val NATIVE_VIEWING_RESPONSE_SECONDS = 0.18f
     const val NATIVE_WATER_TINT = 0.12f
     const val NATIVE_DEPTH_FADE_START = 0.4f
     const val NATIVE_DEPTH_FADE_SHOULDER = 0.72f

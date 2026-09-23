@@ -74,6 +74,12 @@ final class AquariumResidents {
     private var time: Double = 0
     private var size: Float = 0.85
     var animate = true
+    var labelsVisible = true {
+        didSet {
+            guard labelsVisible != oldValue else { return }
+            for entity in residents.values { entity.findEntity(named: "label")?.isEnabled = labelsVisible }
+        }
+    }
 
     func loadTemplates(_ library: Entity) {
         if let imported = library.findEntity(named: "aquarium_substrate") {
@@ -167,6 +173,7 @@ final class AquariumResidents {
             if resident.findEntity(named: "label") == nil || descriptors.first(where: { $0.id == item.id }) != item {
                 resident.findEntity(named: "label")?.removeFromParent()
                 let label = makeLabel(String(item.title.prefix(22)), activity: item.activity, helpers: item.helpers)
+                label.isEnabled = labelsVisible
                 resident.addChild(label)
             }
             resident.findEntity(named: "focus")?.isEnabled = state.focusedSessionId == item.id || (item.id == "crayfish" && state.focusedSessionId == "openclaw-gateway")
