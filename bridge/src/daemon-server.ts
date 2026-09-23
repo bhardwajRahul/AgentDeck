@@ -2398,13 +2398,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       // 2026-07-31 12:06). 2 KB per 15 ms ≈ 133 KB/s keeps at most a couple
       // of segments in flight while still beating playback rate 4x.
       {
-        // 8 KB / 10 ms ≈ 800 KB/s — a 2 MB answer lands in ~2.5 s. The
-        // original 2 KB / 15 ms (~133 KB/s) predated the PSRAM-mempool core
-        // fix and made long replies take 15+ s to start, which read as "no
-        // playback"; with the hosted mempool in PSRAM the burst constraint is
-        // gone and only gentle pacing is kept as hygiene.
-        const CHUNK = 8192;
-        const GAP_MS = 10;
+        // IPS10 still has internal lwIP/SDIO pressure despite the PSRAM pool:
+        // an 8 KB burst drove its minimum heap to 2 KB in repeated voice tests.
+        // 1 KB / 20 ms stays ahead of 16 kHz PCM playback (32 KB/s). Firmware
+        // streams after a short prebuffer, so it need not wait for a full reply.
+        const CHUNK = board === 'ips_10' ? 1024 : 8192;
+        const GAP_MS = board === 'ips_10' ? 20 : 10;
         let off = 0;
         const writeNext = (): void => {
           if (res.destroyed) return;
