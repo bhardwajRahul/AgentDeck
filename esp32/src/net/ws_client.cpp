@@ -17,6 +17,10 @@
 #endif
 
 #include <WiFi.h>
+#if defined(BOARD_VOICE_HTTP_UPLOAD)
+#include <lwip/sockets.h>
+#include <cerrno>
+#endif
 #include <WiFiClientSecure.h>
 #if defined(BOARD_HAS_DVP_CAMERA)
 #include <HTTPClient.h>
@@ -668,6 +672,10 @@ static void pumpVoiceReplyDownload() {
             uint32_t lastDataMs = millis();
             while (off < replyExpectedBytes && !replyCancelled() &&
                    (uint32_t)(millis() - lastDataMs) < 8000) {
+                // Drain state traffic while the HTTP socket is active; otherwise
+                // unread WS TCP buffers consume the P4's scarce internal heap.
+                ws.loop();
+                Net::serialLoop();
                 size_t want = replyExpectedBytes - off;
                 if (want > 2048) want = 2048;
                 int got = client.read(replyBuf + off, want);
@@ -794,8 +802,8 @@ bool voiceUploadBusy() { return voiceHttpPending; }
 // (copy_buff)`) and reboots the board. Measured on the very first real
 // utterance, 2026-07-31. Writing ≤1 KB per iteration with a small yield keeps
 // only a couple of TCP segments outstanding, which the SDIO link drains
-// comfortably; ~1 KB / 4 ms ≈ 250 KB/s still uploads a 6 s utterance in
-// under a second.
+// comfortably. IPS10 uses bounded nonblocking writes and drains control RX
+// during uploads, so long utterances cannot fill the unread WS receive queue.
 static void pumpVoiceHttp() {
     if (!voiceHttpMutex || !voiceHttpPending) return;
     xSemaphoreTake(voiceHttpMutex, portMAX_DELAY);
@@ -861,14 +869,23 @@ static void pumpVoiceHttp() {
             client.write((const uint8_t*)hdr, (size_t)hlen);
             size_t off = 0;
             uint32_t startMs = millis();
+            uint32_t lastProgressMs = startMs;
             while (off < len && client.connected() &&
-                   (uint32_t)(millis() - startMs) < 20000) {
+                   (uint32_t)(millis() - startMs) < 90000 &&
+                   (uint32_t)(millis() - lastProgressMs) < 20000) {
+                // This is the network owner task. A blocking NetworkClient::write
+                // can spend ten seconds retrying while WS RX buffers accumulate.
+                // Keep both control transports draining and let TCP backpressure
+                // yield immediately instead of starving them after ~80 KB.
+                ws.loop();
+                Net::serialLoop();
                 size_t chunk = len - off;
-                if (chunk > 1024) chunk = 1024;
-                size_t wrote = client.write(buf + off, chunk);
-                if (wrote == 0) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
-                off += wrote;
-                vTaskDelay(pdMS_TO_TICKS(4));   // pace the hosted SDIO TX path
+                if (chunk > 512) chunk = 512;
+                int wrote = ::send(client.fd(), buf + off, chunk, MSG_DONTWAIT);
+                if (wrote > 0) { off += size_t(wrote); lastProgressMs = millis(); }
+                else if (wrote < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
+                         errno != ENOMEM && errno != ENOBUFS) break;
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
             if (off == len) {
                 // "HTTP/1.1 200 OK" — enough of the status line to judge.
@@ -876,7 +893,9 @@ static void pumpVoiceHttp() {
                 size_t got = 0;
                 uint32_t waitMs = millis();
                 while (got < sizeof(status) - 1 &&
-                       (uint32_t)(millis() - waitMs) < 15000 && client.connected()) {
+                       (uint32_t)(millis() - waitMs) < 15000 && (client.connected() || client.available())) {
+                    ws.loop();
+                    Net::serialLoop();
                     int avail = client.available();
                     if (avail <= 0) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
                     int r = client.read((uint8_t*)status + got, sizeof(status) - 1 - got);
