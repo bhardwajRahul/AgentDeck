@@ -75,8 +75,9 @@ long arduino_random(long howsmall, long howbig) {
 // ── Net / device-status shims ────────────────────────────────────────────────
 // Scenes render as an online device (serial + WiFi connected). Definitions back
 // the sim/shims/net/*.h declarations.
+bool g_simSerialConnected = true;
 namespace Net {
-bool serialConnected() { return true; }
+bool serialConnected() { return g_simSerialConnected; }
 void serialWriteJsonLine(const char*) {}
 bool wifiConnected() { return true; }
 const char* wifiLocalIP() { return "192.168.1.42"; }

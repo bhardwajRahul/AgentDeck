@@ -1,5 +1,8 @@
 #include "../../audio/wake_word.h"
 #include "hud_bar.h"
+#if defined(BOARD_IPS10)
+#include "ips10_workspace.h"
+#endif
 #include "../theme.h"
 #include "../display.h"
 #include "../assets/logo.h"
@@ -1461,379 +1464,17 @@ static void voiceCreate(lv_obj_t* pane) {
 
 void init(lv_obj_t* parent) {
 #if defined(BOARD_IPS10)
-    // === IPS10 tablet layout: terrarium on the left, treemap pane fills the rest ===
-    // The terrarium renders in the left ~408px (creatures biased left); the treemap
-    // pane takes everything to its right so the 1280-wide landscape panel has no dead
-    // middle band. Recomputed here each init (orientation changes rebuild the UI).
-    // Anchor the cards region's LEFT edge at the terrarium boundary and let it run to
-    // the right screen edge (explicit pos, not right-align — which was making it look
-    // centered). Left-aligned children so cards start at the terrarium boundary.
-    const int cardsX = IPS10_TERRARIUM_W + 8;
-    ips10SidebarW = (g_screenW > 0 ? g_screenW : 800) - cardsX - 8;
-    if (ips10SidebarW < IPS10_SIDEBAR_W_MIN) ips10SidebarW = IPS10_SIDEBAR_W_MIN;
-    // === Full-width top bar (D1 topbar): brand · daemon status · 5h/7d usage gauges. ===
-    {
-        lv_obj_t* tb = lv_obj_create(parent);
-        lv_obj_set_size(tb, g_screenW, IPS10_TOPBAR_H);
-        lv_obj_set_pos(tb, 0, 0);
-        lv_obj_set_style_bg_color(tb, lv_color_hex(0x07140F), 0);
-        lv_obj_set_style_bg_opa(tb, (lv_opa_t)190, 0);
-        lv_obj_set_style_border_side(tb, LV_BORDER_SIDE_BOTTOM, 0);
-        lv_obj_set_style_border_width(tb, 1, 0);
-        lv_obj_set_style_border_color(tb, lv_color_hex(0x1B3F39), 0);
-        lv_obj_set_style_radius(tb, 0, 0);
-        lv_obj_set_style_pad_left(tb, 22, 0); lv_obj_set_style_pad_right(tb, 26, 0);
-        lv_obj_set_style_pad_top(tb, 0, 0); lv_obj_set_style_pad_bottom(tb, 0, 0);
-        lv_obj_set_style_pad_column(tb, 20, 0);   // generous gaps between brand · daemon · usage
-        lv_obj_clear_flag(tb, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(tb, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_flex_flow(tb, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(tb, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-        // Brand: logo mark + wordmark kept tight together in their own container
-        // (small gap), held apart from the daemon/usage groups by the top-level
-        // pad_column. The mark's layout box is pinned to 30px — otherwise the flex
-        // row reserves the full 64px source width, leaving a gap before the wordmark.
-        lv_obj_t* brand = lv_obj_create(tb);
-        lv_obj_set_size(brand, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_opa(brand, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(brand, 0, 0);
-        lv_obj_set_style_pad_all(brand, 0, 0);
-        lv_obj_set_style_pad_column(brand, 9, 0);
-        lv_obj_clear_flag(brand, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_flex_flow(brand, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(brand, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-        lv_obj_t* mk = lv_image_create(brand);
-        lv_image_set_src(mk, &img_logo_64);
-        lv_image_set_scale(mk, 256 * 30 / 64);   // 64→30px
-        lv_obj_set_size(mk, 30, 30);
-        lv_image_set_inner_align(mk, LV_IMAGE_ALIGN_CENTER);
-        lblLogo = lv_label_create(brand);
-        lv_obj_set_style_text_font(lblLogo, &lv_font_montserrat_16, 0);
-        lv_label_set_recolor(lblLogo, true);
-        lv_label_set_text(lblLogo, "#E7EFE8 Agent##3ED6E8 Deck#");   // Deck in cyan
-
-        tbDaemon = lv_label_create(tb);
-        lv_obj_set_style_text_font(tbDaemon, &font_kr_12, 0);
-        lv_label_set_recolor(tbDaemon, true);
-        lv_obj_set_style_text_color(tbDaemon, lv_color_hex(0x8FA6A2), 0);
-        lv_label_set_text(tbDaemon, "");
-
-#if defined(IPS10_PERF_HUD)
-        tbPerf = lv_label_create(tb);
-        lv_obj_set_style_text_font(tbPerf, &font_kr_12, 0);
-        lv_obj_set_style_text_color(tbPerf, lv_color_hex(0xFFA93D), 0);
-        lv_label_set_text(tbPerf, "perf");
-#endif
-
-        lv_obj_t* sp = lv_obj_create(tb);   // flex spacer → pushes gauges right
-        lv_obj_set_style_bg_opa(sp, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(sp, 0, 0);
-        lv_obj_set_height(sp, 1);
-        lv_obj_set_flex_grow(sp, 1);
-        lv_obj_clear_flag(sp, LV_OBJ_FLAG_SCROLLABLE);
-
-        // Claude (cyan) + Codex (blue) usage as compact per-agent blocks: a brand
-        // icon beside a 2-row column (5H over 7D). The Codex block hides when no
-        // Codex limits are present. Glyphs must be built first.
-        ips10InitGlyphs();
-        makeUsageBlock(tb, &glyphOctopus, Theme::ClaudeBody, 0x5D7470, D1_OK,
-                       nullptr, &tb5hFill, &tb5hPct, &tb7dFill, &tb7dPct);
-        // The block hides as a whole when Codex reports nothing; each usage ROW
-        // also hides individually so a post-5h-reset 7D-only state renders one
-        // clean gauge instead of a dead "-" 5H row.
-        tbCodexBlock = makeUsageBlock(tb, &glyphCodex, Theme::CloudBody, 0x7A80E8, D1_CODEX,
-                                   &tbCodexIcon, &tbCx5hFill, &tbCx5hPct, &tbCx7dFill, &tbCx7dPct,
-                                   &tbCx5hGrp, &tbCx7dGrp);
-        lv_obj_add_flag(tbCodexBlock, LV_OBJ_FLAG_HIDDEN);
-
-        // Antigravity chip — brand mark + plan name (no credit count: it's a raw
-        // backend metering number). Hidden until usage_update carries a status.
-        tbAgIcon = lv_image_create(tb);
-        lv_image_set_src(tbAgIcon, &glyphAntigravityColor);
-        lv_image_set_scale(tbAgIcon, 256 * 22 / 64);
-        lv_obj_set_size(tbAgIcon, 22, 22);
-        lv_image_set_inner_align(tbAgIcon, LV_IMAGE_ALIGN_CENTER);
-        lv_obj_add_flag(tbAgIcon, LV_OBJ_FLAG_HIDDEN);
-
-        tbAg = lv_label_create(tb);
-        lv_obj_set_style_text_font(tbAg, &font_kr_12, 0);
-        lv_obj_set_style_text_color(tbAg, lv_color_hex(Theme::AntigravityCyan), 0);
-        lv_label_set_recolor(tbAg, true);
-        lv_label_set_text(tbAg, "");
-        lv_obj_add_flag(tbAg, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    // Cards panel — sits BELOW the top bar (no in-panel header anymore; brand moved to the bar).
-    panelLeft = lv_obj_create(parent);
-    lv_obj_set_size(panelLeft, ips10SidebarW, g_screenH - IPS10_TOPBAR_H - 12);
-    lv_obj_align(panelLeft, LV_ALIGN_TOP_LEFT, cardsX, IPS10_TOPBAR_H + 6);
-    lv_obj_set_style_bg_opa(panelLeft, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(panelLeft, 0, 0);
-    lv_obj_set_style_radius(panelLeft, 14, 0);
-    lv_obj_set_style_pad_top(panelLeft, 8, 0);
-    lv_obj_set_style_pad_bottom(panelLeft, 12, 0);
-    lv_obj_set_style_pad_left(panelLeft, 14, 0);
-    lv_obj_set_style_pad_right(panelLeft, 14, 0);
-    lv_obj_set_style_pad_row(panelLeft, 8, 0);
-    lv_obj_clear_flag(panelLeft, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(panelLeft, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(panelLeft, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-
-    // === Office caption (top-left) + state legend (bottom-left) — HUD overlays on the screen
-    //     above the office canvas (office.js: caption top, legend bottom). Each sits in a dark
-    //     translucent chip so the text reads cleanly over the busy pixel scene. ===
-    {
-        // (No "THE BULLPEN / N LIVE" caption — the top bar already shows the agent count, and
-        //  the team-room rugs + clustered workers carry the spatial identity. terrCount stays
-        //  null so the shared update() path skips it.)
-        terrCount = nullptr;
-
-        // legend chip: round colour swatches (state colours), bottom-left per office.js.
-        lv_obj_t* terrLegend = lv_obj_create(parent);
-        lv_obj_add_flag(terrLegend, LV_OBJ_FLAG_IGNORE_LAYOUT);
-        lv_obj_set_size(terrLegend, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_align(terrLegend, LV_ALIGN_BOTTOM_LEFT, 12, -10);
-        lv_obj_set_style_bg_color(terrLegend, lv_color_hex(0x07140F), 0);
-        lv_obj_set_style_bg_opa(terrLegend, (lv_opa_t)160, 0);
-        lv_obj_set_style_radius(terrLegend, 7, 0);
-        lv_obj_set_style_pad_left(terrLegend, 9, 0); lv_obj_set_style_pad_right(terrLegend, 9, 0);
-        lv_obj_set_style_pad_top(terrLegend, 5, 0); lv_obj_set_style_pad_bottom(terrLegend, 5, 0);
-        lv_obj_set_style_pad_column(terrLegend, 12, 0);
-        lv_obj_set_style_border_width(terrLegend, 0, 0);
-        lv_obj_clear_flag(terrLegend, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(terrLegend, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_flex_flow(terrLegend, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(terrLegend, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        const uint32_t legC[3] = { D1_ATTN, D1_OK, D1_IDLE };
-        const char*    legT[3] = { "Awaiting", "Working", "Idle" };
-        for (int li = 0; li < 3; li++) {
-            lv_obj_t* item = lv_obj_create(terrLegend);
-            lv_obj_set_size(item, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-            lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(item, 0, 0);
-            lv_obj_set_style_pad_all(item, 0, 0);
-            lv_obj_set_style_pad_column(item, 6, 0);
-            lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_clear_flag(item, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
-            lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-            lv_obj_t* sw = lv_obj_create(item);
-            lv_obj_set_size(sw, 11, 11);
-            lv_obj_set_style_radius(sw, 6, 0);
-            lv_obj_set_style_bg_color(sw, lv_color_hex(legC[li]), 0);
-            lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_width(sw, 0, 0);
-            lv_obj_clear_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_t* lt = lv_label_create(item);
-            lv_obj_set_style_text_color(lt, lv_color_hex(0x8FA6A2), 0);  // D1 --dim
-            lv_obj_set_style_text_font(lt, &font_kr_12, 0);
-            lv_label_set_text(lt, legT[li]);
-        }
-    }
-
-    // Not used on IPS10 (the mosaic replaces the flat session list); keep null so
-    // the shared update() path guards them out.
-    lblSessions = nullptr;
-
-    lv_obj_t* workspaceHint = lv_label_create(panelLeft);
-    lv_obj_set_style_text_font(workspaceHint, &font_kr_12, 0);
-    lv_obj_set_style_text_color(workspaceHint, lv_color_hex(Theme::HUDDim), 0);
-    lv_label_set_text(workspaceHint, ips10SidebarW < 500
-        ? "Tap: details / Hold: voice target"
-        : "WORKSPACE  /  Tap: details  /  Hold: voice target");
-
-    // === Agent work cards — stable positions, current task first ===
-    cellsBox = lv_obj_create(panelLeft);
-    lv_obj_set_width(cellsBox, ips10SidebarW - 28);
-    lv_obj_set_flex_grow(cellsBox, 1);          // eat all leftover vertical space
-    // Solid "deck" backdrop (NOT transparent). The cells tile this region with a 6px
-    // GAP and lerp toward new sizes when the live session count changes — during that
-    // settle (and on any transient empty list) the un-tiled area would otherwise show
-    // the screen's pure-black root (0x000000), reading as "the right side flickers to
-    // black". A solid deep ink-green deck makes the inter-cell gutters and transition
-    // gaps an intentional surface instead of black, and reads as cards-on-a-deck (D1).
-    lv_obj_set_style_bg_color(cellsBox, lv_color_hex(0x0B1D1A), 0);   // D1 --ink-1 deck
-    lv_obj_set_style_bg_opa(cellsBox, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(cellsBox, 12, 0);
-    lv_obj_set_style_border_width(cellsBox, 0, 0);
-    lv_obj_set_style_pad_all(cellsBox, 0, 0);
-    lv_obj_add_flag(cellsBox, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(cellsBox, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(cellsBox, LV_SCROLLBAR_MODE_AUTO);
-    // No flex layout → children are placed by absolute lv_obj_set_pos (the treemap).
-
-    ips10InitGlyphs();   // build the A8 creature-mark descriptors once before the cells use them
-
-    for (int i = 0; i < MOSAIC_MAX; i++) {
-        cell[i] = lv_obj_create(cellsBox);
-        lv_obj_set_size(cell[i], 80, 60);
-        lv_obj_set_pos(cell[i], 0, 0);
-        // Low-glare work surface for an always-on desk companion.
-        lv_obj_set_style_bg_color(cell[i], lv_color_hex(Theme::MidWater), 0);
-        lv_obj_set_style_bg_grad_color(cell[i], lv_color_hex(Theme::DeepSea), 0);
-        lv_obj_set_style_bg_grad_dir(cell[i], LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_bg_opa(cell[i], LV_OPA_COVER, 0);   // opaque (no per-pixel blend)
-        lv_obj_set_style_radius(cell[i], 12, 0);
-        lv_obj_set_style_border_side(cell[i], LV_BORDER_SIDE_LEFT, 0);
-        lv_obj_set_style_border_width(cell[i], 3, 0);
-        lv_obj_set_style_border_color(cell[i], lv_color_hex(Theme::HUDDim), 0);
-        lv_obj_set_style_pad_left(cell[i], 11, 0);
-        lv_obj_set_style_pad_right(cell[i], 10, 0);
-        lv_obj_set_style_pad_top(cell[i], 9, 0);
-        lv_obj_set_style_pad_bottom(cell[i], 9, 0);
-        lv_obj_set_style_pad_row(cell[i], 5, 0);
-        lv_obj_clear_flag(cell[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_flex_flow(cell[i], LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(cell[i], LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-#if defined(BOARD_IPS10) && defined(BOARD_HAS_VOICE_CAPTURE)
-        // Voice builds: a short tap opens task details; a long press picks
-        // the hold-to-talk target (cyan outline + button sub-label). This replaces the earlier "passive status tiles"
-        // stance, which dated from when this panel's touch controller had
-        // never reported a point — the mic gave the cards their first real
-        // reason to be pressable. Approve/Deny stay separate child buttons and
-        // do not bubble up here.
-        lv_obj_add_flag(cell[i], LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(cell[i], cellLongPressCb, LV_EVENT_SHORT_CLICKED, (void*)(intptr_t)i);
-        lv_obj_add_event_cb(cell[i], cellTapCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)i);
-#else
-        // Cells are PASSIVE status tiles: everything the user needs is shown inline as text
-        // (name · state · tool · activity · meta) and awaiting cells expose explicit Approve/Deny
-        // buttons. No tap-to-open detail overlay. Non-clickable so a phantom press does nothing.
-        lv_obj_clear_flag(cell[i], LV_OBJ_FLAG_CLICKABLE);
-        (void)cellTapCb;
-#endif
-
-        // Creature mark — top-right overlay, OUTSIDE the flex flow (IGNORE_LAYOUT)
-        cellGlyph[i] = lv_image_create(cell[i]);
-        lv_obj_add_flag(cellGlyph[i], LV_OBJ_FLAG_IGNORE_LAYOUT);
-        lv_obj_add_flag(cellGlyph[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_image_recolor_opa(cellGlyph[i], LV_OPA_COVER, 0);
-        lv_obj_set_style_image_opa(cellGlyph[i], (lv_opa_t)235, 0);
-        lv_obj_clear_flag(cellGlyph[i], LV_OBJ_FLAG_CLICKABLE);
-
-        // Name line: ●agent-name (bold) + colored [STATE]
-        cellName[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellName[i], lv_color_hex(Theme::HUDText), 0);
-        lv_obj_set_style_text_font(cellName[i], &font_kr_20, 0);
-        lv_label_set_recolor(cellName[i], true);
-        lv_label_set_long_mode(cellName[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(cellName[i], 60);
-        lv_label_set_text(cellName[i], "");
-
-        // State pill chip — short content-sized rounded label (NOT a nested flex row, so it
-        // stays layout-cheap). bg/text colored per state at render time.
-        cellPill[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_font(cellPill[i], &font_kr_16, 0);
-        lv_obj_set_style_text_color(cellPill[i], lv_color_hex(0x05140F), 0);
-        lv_obj_set_style_bg_opa(cellPill[i], LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(cellPill[i], 8, 0);
-        lv_obj_set_style_pad_left(cellPill[i], 8, 0);
-        lv_obj_set_style_pad_right(cellPill[i], 8, 0);
-        lv_obj_set_style_pad_top(cellPill[i], 2, 0);
-        lv_obj_set_style_pad_bottom(cellPill[i], 2, 0);
-        lv_label_set_long_mode(cellPill[i], LV_LABEL_LONG_CLIP);
-        lv_label_set_text(cellPill[i], "");
-
-        cellProj[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellProj[i], lv_color_hex(Theme::HUDDim), 0);
-        lv_obj_set_style_text_font(cellProj[i], &font_kr_16, 0);
-        lv_label_set_long_mode(cellProj[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(cellProj[i], 60);
-        lv_label_set_text(cellProj[i], "");
-
-        // Child activity is a second axis: an idle parent can have live children.
-        cellCoord[i] = lv_label_create(cell[i]);
-        if (cellCoord[i]) {
-        lv_obj_set_style_text_font(cellCoord[i], &font_kr_16, 0);
-        lv_obj_set_style_text_color(cellCoord[i], lv_color_hex(Theme::HUDDim), 0);
-        lv_obj_set_style_bg_color(cellCoord[i], lv_color_hex(Theme::HUDText), 0);
-        lv_obj_set_style_bg_opa(cellCoord[i], LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(cellCoord[i], 6, 0);
-        lv_label_set_long_mode(cellCoord[i], LV_LABEL_LONG_DOT);
-        lv_label_set_text_static(cellCoord[i], cellCoordText[i]);
-        } else {
-            Serial.printf("[collaboration] census label %d allocation failed\n", i);
-        }
-
-        // Tool box: "▸ tool" in a bordered/filled box.
-        cellTool[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellTool[i], lv_color_hex(Theme::HUDText), 0);
-        lv_obj_set_style_text_font(cellTool[i], &font_kr_16, 0);
-        lv_obj_set_style_bg_color(cellTool[i], lv_color_hex(0x07140F), 0);
-        lv_obj_set_style_bg_opa(cellTool[i], (lv_opa_t)150, 0);
-        lv_obj_set_style_border_width(cellTool[i], 1, 0);
-        lv_obj_set_style_border_color(cellTool[i], lv_color_hex(Theme::HUDDim), 0);
-        lv_obj_set_style_border_opa(cellTool[i], (lv_opa_t)90, 0);
-        lv_obj_set_style_radius(cellTool[i], 6, 0);
-        lv_obj_set_style_pad_left(cellTool[i], 7, 0);
-        lv_obj_set_style_pad_right(cellTool[i], 7, 0);
-        lv_obj_set_style_pad_top(cellTool[i], 4, 0);
-        lv_obj_set_style_pad_bottom(cellTool[i], 4, 0);
-        lv_label_set_long_mode(cellTool[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(cellTool[i], 60);
-        lv_label_set_text(cellTool[i], "");
-
-        // Body: the TIMELINE feed — newest milestone bright, older rows dimmed via recolor markup.
-        cellBody[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellBody[i], lv_color_hex(Theme::HUDText), 0);
-        lv_obj_set_style_text_font(cellBody[i], &font_kr_16, 0);
-        lv_obj_set_style_text_line_space(cellBody[i], 6, 0);
-        lv_label_set_recolor(cellBody[i], true);
-        lv_label_set_long_mode(cellBody[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(cellBody[i], 60);
-        lv_label_set_text(cellBody[i], "");
-
-        // Footer: model · elapsed (faint).
-        cellMeta[i] = lv_label_create(cell[i]);
-        lv_obj_set_width(cellMeta[i], 60);
-        lv_obj_set_style_text_color(cellMeta[i], lv_color_hex(0x64748B), 0); // slate-500
-        lv_obj_set_style_text_font(cellMeta[i], &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_opa(cellMeta[i], (lv_opa_t)180, 0);
-        lv_label_set_long_mode(cellMeta[i], LV_LABEL_LONG_DOT);
-        lv_label_set_text(cellMeta[i], "");
-
-        // Inline Approve/Deny — shown only on awaiting cells that are tall enough.
-        cellYes[i] = lv_button_create(cell[i]);
-        lv_obj_set_height(cellYes[i], 32);
-        lv_obj_set_width(cellYes[i], LV_PCT(100));
-        lv_obj_set_style_bg_color(cellYes[i], lv_color_hex(Theme::StatusAmber), 0);
-        lv_obj_set_style_radius(cellYes[i], 7, 0);
-        lv_obj_add_event_cb(cellYes[i], cellYesCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-        lv_obj_t* yesLbl = lv_label_create(cellYes[i]);
-        lv_label_set_text(yesLbl, "Approve");
-        lv_obj_set_style_text_color(yesLbl, lv_color_hex(0x1A1205), 0);
-        lv_obj_center(yesLbl);
-        lv_obj_add_flag(cellYes[i], LV_OBJ_FLAG_HIDDEN);
-
-        cellNo[i] = lv_button_create(cell[i]);
-        lv_obj_set_height(cellNo[i], 32);
-        lv_obj_set_width(cellNo[i], LV_PCT(100));
-        lv_obj_set_style_bg_color(cellNo[i], lv_color_hex(0x16413C), 0);
-        lv_obj_set_style_radius(cellNo[i], 7, 0);
-        lv_obj_add_event_cb(cellNo[i], cellNoCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-        lv_obj_t* noLbl = lv_label_create(cellNo[i]);
-        lv_label_set_text(noLbl, "Deny");
-        lv_obj_set_style_text_color(noLbl, lv_color_hex(0xFFFFFF), 0); // white text on dark green button
-        lv_obj_center(noLbl);
-        lv_obj_add_flag(cellNo[i], LV_OBJ_FLAG_HIDDEN);
-
-        lv_obj_add_flag(cell[i], LV_OBJ_FLAG_HIDDEN);
-    }
-
-    // Usage lives solely in the full-width top bar (5H/7D gauges) on the D1 layout.
-    // The old bottom "CLAUDE USAGE" panel was redundant with it, so it is not created
-    // here. Leaving these null makes every `if (panelRight)` visibility guard below a
-    // no-op, so nothing re-shows it at runtime.
-    panelRight = nullptr;
-    lblTankHeader = nullptr;
-
+    ips10InitGlyphs();
+    ips10SidebarW = g_screenW - 40;
+    panelLeft = parent;
+    lv_obj_t* voicePane = IPS10Workspace::init(parent, ips10AgentGlyph);
 #if defined(BOARD_HAS_VOICE_CAPTURE)
-    voiceCreate(panelLeft);
+    voiceCreate(voicePane);
 #endif
-
-#elif IS_ROUND
+    return;
+#endif
+#if !defined(BOARD_IPS10)
+#if IS_ROUND
     // === Round AMOLED layout: top status bar + bottom gauges ===
 
     // Top status bar — centered, narrow
@@ -2080,6 +1721,7 @@ void init(lv_obj_t* parent) {
     lv_label_set_text(acctChipLabel, "");
     lv_obj_add_flag(acctChip, LV_OBJ_FLAG_HIDDEN);
 #endif
+#endif // !BOARD_IPS10
 }
 
 // Helper: status color for AgentState
@@ -2170,6 +1812,14 @@ static void setTopbarGauge(lv_obj_t* fill, lv_obj_t* pct, float v,
 #endif
 
 void update() {
+#if defined(BOARD_IPS10)
+    IPS10Workspace::update();
+#if defined(BOARD_HAS_VOICE_CAPTURE)
+    snprintf(voiceTargetSid, sizeof(voiceTargetSid), "%s", IPS10Workspace::selectedSession());
+    voiceTick();
+#endif
+    return;
+#endif
 #if defined(BOARD_IPS10) && defined(BOARD_HAS_VOICE_CAPTURE)
     voiceTick();
 #endif

@@ -7,8 +7,8 @@ locale: en
 canonical: true
 status: stable
 owner: Firmware maintainers
-reviewed: 2026-07-22
-revision: 2026-07-22
+reviewed: 2026-09-23
+revision: 2026-09-23
 source_of_truth: docs/esp32.md
 validators: [bash esp32/robot/run.sh build]
 ---
@@ -32,8 +32,7 @@ pnpm esp32:sim box_86 working  # one board, one scene
 ```
 
 Covers all board classes: LCD terrarium + HUD (`box_86` 480×480, `ips35` 480×320,
-`amoled` 360×360 round, `ttgo` 135×240 compact overlay), the IPS10 tablet "pixel
-office" + sidebar mosaic (`ips10` 1280×800), the two companion render trees
+`amoled` 360×360 round, `ttgo` 135×240 compact overlay), the IPS10 task workspace (`ips10` 1280×800, also tested at 800×1280), the two companion render trees
 (`t_embed` 320×170 encoder knob, `t_display_pro` 480×222 focus strip), the TC001
 8×32 LED matrix (`led8x32`, usage/agents pages), and the three paper-face layouts
 (`trmnl_75` 800×480, `nm_epd_420_preview` 400×300, and
@@ -54,6 +53,22 @@ Standalone PlatformIO project (does not inherit `esp32/platformio.ini`), so
 WiFi/WebSockets/LovyanGFX never enter the native build. Limitations: Latin labels
 only (CJK stubbed); e-ink is a single full-buffer pass (no partial-refresh
 ghosting). See [esp32/sim/README.md](../esp32/sim/README.md).
+
+## IPS10 task workspace
+
+IPS10 uses the whole touchscreen for work inspection. The fixed layout is:
+
+- Glanceable totals and filters for all, attention, working, and idle sessions.
+- A scrollable session rail, with attention first and selection retained by session ID when the daemon reorders its roster. Task names use reported milestones when available.
+- A persistent detail surface with the canonical agent glyph, current activity or permission question, reported child/background counts, and two recent events. **History** expands to the eight newest events retained on the device; it is not a complete archive. Long questions and history rows scroll instead of losing their ending.
+- A separate voice/speaker drawer keeps the existing hold-to-talk, wake toggle, playback stop, and volume controls available. Hold-to-talk targets the selected eligible session; the existing wake-word path remains dedicated to OpenClaw.
+- A connection banner retains inspectable last-known data during reconnects. Unknown usage/census values display `-`; idle never claims that a task completed. Permission prompts direct the user to the agent terminal, preserving the existing attention-only policy.
+
+Primary workspace text uses the repository's IBM Plex Sans KR at a real 20px (including Korean); large counts use a compact 36px digit subset. The generated fonts are IPS10-only and the full Hangul face uses uncompressed 2bpp to bound flash and avoid decompression during drawing.
+
+The old pixel-office/mosaic is no longer created or rendered on IPS10. The workspace uses reusable LVGL widgets and fixed text/session/event stores, without a framebuffer animation or per-frame growing containers. Other boards retain their existing render trees. `workspace_diag` is a read-only firmware-local serial command returning a UI-core snapshot (layout, session counts, update count and processing time); it does not access LVGL from the network task and its timings exclude the later display flush.
+
+The native simulator's `ips10 --verify-interactions` covers priority selection, same-project session attribution, ring wrap, roster reorder/removal, empty filters, voice drawer bounds, offline state, and empty state. Run it in both default landscape and `--portrait` modes. These previews validate actual firmware widgets; they do not establish physical touch accuracy or microphone recognition quality. Speech recognition revalidation and front-camera vision remain separate work.
 
 ## Flash over USB
 

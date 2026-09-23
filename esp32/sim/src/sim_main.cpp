@@ -114,6 +114,8 @@ int main(int argc, char** argv) {
 
 #if defined(BOARD_IPS10)
 #include "../../src/audio/wake_word.h"
+#include "../../src/ui/widgets/ips10_workspace.h"
+extern bool g_simSerialConnected;
 #endif
 
 #if defined(BOARD_T_EMBED) || defined(BOARD_T_DISPLAY_PRO)
@@ -197,30 +199,70 @@ lv_obj_t* ipsLabel(lv_obj_t* obj, const char* text) {
   return nullptr;
 }
 bool verifyIpsInteractions(const char* outdir) {
+  auto save=[&](const char* name) {
+    const std::string path=std::string(outdir)+"/"+name+".png";
+    return SimPng::writeRgb565(path.c_str(),SimDisplay::framebuffer(),SimDisplay::width(),SimDisplay::height());
+  };
+  auto advance=[] { SimDisplay::tick(300);treeUpdate(.3f);SimDisplay::refresh(); };
+  auto click=[&](const char* text) {
+    auto* l=ipsLabel(lv_screen_active(),text);
+    if(!l) {std::fprintf(stderr,"missing control: %s\n",text);return false;}
+    lv_obj_send_event(lv_obj_get_parent(l),LV_EVENT_CLICKED,nullptr);advance();return true;
+  };
   const std::string overview=std::string(outdir)+"/ips10-overview.png";
   if(!renderScene("crowd",overview.c_str(),90,"focus")) return false;
-  auto* project=ipsLabel(lv_screen_active(),"AgentDeck");
-  if(!project) return false;
-  auto* card=lv_obj_get_parent(project);
-  lv_obj_send_event(card,LV_EVENT_SHORT_CLICKED,nullptr);
-  SimDisplay::refresh();
-  auto* close=ipsLabel(lv_layer_top(),LV_SYMBOL_CLOSE);
-  if(!close) return false; // a normal tap must open details, without a hold
-  auto* panel=lv_obj_get_parent(lv_obj_get_parent(close));
-  lv_area_t bounds;lv_obj_get_coords(panel,&bounds);
-  if(bounds.x1<0 || bounds.x2>=g_screenW || bounds.y1<0 || bounds.y2>=g_screenH) return false;
-  const std::string detail=std::string(outdir)+"/ips10-detail.png";
-  if(!SimPng::writeRgb565(detail.c_str(),SimDisplay::framebuffer(),SimDisplay::width(),SimDisplay::height())) return false;
-  lv_obj_send_event(lv_obj_get_parent(close),LV_EVENT_CLICKED,nullptr);
-  if(ipsLabel(lv_layer_top(),LV_SYMBOL_CLOSE)) return false;
-  lv_obj_send_event(card,LV_EVENT_LONG_PRESSED,nullptr);
-  SimDisplay::tick(400);treeUpdate(.4f);SimDisplay::refresh();
-  if(ipsLabel(lv_layer_top(),LV_SYMBOL_CLOSE)) return false; // long hold selects voice, not details
-  auto* wake=ipsLabel(lv_screen_active(),"OpenClaw ON");
-  if(!wake) return false;
-  lv_obj_send_event(lv_obj_get_parent(wake),LV_EVENT_CLICKED,nullptr);
-  if(WakeWord::enabled()) return false;
-  std::fprintf(stderr,"[sim] IPS10 tap details, bounds, close, hold target, wake toggle: ok\n");
+  if(std::strcmp(IPS10Workspace::selectedSession(),"s4-AgentDeck")) return false;
+  if(!ipsLabel(lv_screen_active(),"권한 요청:")) return false; // ring head is oldest
+  if(!click("ips10 카드 개선")) return false;
+  if(std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return false;
+  if(!ipsLabel(lv_screen_active(),"Fixed the treemap")) return false;
+  if(ipsLabel(lv_screen_active(),"권한 요청:")) return false;
+  if(!save("ips10-selected")) return false;
+  // Reordering the daemon roster must not retarget detail or voice.
+  std::swap(g_state.sessions[0],g_state.sessions[2]);advance();
+  if(std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return false;
+  TimelineEntry entry{};
+  std::snprintf(entry.raw,sizeof(entry.raw),"GLOBAL-UNATTRIBUTED");g_state.addTimelineEntry(entry);
+  std::snprintf(entry.sessionId,sizeof(entry.sessionId),"s4-AgentDeck");
+  std::snprintf(entry.raw,sizeof(entry.raw),"OTHER-SESSION-ONLY");g_state.addTimelineEntry(entry);
+  // Exercise wrapped rings, newest-first ordering, and the eight-row bound.
+  std::snprintf(entry.sessionId,sizeof(entry.sessionId),"s2-AgentDeck");
+  for(int i=0;i<TIMELINE_MAX_ENTRIES+3;++i) {
+    std::snprintf(entry.raw,sizeof(entry.raw),"SELECTED-EVENT-%03d",i);g_state.addTimelineEntry(entry);
+  }
+  advance();if(!click("기록 보기")) return false;
+  char latest[40];std::snprintf(latest,sizeof(latest),"SELECTED-EVENT-%03d",TIMELINE_MAX_ENTRIES+2);
+  if(!ipsLabel(lv_screen_active(),latest)) return false;
+  if(ipsLabel(lv_screen_active(),"GLOBAL-UNATTRIBUTED") || ipsLabel(lv_screen_active(),"OTHER-SESSION-ONLY")) return false;
+  if(!save("ips10-history")) return false;
+  auto* logLabel=ipsLabel(lv_screen_active(),latest);
+  auto* logPane=lv_obj_get_parent(lv_obj_get_parent(logLabel));
+  lv_obj_scroll_to_y(logPane,500,LV_ANIM_OFF);
+  std::snprintf(entry.sessionId,sizeof(entry.sessionId),"s1-AgentDeck");
+  std::snprintf(entry.raw,sizeof(entry.raw),"NEW-SESSION-EVENT");
+  g_state.addTimelineEntry(entry);g_state.addTimelineEntry(entry);advance();
+  if(!click("TRMNL timeline"))return false;
+  if(lv_obj_get_scroll_y(logPane)!=0)return false; // new task starts at newest event
+  if(!click("ips10 카드 개선"))return false;
+  g_state.sessions[0].alive=false;advance();
+  if(!std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return false;
+  g_state.sessions[4].alive=false;advance();
+  if(!click("확인 필요")) return false;
+  if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"이 상태의 작업이 없습니다")) return false;
+  if(!click("전체")) return false;
+  if(!click("음성 / 스피커")) return false;
+  auto* talk=ipsLabel(lv_screen_active(),"Hold to talk");if(!talk)return false;
+  lv_area_t bounds;lv_obj_get_coords(lv_obj_get_parent(talk),&bounds);
+  if(bounds.x1<0 || bounds.x2>=g_screenW || bounds.y1<0 || bounds.y2>=g_screenH)return false;
+  if(!save("ips10-voice-controls") || !click("음성 / 스피커"))return false;
+  g_state.wsConnected=false;g_simSerialConnected=false;advance();
+  if(!ipsLabel(lv_screen_active(),"연결 끊김"))return false;
+  if(!save("ips10-offline"))return false;
+  g_state.sessionCount=0;advance();
+  if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"에이전트가 연결되면"))return false;
+  if(!save("ips10-empty"))return false;
+  g_simSerialConnected=true;
+  std::fprintf(stderr,"[sim] IPS10 selection, priority, ring wrap, attribution, removal, filters, drawer bounds, offline and empty: ok\n");
   return true;
 }
 #endif
