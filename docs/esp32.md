@@ -50,13 +50,13 @@ firmware fills from the daemon's `state_update`, exercising the real session →
 creature/card derivation. Frames are deterministic (virtual clock + re-seeded
 PRNG) for golden tests. Adding a board = one `platformio.ini` env block.
 Standalone PlatformIO project (does not inherit `esp32/platformio.ini`), so
-WiFi/WebSockets/LovyanGFX never enter the native build. Limitations: Latin labels
-only (CJK stubbed); e-ink is a single full-buffer pass (no partial-refresh
-ghosting). See [esp32/sim/README.md](../esp32/sim/README.md).
+WiFi/WebSockets/LovyanGFX never enter the native build. IPS10 renders the real
+Korean fonts. Hardware flush timing and physical touch accuracy are not modeled;
+e-ink is a single full-buffer pass (no partial-refresh ghosting). See [esp32/sim/README.md](../esp32/sim/README.md).
 
 ## IPS10 task workspace
 
-IPS10 uses the whole touchscreen for work inspection. The fixed layout is:
+IPS10 uses the whole touchscreen for work inspection. The installed P4 display driver is currently fixed to 1280×800 landscape; `set_orientation` does not rotate this board. The 800×1280 layout is validated in the native simulator, not as a physical rotation feature. The fixed layout is:
 
 - Glanceable totals and filters for all, attention, working, and idle sessions.
 - A scrollable session rail, with attention first and selection retained by session ID when the daemon reorders its roster. Task names use reported milestones when available.
