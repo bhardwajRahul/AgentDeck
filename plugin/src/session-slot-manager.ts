@@ -1,3 +1,4 @@
+import { selectedLunaReserve } from '@agentdeck/shared';
 /**
  * SessionSlotManager — central state machine for v4 dynamic session-per-button layout.
  *
@@ -439,7 +440,7 @@ export class SessionSlotManager {
     this._codexSecondary = cx?.secondary
       ? { percent: cx.secondary.usedPercent, resetsAt: cx.secondary.resetsAt, windowMinutes: cx.secondary.windowMinutes, stale: cx.secondary.stale === true }
       : null;
-    this._codexLunaReserve = cx?.lunaReserve;
+    this._codexLunaReserve = selectedLunaReserve(cx);
     this._codexCapturedAt = cx?.capturedAt;
     // Worst-first already (active desc, then percent desc) — only [0] can ever
     // reach a key, so the rest is dead work here. Paging through them lives on

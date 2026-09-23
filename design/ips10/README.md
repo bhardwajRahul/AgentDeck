@@ -12,8 +12,23 @@ The previous `room.py`/`room.png`/`encode_room.py` Blender workbench and `keycap
 
 ## Alignment contract (September 23 refinement)
 
-The IPS10 borrows native monitor grouping and type hierarchy, scaled for a desk display. `Grid` in `ips10_workspace.cpp` owns the project-row geometry. Outer margins are 24px; project tracks are equal width with 16px gutters and 16px inner padding. Quota remains a 252px secondary rail separated by 16px. Project and quota headings share a baseline. Each project starts its agent rows after a 96px header; every agent has a 120px row with its illustration at left and aligned status/activity/worker text at right. When a single project has at least 600px of width, its peer rows share equal horizontal tracks instead of stretching a vertical list across the display. Project results start below the tallest visible peer group, consistently across columns. Unknown activity still stays hidden; blank decorative labels are never added to fill a row.
+The IPS10 borrows native monitor grouping and type hierarchy, scaled for a desk display. `Grid` in `ips10_workspace.cpp` owns the project-row geometry. Outer margins are 24px; project tracks are equal width with 16px gutters and 16px inner padding. Quota remains a 252px secondary rail separated by 16px. Project and quota headings share a baseline. Each project starts its agent rows after a 96px header; every agent has a 96–120px row, fitted to the space above the voice dock, with its illustration at left and aligned status/activity/worker text at right. When a single project has at least 600px of width, its peer rows share equal horizontal tracks instead of stretching a vertical list across the display. Project results start below the tallest visible peer group, consistently across columns. Unknown activity still stays hidden; blank decorative labels are never added to fill a row.
 
-Typography roles: 28px bold for the wordmark and quota values, 20px bold for section/project headings, 20px Regular for work descriptions and results, and 16px Regular for metadata, status, window/reset labels and footer context. Existing 36px numerals remain in detail filters/census. The new ASCII `font_studio_16` is generated with lv_font_conv 1.5.3 from the OFL IBM Plex Sans KR Regular source, 2bpp/no compression, with `font_workspace_20` fallback for received CJK. Exact conversion arguments are recorded in its generated header.
+Typography roles: 28px bold for the wordmark, 20px bold for compact quota values, 20px bold for section/project headings, 20px Regular for work descriptions and results, and 16px Regular for metadata, status, window/reset labels and footer context. Existing 36px numerals remain in detail filters/census. The new ASCII `font_studio_16` is generated with lv_font_conv 1.5.3 from the OFL IBM Plex Sans KR Regular source, 2bpp/no compression, with `font_workspace_20` fallback for received CJK. Exact conversion arguments are recorded in its generated header.
 
 `creatures.py` uses Blender 5.2 to extrude the existing canonical alpha masks into three shallow reliefs (Claude, Codex, OpenClaw), with colors from `design/tokens.css`. It preserves the current scene and never edits the original marks. These are baked 112px RGBA illustrations, not new live 3D creatures. `encode_creatures.py --check` verifies their generated flash-resident RGB565+A8 consumers (110.25 KiB total). All seats share those three images; other agents retain their canonical glyphs. There is no new runtime renderer, canvas or image-decompression allocation.
+
+### USAGE and voice dock (v8)
+
+USAGE groups actual Claude/Codex/z.ai windows and confirmed subscription metadata
+by provider. Missing windows are omitted, including a missing 5h allowance. Luna
+uses a crescent and remaining percentage only while regular Codex quota is exhausted;
+the next reset snapshot restores the ordinary windows. Antigravity is plan/date only.
+The list is content-sized and scrolls within its available height when fully populated.
+
+The header contains the product mark and a two-segment Aquarium/Details switch.
+Connection failures belong in the attention banner. The bottom dock replaces token
+counters: wake availability, listening, recognition, processing owner, heard text and
+reply. Text is bounded and marshalled from audio/network tasks; only the UI task
+updates widgets. Details shares live-census labels and waiting-on-work policy with
+macOS Collaboration. Live counts and task-scoped observations are not interchangeable.

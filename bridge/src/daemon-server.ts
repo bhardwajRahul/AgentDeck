@@ -1971,6 +1971,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         // Workers require this flag before remote-attaching; the Swift daemon
         // does not advertise it and is therefore never selected as a remote hub.
         sameSocketControl: true,
+        // Report the configured recognition path, not inferred engine readiness.
+        // This lets device diagnostics detect a runtime that predates the local backend.
+        voice: {
+          transcriber: (loadDaemonSettings().voice as VoiceTranscriptionSettings | undefined)?.transcriber ?? 'apple',
+          locale: (loadDaemonSettings().voice as VoiceTranscriptionSettings | undefined)?.locale ?? 'auto',
+          personalRoute: 'openclaw-personal',
+        },
         // Network posture, so `agentdeck daemon restart` can carry the running
         // daemon's posture across the restart instead of silently downgrading
         // an enterprise install back to "advertise everything". Local-only

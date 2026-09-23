@@ -7,6 +7,9 @@
 #include "ips10_relief_openclaw_generated.h"
 #include "../assets/logo.h"
 #include "audio/mic_capture.h"
+#include "audio/wake_word.h"
+#include "../../util/usage_presentation.generated.h"
+#include "../../util/collaboration_presentation.generated.h"
 #include "../theme.h"
 #include "../display.h"
 #include "../../state/agent_state.h"
@@ -58,9 +61,9 @@ static char presentedId[32] = "";
 static bool history, voiceOpen, connected, overviewMode=true;
 static uint32_t lastUpdate;
 static lv_obj_t *root, *rail, *detail, *voicePane, *filters[4], *cards[10], *marks[10], *eventBox, *activityScroll;
-static lv_obj_t *stateNodes[3], *eventCards[8], *historyButton, *focusGlyph;
-static Text<12> censusValue[3];
-static Text<80> link, summary, rosterTitle, heading, identity, stateText, usage, census, empty;
+static lv_obj_t *stateNodes[4], *eventCards[8], *historyButton, *focusGlyph;
+static Text<12> censusValue[4];
+static Text<80> link, summary, rosterTitle, heading, identity, stateText, census, empty;
 static Text<200> activity, instruction;
 static Text<56> rowTitle[10], rowState[10];
 static Text<96> rowTool[10];
@@ -72,8 +75,13 @@ static int detailW, sceneW;
 // Bounded, device-lifetime widget pools: ten projects / ten creatures total.
 // No canvases or per-frame heap allocations are needed for the living overview.
 static lv_obj_t *overview, *viewButton, *resourcePane, *quotaCards[6], *quotaBars[6], *pods[10], *seats[10], *creatures[10];
-static Text<40> viewLabel, quotaValue[6], quotaReset[6], podName[10], seatState[10];
-static Text<160> tokenLine;
+static Text<40> quotaValue[6], quotaReset[6], podName[10], seatState[10];
+static Text<240> voiceHeard;
+static Text<480> voiceSaid;
+static Text<64> voiceAnswerLabel;
+struct VoiceSnapshot { char target[40], question[240], answer[480], notice[160]; };
+static VoiceSnapshot voicePending{}, voiceView{};
+static portMUX_TYPE voiceMux = portMUX_INITIALIZER_UNLOCKED;
 static Text<100> podStatus[10], overviewEmpty;
 static Text<200> podLatest[10], ambientVoice;
 static Text<120> attentionLine;
@@ -83,18 +91,22 @@ static Text<40> cohortLabel[10], childLabel[10];
 static bool gatewayReady=false, retainedDetail=false;
 static lv_obj_t* recentCaption;
 static Text<32> quotaWindow[6];
-static lv_obj_t* providerNames[3];
+static lv_obj_t* providerNames[4];
+static Text<80> providerPlan[4];
+static lv_obj_t* lunaMoon;
+static lv_obj_t* modeButtons[2];
 static lv_obj_t* voiceButton;
-// One fixed subscription chip; raw Antigravity credits never enter the view.
-static lv_obj_t* planChip;
-static Text<48> planLabel;
+
 static int displayedSlot[10];
 static lv_obj_t *voiceStatusPane, *attentionPane;
 static int page=0, pageCount=1;
 static uint32_t pageSince=0;
 static bool pageHeld=false;
 static char projectKeys[10][40];
-struct UsageSnapshot { float percent[6]; char reset[6][20]; char plan[48]; bool mcp; uint32_t input, output, calls; float cost; };
+struct UsageSnapshot {
+    float percent[6], luna; char reset[6][20], lunaReset[20]; char plan[48]; bool mcp;
+    uint16_t minutes[2]; DashboardState::SubscriptionSlot subscriptions[4]; uint8_t subscriptionCount;
+};
 static UsageSnapshot quota;
 static int podFor[10], memberSlot[10], podMembers[10], projectCount;
 static uint32_t brandColor(const char* agent) {
@@ -166,6 +178,7 @@ static void filterCb(lv_event_t* e) {
 static void historyCb(lv_event_t*) { history=!history;lastUpdate=0;update();lv_obj_scroll_to_y(eventBox,0,LV_ANIM_OFF); }
 static void viewCb(lv_event_t*) { overviewMode=!overviewMode;if(overviewMode)filter=0;lastUpdate=0;update(); }
 static void pageCb(lv_event_t*) { pageHeld=!pageHeld;lastUpdate=0;update(); }
+static void modeCb(lv_event_t* e) { overviewMode=lv_event_get_user_data(e)==nullptr;lastUpdate=0;update(); }
 static void voiceCb(lv_event_t*) { voiceOpen=!voiceOpen;visible(voicePane,voiceOpen); }
 }
 
@@ -182,12 +195,19 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     auto* logo=lv_image_create(root);lv_image_set_src(logo,&img_logo_48);lv_obj_set_pos(logo,24,16);lv_obj_set_style_image_recolor_opa(logo,LV_OPA_COVER,0);lv_obj_set_style_image_recolor(logo,lv_color_hex(Theme::StatusCyan),0);
     caption(root,"AgentDeck",84,23,240,Theme::HUDText);
     auto* wordmark=lv_obj_get_child(root,-1);lv_obj_set_style_text_font(wordmark,&font_studio_28,0);
-    viewButton=box(root,w-152,16,128,44,Theme::ShallowWater);
-    label(viewLabel,viewButton,16,10,100,&font_studio_20,Theme::HUDText);
-    lv_obj_add_event_cb(viewButton,viewCb,LV_EVENT_CLICKED,nullptr);
+    viewButton=box(root,w-332,16,308,48,Theme::DeepSea);
+    for(int mode=0;mode<2;++mode) {
+        modeButtons[mode]=box(viewButton,mode*154,0,154,48,Theme::ShallowWater);
+        lv_obj_add_event_cb(modeButtons[mode],modeCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(mode)));
+        // Native geometric icons keep the switch legible without a font dependency.
+        for(int k=0;k<3;++k) {
+            auto* icon=box(modeButtons[mode],14+(mode?0:k*6),14+(mode?k*7:k%2*8),mode?18:5,mode?3:5,Theme::HUDText);
+            lv_obj_clear_flag(icon,LV_OBJ_FLAG_CLICKABLE);
+        }
+        caption(modeButtons[mode],mode?"Details":"Aquarium",42,13,110,Theme::HUDText);
+    }
     label(link,root,330,26,350,&font_studio_20,Theme::HUDDim);
-    lv_obj_set_style_text_align(link.obj,LV_TEXT_ALIGN_LEFT,0);
-    if(w<1100)visible(link.obj,false);
+    visible(link.obj,false);
     label(summary,root,24,76,w-248,&font_studio_20,Theme::HUDText);
     const int gap=12, fw=(w-48-gap*3)/4;
     for(int i=0;i<4;++i) {
@@ -214,6 +234,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     }
     detailW=w-railW-72;
     detail=box(root,48+railW,204,detailW,h-324,Theme::MidWater);
+    lv_obj_add_flag(detail,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(detail,LV_DIR_VER);
     label(heading,detail,24,16,detailW-124,&font_studio_20,Theme::HUDText);
     label(identity,detail,24,54,detailW-124,&font_studio_16,Theme::HUDDim);
     focusGlyph=lv_image_create(detail);lv_obj_set_pos(focusGlyph,detailW-88,8);
@@ -221,9 +242,10 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     // These are reported collaboration counts, never inferred progress. The
     // raised tiles provide a glanceable map of active/completed/background work.
     const int nw=(detailW-64)/3;
-    for(int i=0;i<3;++i) {
+    for(int i=0;i<4;++i) {
         stateNodes[i]=box(detail,24+i*(nw+8),90,nw,58,Theme::DeepSea);
-        caption(stateNodes[i],i==0?"Subagents":i==1?"Completed":"Background",12,8,nw-20);
+        caption(stateNodes[i],CollaborationPresentation::Labels[i],10,8,nw-20);
+        lv_obj_set_style_text_font(lv_obj_get_child(stateNodes[i],-1),&font_studio_16,0);
         label(censusValue[i],stateNodes[i],12,30,nw-20,&font_studio_20,Theme::HUDText);
     }
     label(stateText,detail,24,164,detailW-48,&font_studio_20,Theme::HUDText);
@@ -250,9 +272,13 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     sceneW=w-324;
     overview=box(root,24,96,sceneW,h-174,Theme::DeepSea);lv_obj_set_style_bg_opa(overview,LV_OPA_TRANSP,0);
     resourcePane=box(root,w-276,96,252,h-176,Theme::DeepSea);lv_obj_set_style_bg_opa(resourcePane,LV_OPA_70,0);
-    caption(resourcePane,"Usage quota",16,16,220,Theme::HUDText);
-    const char* providers[]={"Claude","Codex","z.ai"};
-    for(int i=0;i<3;++i){caption(resourcePane,providers[i],16,48,220,Theme::HUDText);providerNames[i]=lv_obj_get_child(resourcePane,-1);lv_obj_set_style_text_align(providerNames[i],LV_TEXT_ALIGN_LEFT,0);}
+    caption(resourcePane,UsagePresentation::Heading,16,16,220,Theme::HUDText);
+    lv_obj_add_flag(resourcePane,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(resourcePane,LV_DIR_VER);
+    for(int i=0;i<4;++i){caption(resourcePane,UsagePresentation::Providers[i],16,48,220,Theme::HUDText);providerNames[i]=lv_obj_get_child(resourcePane,-1);lv_obj_set_style_text_align(providerNames[i],LV_TEXT_ALIGN_LEFT,0);
+        label(providerPlan[i],resourcePane,16,72,220,&font_studio_16,Theme::HUDDim);
+        lv_label_set_long_mode(providerPlan[i].obj,LV_LABEL_LONG_DOT);
+        lv_obj_set_height(providerPlan[i].obj,font_studio_16.line_height);
+    }
     for(int i=0;i<6;++i) {
         quotaCards[i]=box(resourcePane,8,72,116,150,Theme::DeepSea);lv_obj_set_style_bg_opa(quotaCards[i],LV_OPA_TRANSP,0);
         quotaBars[i]=lv_arc_create(quotaCards[i]);lv_obj_set_pos(quotaBars[i],7,0);lv_obj_set_size(quotaBars[i],100,100);
@@ -264,10 +290,9 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         label(quotaWindow[i],quotaCards[i],4,103,108,&font_studio_16,Theme::HUDDim);lv_obj_set_style_text_align(quotaWindow[i].obj,LV_TEXT_ALIGN_CENTER,0);
         label(quotaReset[i],quotaCards[i],4,124,108,&font_studio_16,Theme::HUDDim);lv_obj_set_style_text_align(quotaReset[i].obj,LV_TEXT_ALIGN_CENTER,0);
     }
-    planChip=box(root,w>=1100?500:350,18,160,40,Theme::ShallowWater);
-    label(planLabel,planChip,12,8,136,&font_studio_20,Theme::HUDDim);
-    lv_label_set_long_mode(planLabel.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(planLabel.obj,font_studio_20.line_height);
-    label(tokenLine,root,24,h-64,w-260,&font_workspace_20,Theme::HUDText);
+    lunaMoon=box(quotaCards[2],4,4,22,22,Theme::HUDText);lv_obj_set_style_radius(lunaMoon,LV_RADIUS_CIRCLE,0);
+    auto* moonCut=box(lunaMoon,8,-3,20,20,Theme::DeepSea);lv_obj_set_style_radius(moonCut,LV_RADIUS_CIRCLE,0);
+    lv_obj_clear_flag(lunaMoon,LV_OBJ_FLAG_CLICKABLE);lv_obj_clear_flag(moonCut,LV_OBJ_FLAG_CLICKABLE);
     label(pageLabel,overview,0,0,sceneW,&font_studio_16,Theme::HUDDim);
     lv_obj_add_flag(pageLabel.obj,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(pageLabel.obj,pageCb,LV_EVENT_CLICKED,nullptr);
     for(int i=0;i<10;++i) {
@@ -290,13 +315,18 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     label(overviewEmpty,overview,16,180,sceneW-32,&font_studio_28,Theme::HUDDim);
     attentionPane=box(root,24,76,w-48,48,Theme::DeepSea);lv_obj_set_style_border_width(attentionPane,1,0);lv_obj_set_style_border_color(attentionPane,lv_color_hex(Theme::StatusAmber),0);
     label(attentionLine,attentionPane,14,12,w-76,&font_studio_20,Theme::StatusAmber);
-    voiceStatusPane=box(root,w-522,15,350,48,Theme::DeepSea);lv_obj_set_style_bg_opa(voiceStatusPane,LV_OPA_TRANSP,0);
-    label(ambientVoice,voiceStatusPane,8,11,334,&font_workspace_20,Theme::StatusCyan);
+    voiceStatusPane=box(root,24,h-112,w-48,96,Theme::DeepSea);
+    label(ambientVoice,voiceStatusPane,16,10,w-268,&font_studio_16,Theme::StatusCyan);
+    label(voiceHeard,voiceStatusPane,16,36,w-280,&font_workspace_20,Theme::HUDText);
+    label(voiceSaid,voiceStatusPane,w/2,36,w/2-56,&font_workspace_20,Theme::HUDText);
+    label(voiceAnswerLabel,voiceStatusPane,w/2,10,w/2-250,&font_studio_16,Theme::HUDDim);
+    lv_label_set_long_mode(voiceHeard.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(voiceHeard.obj,50);
+    lv_label_set_long_mode(voiceSaid.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(voiceSaid.obj,50);
     label(empty,rail,12,12,railW-24,&font_studio_20,Theme::HUDDim);
     lv_label_set_long_mode(empty.obj,LV_LABEL_LONG_WRAP);
-    label(usage,root,24,h-32,w-48,&font_studio_16,Theme::HUDDim);
-    auto* voice=box(root,w-200,h-58,176,44,Theme::ShallowWater);voiceButton=voice;
-    caption(voice,"Voice / speaker",14,10,156,Theme::HUDText);
+
+    auto* voice=box(root,w-192,h-104,152,32,Theme::ShallowWater);voiceButton=voice;
+    caption(voice,"Voice controls",8,5,140,Theme::HUDText);
     lv_obj_add_event_cb(voice,voiceCb,LV_EVENT_CLICKED,nullptr);
     // A separate drawer preserves direct voice controls without consuming the
     // working surface while closed. Width is always the full screen minus 48.
@@ -368,61 +398,92 @@ void update() {
     const char* resets[]={g_state.fiveHourReset,g_state.sevenDayReset,g_state.codexPrimaryReset,g_state.codexSecondaryReset,g_state.zaiPrimaryReset,g_state.zaiSecondaryReset};
     for(int i=0;i<6;++i) snprintf(quota.reset[i],20,"%s",resets[i]);
     snprintf(quota.plan,sizeof(quota.plan),"%s",g_state.antigravityPlan);
-    quota.input=g_state.inputTokens;quota.output=g_state.outputTokens;quota.calls=g_state.toolCalls;quota.cost=g_state.estimatedCostUsd;
+    quota.luna=g_state.codexLunaPercent;
+    snprintf(quota.lunaReset,sizeof(quota.lunaReset),"%s",g_state.codexLunaReset);
+    memcpy(quota.minutes,g_state.codexWindowMinutes,sizeof(quota.minutes));
+    quota.subscriptionCount=g_state.subscriptionCount;
+    memcpy(quota.subscriptions,g_state.subscriptions,sizeof(quota.subscriptions));
     unlockState();
     char text[240];
-    const bool hasQuota=quota.percent[0]>=0 || quota.percent[1]>=0 || quota.percent[2]>=0 || quota.percent[3]>=0 || quota.percent[4]>=0 || quota.percent[5]>=0;
+    const bool luna=UsagePresentation::lunaActive(quota.percent[2],quota.percent[3],quota.luna);
+    if(luna){quota.percent[2]=quota.luna;quota.percent[3]=-1;snprintf(quota.reset[2],20,"%s",quota.lunaReset);}
+    bool hasSubscriptions=false;
+    for(int n=0;n<quota.subscriptionCount;++n)hasSubscriptions|=UsagePresentation::subscriptionProvider(quota.subscriptions[n].name)>=0;
+    const bool hasQuota=hasSubscriptions || quota.plan[0] || quota.percent[0]>=0 || quota.percent[1]>=0 || quota.percent[2]>=0 || quota.percent[3]>=0 || quota.percent[4]>=0 || quota.percent[5]>=0;
     sceneW=g_screenW-(hasQuota?316:48);
     visible(overview,overviewMode);visible(resourcePane,hasQuota);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);
     const bool needsAttention=totals[1]>0 || !connected;
     visible(attentionPane,overviewMode && needsAttention);visible(summary.obj,!overviewMode);
-    lv_obj_set_pos(overview,24,needsAttention?138:90);lv_obj_set_size(overview,sceneW,g_screenH-(needsAttention?216:168)-(g_screenW<1100?54:0));
+    lv_obj_set_pos(overview,24,needsAttention?138:90);lv_obj_set_size(overview,sceneW,g_screenH-(needsAttention?266:218));
     for(int i=0;i<4;++i)visible(filters[i],!overviewMode);
-    viewLabel.set(overviewMode?"Details":"Aquarium");
+    for(int i=0;i<2;++i) {
+        const bool activeMode=overviewMode==(i==0);
+        lv_obj_set_style_bg_opa(modeButtons[i],activeMode?LV_OPA_COVER:LV_OPA_TRANSP,0);
+        lv_obj_set_style_border_width(modeButtons[i],activeMode?1:0,0);
+        lv_obj_set_style_border_color(modeButtons[i],lv_color_hex(Theme::StatusCyan),0);
+    }
+    portENTER_CRITICAL(&voiceMux);voiceView=voicePending;portEXIT_CRITICAL(&voiceMux);
     const char* vs=Audio::voiceState();
-    const char* voiceText=!Audio::micReady()?"":!strcmp(vs,"listening")?"Listening...":!strcmp(vs,"sending")?"Sending voice...":!strcmp(vs,"waiting")?"Waiting for reply...":!strcmp(vs,"speaking")?"Speaking...":!strcmp(vs,"error")?"Voice connection error":!strcmp(vs,"muted")?"":gatewayReady?"OpenClaw ready":connected?"Wake ready · Agent offline":"Wake ready · Disconnected";
-    ambientVoice.set(voiceText);visible(voiceStatusPane,voiceText[0]);
-    if(g_screenW<1100){lv_obj_set_pos(voiceStatusPane,24,g_screenH-112);lv_obj_set_width(voiceStatusPane,g_screenW-48);}
+    const char* owner=!strcmp(voiceView.target,"openclaw-personal")?"OpenClaw":voiceView.target[0]?voiceView.target:"OpenClaw";
+    const char* voiceText=!Audio::micReady()?"Microphone unavailable":!strcmp(vs,"listening")?"Listening":!strcmp(vs,"sending")?"Recognizing speech":!strcmp(vs,"waiting")?"Processing":!strcmp(vs,"speaking")?"Speaking":!strcmp(vs,"error")?"Voice error":(!strcmp(vs,"muted") || !WakeWord::enabled())?"Microphone muted":!WakeWord::ready()?"Wake word unavailable":!gatewayReady?"OpenClaw offline":"Say OpenClaw";
+    snprintf(text,sizeof(text),"%s%s%s",voiceText,(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?" · ":"",(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?owner:"");
+    ambientVoice.set(text);visible(voiceStatusPane,true);
+    voiceHeard.set(!strcmp(vs,"error") && voiceView.notice[0]?voiceView.notice:voiceView.question[0]?voiceView.question:voiceView.notice);
+    voiceSaid.set(voiceView.answer);visible(voiceSaid.obj,voiceView.answer[0]);
+    snprintf(text,sizeof(text),"%s · Reply",owner);voiceAnswerLabel.set(text);visible(voiceAnswerLabel.obj,voiceView.answer[0]);
+    lv_obj_set_width(voiceHeard.obj,voiceView.answer[0]?(g_screenW-96)/2:g_screenW-96);
     visible(voiceButton,Audio::micReady());
-    lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):204);
+    lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):g_screenW<1100?370:204);
     // Six reused rings, with fixed geometry regardless of how many providers exist.
     // Window labels explain the measure; reset text is secondary and optional.
-    constexpr int gaugeSize=80;
+    constexpr int gaugeSize=64;
     int quotaY=48;
-    for(int provider=0;provider<3;++provider) {
-        const int begin=provider*2,end=begin+2;
+    for(int provider=0;provider<4;++provider) {
+        const int begin=provider*2,end=provider<3?begin+2:begin;
         int knownCount=0;for(int i=begin;i<end;++i)knownCount+=quota.percent[i]>=0;
-        visible(providerNames[provider],knownCount>0);
-        if(knownCount)lv_obj_set_y(providerNames[provider],quotaY);
+        char plan[80]="";
+        for(int n=0;n<quota.subscriptionCount;++n) {
+            const auto& sub=quota.subscriptions[n];
+            if(UsagePresentation::subscriptionProvider(sub.name)!=provider)continue;
+            char name[40];if(provider==3)UsageFormat::formatAgyPlan(sub.name,name,sizeof(name));else snprintf(name,sizeof(name),"%s",sub.name);
+            snprintf(plan,sizeof(plan),"%s%s%s",name,sub.until[0]?" · ":"",sub.until);break;
+        }
+        if(provider==3 && !plan[0] && quota.plan[0])UsageFormat::formatAgyPlan(quota.plan,plan,sizeof(plan));
+        const bool shownProvider=knownCount || plan[0];
+        visible(providerNames[provider],shownProvider);visible(providerPlan[provider].obj,plan[0]);
+        if(shownProvider)lv_obj_set_y(providerNames[provider],quotaY);
+        providerPlan[provider].set(plan);lv_obj_set_y(providerPlan[provider].obj,quotaY+26);
+        const int ringY=quotaY+(plan[0]?52:30);
         bool hasReset=false;
         int col=0;
         for(int i=begin;i<end;++i) {
             const float p=quota.percent[i];const bool known=p>=0;visible(quotaCards[i],known);if(!known)continue;
-            lv_obj_set_pos(quotaCards[i],knownCount==1?68:8+col++*120,quotaY+30);
+            lv_obj_set_pos(quotaCards[i],knownCount==1?68:8+col++*120,ringY);
             lv_obj_set_size(quotaCards[i],116,136);
             lv_obj_set_size(quotaBars[i],gaugeSize,gaugeSize);lv_obj_set_x(quotaBars[i],(116-gaugeSize)/2);
             lv_obj_set_style_arc_width(quotaBars[i],6,LV_PART_MAIN);lv_obj_set_style_arc_width(quotaBars[i],6,LV_PART_INDICATOR);
-            lv_obj_set_y(quotaValue[i].obj,23);
-            lv_obj_set_y(quotaWindow[i].obj,84);lv_obj_set_y(quotaReset[i].obj,104);
-            snprintf(text,sizeof(text),"%.0f%%",p);quotaValue[i].set(text);
-            lv_arc_set_value(quotaBars[i],p>100?100:static_cast<int>(p));
+            lv_obj_set_y(quotaValue[i].obj,19);lv_obj_set_style_text_font(quotaValue[i].obj,&font_studio_20,0);
+            lv_obj_set_y(quotaWindow[i].obj,68);lv_obj_set_y(quotaReset[i].obj,88);
+            snprintf(text,sizeof(text),"%.0f%%",i==2 && luna?100-p:p);quotaValue[i].set(text);
+            lv_arc_set_value(quotaBars[i],i==2 && luna?100-static_cast<int>(p):p>100?100:static_cast<int>(p));
             // Same meaning, same color across providers and both time windows.
             lv_obj_set_style_arc_color(quotaBars[i],lv_color_hex(p>=90?Theme::StatusAmber:Theme::StatusCyan),LV_PART_INDICATOR);
-            quotaWindow[i].set(i==5 && quota.mcp?"MCP used":i%2?"7d used":"5h used");
+            const char* window=i==2 && luna?"Luna left":i==5 && quota.mcp?"MCP used":(i==2 || i==3) && quota.minutes[i-2]==0?"Credits used":i%2?"7d used":"5h used";
+            char timedWindow[24];
+            if((i==2 || i==3) && !(i==2 && luna) && quota.minutes[i-2]>0) {
+                const unsigned minutes=quota.minutes[i-2];
+                snprintf(timedWindow,sizeof(timedWindow),"%u%s used",minutes>=1440?minutes/1440:minutes>=60?minutes/60:minutes,minutes>=1440?"d":minutes>=60?"h":"m");window=timedWindow;
+            }
+            quotaWindow[i].set(window);
             snprintf(text,sizeof(text),"Reset %s",quota.reset[i]);quotaReset[i].set(text);
             visible(quotaReset[i].obj,quota.reset[i][0]);hasReset|=quota.reset[i][0]!=0;
         }
-        if(knownCount)quotaY+=hasReset?164:148;
+        if(shownProvider)quotaY=knownCount?ringY+(hasReset?114:94):quotaY+58;
     }
-    // Content-sized rail avoids a tall empty panel when only one window is known.
-    lv_obj_set_height(resourcePane,quotaY+4);
-    const char* plan=quota.plan;while(*plan==' ')++plan;
-    visible(planChip,*plan);
-    if(*plan){UsageFormat::formatAgyPlan(plan,text,sizeof(text));planLabel.set(text);}
-    // These are the daemon's usage snapshot, not selected-session or project totals.
-    if(quota.input || quota.output || quota.calls) snprintf(text,sizeof(text),"Tokens  IN %lu / OUT %lu   ·   Tools %lu",static_cast<unsigned long>(quota.input),static_cast<unsigned long>(quota.output),static_cast<unsigned long>(quota.calls));
-    else snprintf(text,sizeof(text),"");
-    tokenLine.set(text);visible(tokenLine.obj,quota.input || quota.output || quota.calls);
+    visible(lunaMoon,luna);
+    // Bound a fully populated account list; sparse lists remain content-sized.
+    const int quotaMax=g_screenH-lv_obj_get_y(resourcePane)-128;
+    lv_obj_set_height(resourcePane,quotaY+4>quotaMax?quotaMax:quotaY+4);
     projectCount=0;memset(podMembers,0,sizeof(podMembers));
     for(int i=0;i<count;++i) {
         podFor[i]=-1;if(!matches(rows[i]))continue;
@@ -458,7 +519,9 @@ void update() {
     for(int i=0;i<count;++i)if(podFor[i]>=page*capacity && podFor[i]<(page+1)*capacity && rows[i].latest[0])pageHasLatest=true;
     int projectX=0;
     const int peerRows=projectWidth>=600?1:maxPeers;
-    const int ph=Grid::Header+peerRows*Grid::AgentRow+(pageHasLatest?88:16);
+    const int rowBudget=(g_screenH-(needsAttention?178:130)-128-Grid::Header-(pageHasLatest?88:16))/(peerRows?peerRows:1);
+    const int rowHeight=rowBudget<Grid::AgentRow?(rowBudget<96?96:rowBudget):Grid::AgentRow;
+    const int ph=Grid::Header+peerRows*rowHeight+(pageHasLatest?88:16);
     for(int i=0;i<10;++i)displayedSlot[i]=-1;
     for(int g=0;g<10;++g) {
         const bool show=g<projectCount && g/capacity==page;visible(pods[g],show);if(!show)continue;
@@ -481,7 +544,7 @@ void update() {
         snprintf(text,sizeof(text),"Showing %d of %d · Rotate 8s",slots,nMembers);cohortLabel[g].set(text);visible(cohortLabel[g].obj,nMembers>3);lv_obj_set_width(cohortLabel[g].obj,pw-44);
         int recent=first;for(int i=0;i<count;++i)if(podFor[i]==g && rows[i].latestRank<rows[recent].latestRank)recent=i;
         visible(podLatest[g].obj,rows[recent].latest[0]);
-        lv_obj_set_pos(podLatest[g].obj,16,Grid::Header+peerRows*Grid::AgentRow+16);lv_obj_set_width(podLatest[g].obj,pw-32);
+        lv_obj_set_pos(podLatest[g].obj,16,Grid::Header+peerRows*rowHeight+16);lv_obj_set_width(podLatest[g].obj,pw-32);
         snprintf(text,sizeof(text),"Latest %s\n%s",rows[recent].hm,rows[recent].latest);podLatest[g].set(text);
     }
     for(int i=0;i<10;++i) {
@@ -493,20 +556,20 @@ void update() {
         const int peers=podMembers[podFor[i]]<3?podMembers[podFor[i]]:3;
         const bool across=pw>=600;
         const int cellW=across?(pw-32-(peers-1)*16)/peers:pw-32;
-        const int rowX=16+(across?slot*(cellW+16):0),rowY=Grid::Header+(across?0:slot*Grid::AgentRow);
+        const int rowX=16+(across?slot*(cellW+16):0),rowY=Grid::Header+(across?0:slot*rowHeight);
         // One aligned agent row: illustration left, state and work right.
-        lv_obj_set_pos(seats[i],rowX,rowY);lv_obj_set_size(seats[i],cellW,112);
+        lv_obj_set_pos(seats[i],rowX,rowY);lv_obj_set_size(seats[i],cellW,rowHeight-8);
         const auto* relief=reliefFor(rows[i].agent);const auto* glyph=relief?relief:glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
         lv_obj_set_style_image_recolor_opa(creatures[i],relief?LV_OPA_TRANSP:LV_OPA_COVER,0);
         if(glyph){lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],relief?219:320);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
         lv_obj_set_pos(creatures[i],0,cat==1 && overviewMode && connected?((now/300+i)%2?0:4):4);
         snprintf(text,sizeof(text),"#%d %s",memberSlot[i]+1,cat==1?"! Attention":cat==2?"Working":"Idle");seatState[i].set(text);
         lv_obj_set_pos(seatState[i].obj,96,0);lv_obj_set_width(seatState[i].obj,cellW-96);
-        lv_obj_set_pos(childLabel[i].obj,96,88);lv_obj_set_width(childLabel[i].obj,cellW-96);
+        lv_obj_set_pos(childLabel[i].obj,96,rowHeight-24);lv_obj_set_width(childLabel[i].obj,cellW-96);
         snprintf(text,sizeof(text),"%u workers",rows[i].children);childLabel[i].set(text);visible(childLabel[i].obj,rows[i].childrenKnown && rows[i].children>0);
         lv_obj_set_style_text_color(seatState[i].obj,lv_color_hex(cat==1?Theme::StatusAmber:Theme::HUDDim),0);
         // The canonical creature is already the graphical anchor; no disconnected icon column.
-        lv_obj_set_pos(agentActivity[i].obj,rowX+96,rowY+24);lv_obj_set_width(agentActivity[i].obj,cellW-96);lv_obj_set_height(agentActivity[i].obj,60);
+        lv_obj_set_pos(agentActivity[i].obj,rowX+96,rowY+24);lv_obj_set_width(agentActivity[i].obj,cellW-96);lv_obj_set_height(agentActivity[i].obj,rows[i].childrenKnown && rows[i].children?rowHeight-50:rowHeight-30);
         agentActivity[i].set(rows[i].activity);visible(agentActivity[i].obj,rows[i].activity[0]);
         lv_obj_set_style_text_color(agentActivity[i].obj,lv_color_hex(cat==1?Theme::StatusAmber:Theme::HUDText),0);
 
@@ -552,8 +615,8 @@ void update() {
     const bool portrait=g_screenW<1100;
     const int rw=portrait?sceneW:hasQuota?224:280;
     detailW=portrait?sceneW:sceneW-rw-24;
-    lv_obj_set_y(rosterTitle.obj,220);lv_obj_set_size(rail,rw,portrait?112:g_screenH-310);lv_obj_set_scroll_dir(rail,portrait?LV_DIR_HOR:LV_DIR_VER);lv_obj_set_width(rosterTitle.obj,rw);
-    lv_obj_set_pos(detail,portrait?24:48+rw,portrait?370:204);lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):portrait?370:204);lv_obj_set_size(detail,detailW,portrait?g_screenH-530:g_screenH-282);
+    lv_obj_set_y(rosterTitle.obj,220);lv_obj_set_size(rail,rw,portrait?112:g_screenH-366);lv_obj_set_scroll_dir(rail,portrait?LV_DIR_HOR:LV_DIR_VER);lv_obj_set_width(rosterTitle.obj,rw);
+    lv_obj_set_pos(detail,portrait?24:48+rw,portrait?370:204);lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):portrait?370:204);lv_obj_set_size(detail,detailW,portrait?g_screenH-498:g_screenH-332);
     for(int i=0;i<4;++i){const int fw=(sceneW-36)/4;lv_obj_set_x(filters[i],24+i*(fw+12));lv_obj_set_width(filters[i],fw);lv_obj_set_width(filterText[i].obj,portrait?fw-16:fw-70);lv_obj_set_pos(filterText[i].obj,portrait?8:16,portrait?5:24);lv_obj_set_style_text_font(filterText[i].obj,portrait?&font_studio_16:&font_studio_20,0);lv_obj_set_pos(filterNumber[i].obj,fw-52,portrait?22:12);}
     for(int i=0;i<10;++i){const int cardW=portrait?224:rw;lv_obj_set_width(cards[i],cardW);if(portrait)lv_obj_set_pos(cards[i],i*236,0);else lv_obj_set_x(cards[i],0);lv_obj_set_width(rowTitle[i].obj,cardW-80);lv_obj_set_height(rowTitle[i].obj,font_studio_20.line_height);lv_obj_set_width(rowState[i].obj,cardW-32);lv_obj_set_x(rowState[i].obj,16);lv_obj_set_y(rowState[i].obj,48);lv_obj_set_width(rowTool[i].obj,cardW-32);}
     lv_obj_set_width(heading.obj,detailW-112);lv_obj_set_width(identity.obj,detailW-48);lv_obj_set_x(focusGlyph,detailW-80);
@@ -564,31 +627,35 @@ void update() {
         lv_obj_scroll_to_y(activityScroll,0,LV_ANIM_OFF);
     }
     if(chosen>=0 || retainedDetail) {
-        heading.set(selected.projectName[0]?selected.projectName:selected.agentType);
+        heading.set(selected.lastEventTask[0]?selected.lastEventTask:selected.projectName[0]?selected.projectName:selected.agentType);
         snprintf(text,sizeof(text),"%s  /  %s  /  %lus",selected.agentType,selected.modelName[0]?selected.modelName:"Model unavailable",static_cast<unsigned long>(selected.elapsedSec));identity.set(text);
         const int cat=category(selected.state);
         const auto* fg=glyphFor?glyphFor(selected.agentType):nullptr;visible(focusGlyph,fg);
         if(fg){lv_image_set_src(focusGlyph,fg);lv_obj_set_style_image_recolor(focusGlyph,lv_color_hex(brandColor(selected.agentType)),0);}
         int knownNodes=0;
-        for(int i=0;i<3;++i)knownNodes+=(i<2?selected.childrenKnown:selected.coordinationKnown);
+        for(int i=0;i<4;++i)knownNodes+=(i<2?selected.childrenKnown:selected.coordinationKnown);
         int shownNodes=0;
-        for(int i=0;i<3;++i) {
+        for(int i=0;i<4;++i) {
             const bool known=i<2?selected.childrenKnown:selected.coordinationKnown;
             visible(stateNodes[i],known);
             if(!known)continue;
-            const int nw=(detailW-48-(knownNodes-1)*8)/knownNodes;
-            lv_obj_set_pos(stateNodes[i],24+shownNodes++*(nw+8),82);lv_obj_set_width(stateNodes[i],nw);
-            const unsigned value=i==0?selected.childrenActive:i==1?selected.childrenCompleted:selected.backgroundJobs;
+            const int columns=knownNodes<2?knownNodes:2;
+            const int nw=(detailW-48-(columns-1)*8)/columns;
+            lv_obj_set_pos(stateNodes[i],24+(shownNodes%columns)*(nw+8),82+(shownNodes/columns)*66);++shownNodes;lv_obj_set_width(stateNodes[i],nw);lv_obj_set_width(lv_obj_get_child(stateNodes[i],0),nw-20);
+            const unsigned value=i==0?selected.childrenActive:i==1?selected.childrenCompleted:i==2?selected.spawnedActive:selected.backgroundJobs;
             snprintf(text,sizeof(text),"%u",value);censusValue[i].set(text);
         }
-        const int y=knownNodes?154:82;
-        snprintf(text,sizeof(text),"%s%s%s",nameFor(cat),selected.currentTool[0]?" · ":"",selected.currentTool);stateText.set(text);lv_obj_set_y(stateText.obj,y);lv_obj_set_width(stateText.obj,detailW-48);
+        const int y=knownNodes?82+((knownNodes+1)/2)*66+28:82;
+        const int phase=CollaborationPresentation::phase(cat==1,cat==2,selected.childrenKnown?selected.childrenActive:0,selected.coordinationKnown?selected.spawnedActive:0,selected.coordinationKnown?selected.backgroundJobs:0);
+        census.set(CollaborationPresentation::Scope);visible(census.obj,knownNodes>0);
+        lv_obj_set_pos(census.obj,24,y-26);lv_obj_set_width(census.obj,detailW-48);
+        snprintf(text,sizeof(text),"%s%s%s",phase==2?"Waiting on work":nameFor(cat),selected.currentTool[0]?" · ":"",selected.currentTool);stateText.set(text);lv_obj_set_y(stateText.obj,y);lv_obj_set_width(stateText.obj,detailW-48);
         activity.set(cat==1 && selected.question[0]?selected.question:selected.activity[0]?selected.activity:selected.lastEventText);
         lv_obj_set_pos(activityScroll,24,y+32);lv_obj_set_width(activityScroll,detailW-48);lv_obj_set_width(activity.obj,detailW-56);lv_obj_set_height(activity.obj,LV_SIZE_CONTENT);lv_obj_update_layout(activity.obj);
         const int maxActivity=history?54:96,measured=lv_obj_get_height(activity.obj);
         const int activityH=activity.value[0]?(measured>maxActivity?maxActivity:measured<28?28:measured):0;
         lv_obj_set_height(activityScroll,activityH);visible(activityScroll,activityH>0);
-        visible(census.obj,false);
+
         instruction.set(retainedDetail?"Saved detail · Agent is on another roster page":cat==1?"Review this request in the agent terminal.":"");visible(instruction.obj,retainedDetail || cat==1);
         const int after=y+activityH+40;
         lv_obj_set_y(instruction.obj,after);lv_obj_set_width(instruction.obj,detailW-48);
@@ -596,7 +663,7 @@ void update() {
         lv_obj_set_pos(historyButton,detailW-150,eventStart);lv_obj_set_size(historyButton,126,36);lv_obj_set_pos(historyLabel.obj,10,7);
         historyLabel.set(history?"Summary":"History");visible(historyButton,eventCount>0);
         lv_obj_set_pos(recentCaption,24,eventStart+6);lv_obj_set_width(recentCaption,detailW-190);visible(recentCaption,eventCount>0);
-        lv_obj_set_pos(eventBox,24,eventStart+48);lv_obj_set_size(eventBox,detailW-48,lv_obj_get_height(detail)-eventStart-60);
+        lv_obj_set_pos(eventBox,24,eventStart+48);lv_obj_set_size(eventBox,detailW-48,lv_obj_get_height(detail)-eventStart-60>120?lv_obj_get_height(detail)-eventStart-60:120);
         for(int i=0;i<8;++i){lv_obj_set_width(eventCards[i],detailW-48);lv_obj_set_width(eventText[i].obj,detailW-76);lv_obj_set_width(eventMeta[i].obj,detailW-76);}
         int eventY=0;
         for(int i=0;i<8;++i) {
@@ -614,9 +681,6 @@ void update() {
             visible(eventCards[0],true);eventMeta[0].set("Recent activity");eventText[0].set("No events received for this session.");
         }
     }
-    if(quota.cost>=0) snprintf(text,sizeof(text),"Daemon totals · Estimated $%.2f",quota.cost);
-    else snprintf(text,sizeof(text),"Daemon totals");
-    usage.set(text);visible(usage.obj,quota.cost>=0 || quota.input || quota.output || quota.calls);
     const uint32_t elapsed=micros()-started;
     portENTER_CRITICAL(&diagMux);
     ++diag.updates;diag.lastUpdateUs=elapsed;
@@ -627,6 +691,12 @@ void update() {
     diag.history=history;diag.voiceOpen=voiceOpen;diag.overview=overviewMode;diag.projects=projectCount;
     portEXIT_CRITICAL(&diagMux);
 }
+void voiceStarted(const char* target) {
+    portENTER_CRITICAL(&voiceMux);voicePending={};snprintf(voicePending.target,sizeof(voicePending.target),"%s",target?target:"");portEXIT_CRITICAL(&voiceMux);
+}
+void voiceTranscript(const char* text) { portENTER_CRITICAL(&voiceMux);snprintf(voicePending.question,sizeof(voicePending.question),"%s",text?text:"");portEXIT_CRITICAL(&voiceMux); }
+void voiceAnswer(const char* text) { portENTER_CRITICAL(&voiceMux);snprintf(voicePending.answer,sizeof(voicePending.answer),"%s",text?text:"");portEXIT_CRITICAL(&voiceMux); }
+void voiceNotice(const char* text) { portENTER_CRITICAL(&voiceMux);snprintf(voicePending.notice,sizeof(voicePending.notice),"%s",text?text:"");portEXIT_CRITICAL(&voiceMux); }
 Diagnostics diagnostics() {
     portENTER_CRITICAL(&diagMux);const Diagnostics out=diag;portEXIT_CRITICAL(&diagMux);
     return out;

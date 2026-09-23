@@ -289,8 +289,22 @@ static void handleUsageUpdate(JsonObject& obj) {
     g_state.codexSecondaryPercent = -1.0f;
     g_state.codexPrimaryReset[0] = '\0';
     g_state.codexSecondaryReset[0] = '\0';
+#if defined(BOARD_IPS10)
+    g_state.codexLunaPercent = -1;
+    g_state.codexLunaReset[0] = '\0';
+    g_state.codexWindowMinutes[0] = 300; g_state.codexWindowMinutes[1] = 10080;
+#endif
     if (obj["codexRateLimits"].is<JsonObject>()) {
         JsonObject cx = obj["codexRateLimits"].as<JsonObject>();
+#if defined(BOARD_IPS10)
+        g_state.codexWindowMinutes[0] = cx["primary"]["windowMinutes"] | 300;
+        g_state.codexWindowMinutes[1] = cx["secondary"]["windowMinutes"] | 10080;
+        JsonObject luna = cx["lunaReserve"];
+        if (luna["usedPercent"].is<float>() && !luna["stale"].as<bool>()) {
+            g_state.codexLunaPercent = luna["usedPercent"].as<float>();
+            storeResetTime(luna, "resetsAt", g_state.codexLunaReset, sizeof(g_state.codexLunaReset));
+        }
+#endif
         if (cx["primary"].is<JsonObject>()) {
             JsonObject p = cx["primary"].as<JsonObject>();
             if (!p["stale"].as<bool>()) {
@@ -358,7 +372,7 @@ static void handleUsageUpdate(JsonObject& obj) {
         JsonArray subs = obj["subscriptions"].as<JsonArray>();
         g_state.subscriptionCount = 0;
         for (JsonObject sub : subs) {
-            if (g_state.subscriptionCount >= 3) break;
+            if (g_state.subscriptionCount >= 4) break;
             auto& slot = g_state.subscriptions[g_state.subscriptionCount];
             strncpy(slot.name, sub["name"] | "", sizeof(slot.name) - 1);
             slot.name[sizeof(slot.name) - 1] = '\0';
@@ -1473,7 +1487,7 @@ void parseMessage(const char* json, size_t length) {
         // Read-only, fixed UI-core snapshot. Never inspect LVGL from netTask.
         const auto d=IPS10Workspace::diagnostics();
         char reply[384];
-        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"aquarium-v7\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s,\"usageVisible\":%s,\"quotaWindows\":%u,\"rosterTotal\":%u,\"rosterRotating\":%s}",
+        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"aquarium-v8\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s,\"usageVisible\":%s,\"quotaWindows\":%u,\"rosterTotal\":%u,\"rosterRotating\":%s}",
             d.width,d.height,d.sessions,d.visibleSessions,(unsigned long)d.updates,
             (unsigned long)d.lastUpdateUs,(unsigned long)d.maxUpdateUs,d.connected?"true":"false",d.filter,d.eventCount,d.projects,d.overview?"true":"false",d.usageVisible?"true":"false",d.quotaWindows,d.rosterTotal,d.rosterRotating?"true":"false");
         Net::serialWriteJsonLine(reply);
@@ -1679,6 +1693,7 @@ void parseMessage(const char* json, size_t length) {
         bool delivered = obj["delivered"] | false;
 #if defined(BOARD_IPS10)
         Audio::micVoiceResult(delivered);
+        IPS10Workspace::voiceTranscript(text);
 #endif
         const char* err = obj["error"] | "";
         char note[160];

@@ -385,11 +385,16 @@ export function prepareForSerial(event: BridgeEvent, _conn?: Pick<SerialConnecti
     // EVERY usage_update and their gauges froze on stale values.
     const cx = e.codexRateLimits
       ? {
+          ...(_conn?.deviceInfo?.board === 'ips_10' && e.codexRateLimits.lunaReserve ? {
+            lunaReserve: { usedPercent: e.codexRateLimits.lunaReserve.usedPercent,
+              resetsAt: formatResetTime(e.codexRateLimits.lunaReserve.resetsAt),
+              stale: e.codexRateLimits.lunaReserve.resetsAt ? Date.parse(e.codexRateLimits.lunaReserve.resetsAt) <= Date.now() : false },
+          } : {}),
           primary: e.codexRateLimits.primary
-            ? { usedPercent: e.codexRateLimits.primary.usedPercent, resetsAt: formatResetTime(e.codexRateLimits.primary.resetsAt), stale: e.codexRateLimits.primary.stale }
+            ? { usedPercent: e.codexRateLimits.primary.usedPercent, windowMinutes: e.codexRateLimits.primary.windowMinutes, resetsAt: formatResetTime(e.codexRateLimits.primary.resetsAt), stale: e.codexRateLimits.primary.stale }
             : undefined,
           secondary: e.codexRateLimits.secondary
-            ? { usedPercent: e.codexRateLimits.secondary.usedPercent, resetsAt: formatResetTime(e.codexRateLimits.secondary.resetsAt), stale: e.codexRateLimits.secondary.stale }
+            ? { usedPercent: e.codexRateLimits.secondary.usedPercent, windowMinutes: e.codexRateLimits.secondary.windowMinutes, resetsAt: formatResetTime(e.codexRateLimits.secondary.resetsAt), stale: e.codexRateLimits.secondary.stale }
             : undefined,
         }
       : undefined;

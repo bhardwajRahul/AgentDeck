@@ -188,6 +188,11 @@ struct DashboardState {
     float codexSecondaryPercent;   // ≈7d window usedPercent (0-100)
     char codexPrimaryReset[20];    // "1h 23m" relative (needs NTP) or ""
     char codexSecondaryReset[20];
+#if defined(BOARD_IPS10)
+    float codexLunaPercent = -1;
+    char codexLunaReset[20] = {};
+    uint16_t codexWindowMinutes[2] = {300, 10080};
+#endif
     // z.ai GLM Coding Plan limits (#350) — a direct provider-account reading,
     // same slot grammar. The secondary window may meter MCP TOOL CALLS, not
     // tokens: `zaiSecondaryIsMcp` rides the wire `quantity` and renderers must
@@ -205,7 +210,7 @@ struct DashboardState {
     // Account subscriptions from usage_update `subscriptions[]` — plan name +
     // (serial-preformatted) expiry like "~7/12". Empty when the daemon can't
     // resolve them; surfaces hide the line in that case.
-    struct SubscriptionSlot { char name[28]; char until[12]; } subscriptions[3];
+    struct SubscriptionSlot { char name[28]; char until[12]; } subscriptions[4];
     uint8_t subscriptionCount;
 
     // Permission/Options
@@ -315,6 +320,10 @@ struct DashboardState {
         codexSecondaryPercent = -1.0f;
         codexPrimaryReset[0] = '\0';
         codexSecondaryReset[0] = '\0';
+#if defined(BOARD_IPS10)
+        codexLunaPercent = -1; codexLunaReset[0] = '\0';
+        codexWindowMinutes[0] = 300; codexWindowMinutes[1] = 10080;
+#endif
         zaiPrimaryPercent = -1.0f;
         zaiSecondaryPercent = -1.0f;
         zaiPrimaryReset[0] = '\0';
@@ -353,6 +362,10 @@ struct DashboardState {
         codexSecondaryPercent = -1.0f;
         codexPrimaryReset[0] = '\0';
         codexSecondaryReset[0] = '\0';
+#if defined(BOARD_IPS10)
+        codexLunaPercent = -1; codexLunaReset[0] = '\0';
+        codexWindowMinutes[0] = 300; codexWindowMinutes[1] = 10080;
+#endif
         zaiPrimaryPercent = -1.0f;
         zaiSecondaryPercent = -1.0f;
         zaiPrimaryReset[0] = '\0';
@@ -360,6 +373,7 @@ struct DashboardState {
         zaiSecondaryIsMcp = false;
         antigravityCredits = -1.0f;
         antigravityPlan[0] = '\0';
+        subscriptionCount = 0;
         usageStale = true;
         updateCreatureStates();
     }

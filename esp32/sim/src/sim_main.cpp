@@ -218,14 +218,14 @@ bool verifyIpsInteractions(const char* outdir) {
   if(!renderScene("crowd",overview.c_str(),90,"focus")) return ipsFailure(__LINE__);
   if(std::strcmp(IPS10Workspace::selectedSession(),"s4-AgentDeck")) return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"5 agents - 3 working"))return ipsFailure(__LINE__);
-  if(!ipsLabel(lv_screen_active(),"IN 128000 / OUT 41000"))return ipsFailure(__LINE__);
+  if(ipsLabel(lv_screen_active(),"IN 128000 / OUT 41000"))return ipsFailure(__LINE__);
   if(!IPS10Workspace::diagnostics().overview || IPS10Workspace::diagnostics().projects!=3)return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Bash 명령 실행") || !ipsLabel(lv_screen_active(),"권한 요청:"))return ipsFailure(__LINE__);
   const char* voiceStates[]={"listening","sending","waiting","speaking","error","muted","wake"};
-  const char* voiceLabels[]={"Listening...","Sending voice...","Waiting for reply...","Speaking...","Voice connection error","MUTED-HIDDEN","Wake ready"};
-  for(int i=0;i<7;++i){g_simVoiceState=voiceStates[i];advance();if((i==5?ipsLabel(lv_screen_active(),"OpenClaw ready")!=nullptr:!ipsLabel(lv_screen_active(),voiceLabels[i])) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
-  g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
-  g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
+  const char* voiceLabels[]={"Listening","Recognizing speech","Processing","Speaking","Voice error","Microphone muted","OpenClaw offline"};
+  for(int i=0;i<7;++i){g_simVoiceState=voiceStates[i];advance();if(!ipsLabel(lv_screen_active(),voiceLabels[i]) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
+  g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
+  g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
   g_state.gatewayHasError=false;g_state.gatewayConnected=false;advance();
   if(g_state.zaiPrimaryPercent!=-1 || g_state.zaiSecondaryPercent!=-1)return ipsFailure(__LINE__);
   auto* projectName=ipsLabel(lv_screen_active(),"5 agents - 3 working");
@@ -234,7 +234,7 @@ bool verifyIpsInteractions(const char* outdir) {
   lv_area_t projectTitleBounds, projectMetaBounds, quotaTitleBounds;
   lv_obj_get_coords(lv_obj_get_child(lv_obj_get_parent(projectName),0),&projectTitleBounds);
   lv_obj_get_coords(projectName,&projectMetaBounds);
-  lv_obj_get_coords(ipsLabel(lv_screen_active(),"Usage quota"),&quotaTitleBounds);
+  lv_obj_get_coords(ipsLabel(lv_screen_active(),"USAGE"),&quotaTitleBounds);
   if(projectTitleBounds.x1!=projectMetaBounds.x1 || projectTitleBounds.x1!=before.x1+16 || projectTitleBounds.y1!=quotaTitleBounds.y1)return ipsFailure(__LINE__);
 
   const auto saved=g_state.sessions[0];std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"awaiting_permission");advance();
@@ -260,10 +260,17 @@ bool verifyIpsInteractions(const char* outdir) {
   if(std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Fixed the treemap")) return ipsFailure(__LINE__);
   if(ipsLabel(lv_screen_active(),"권한 요청:")) return ipsFailure(__LINE__);
-  if(!IPS10Workspace::diagnostics().usageVisible || !ipsLabel(lv_screen_active(),"Usage quota") || ipsLabel(lv_screen_active(),"Subagents"))return ipsFailure(__LINE__);
+  if(!IPS10Workspace::diagnostics().usageVisible || !ipsLabel(lv_screen_active(),"USAGE") || ipsLabel(lv_screen_active(),"Subagents"))return ipsFailure(__LINE__);
   int selectedIndex=-1;for(int i=0;i<g_state.sessionCount;++i)if(!std::strcmp(g_state.sessions[i].id,IPS10Workspace::selectedSession()))selectedIndex=i;
   if(selectedIndex<0)return ipsFailure(__LINE__);
   const auto retainedSession=g_state.sessions[selectedIndex];
+  auto& collab=g_state.sessions[selectedIndex];
+  collab.childrenKnown=true;collab.childrenActive=2;collab.childrenCompleted=3;
+  collab.coordinationKnown=true;collab.spawnedActive=1;collab.backgroundJobs=1;
+  std::snprintf(collab.state,sizeof(collab.state),"idle");advance();
+  if(!ipsLabel(lv_screen_active(),"Subagents active") || !ipsLabel(lv_screen_active(),"Spawned running") || !ipsLabel(lv_screen_active(),"Waiting on work"))return ipsFailure(__LINE__);
+  if(!save("ips10-collaboration"))return ipsFailure(__LINE__);
+  g_state.sessions[selectedIndex]=retainedSession;advance();
   g_state.sessionsTotal=20;g_state.sessionsRotating=true;
   std::snprintf(g_state.sessions[selectedIndex].id,sizeof(g_state.sessions[selectedIndex].id),"next-page-session");advance();
   if(std::strcmp(IPS10Workspace::selectedSession(),retainedSession.id) || !ipsLabel(lv_screen_active(),"Saved detail"))return ipsFailure(__LINE__);
@@ -301,11 +308,11 @@ bool verifyIpsInteractions(const char* outdir) {
   if(!click("Attention")) return ipsFailure(__LINE__);
   if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"No matching sessions")) return ipsFailure(__LINE__);
   if(!click("All")) return ipsFailure(__LINE__);
-  if(!click("Voice / speaker")) return ipsFailure(__LINE__);
+  if(!click("Voice controls")) return ipsFailure(__LINE__);
   auto* talk=ipsLabel(lv_screen_active(),"Hold to talk");if(!talk)return ipsFailure(__LINE__);
   lv_area_t bounds;lv_obj_get_coords(lv_obj_get_parent(talk),&bounds);
   if(bounds.x1<0 || bounds.x2>=g_screenW || bounds.y1<0 || bounds.y2>=g_screenH)return ipsFailure(__LINE__);
-  if(!save("ips10-voice-controls") || !click("Voice / speaker"))return ipsFailure(__LINE__);
+  if(!save("ips10-voice-controls") || !click("Voice controls"))return ipsFailure(__LINE__);
   g_state.wsConnected=false;g_simSerialConnected=false;advance();
   if(!ipsLabel(lv_screen_active(),"Disconnected"))return ipsFailure(__LINE__);
   if(!save("ips10-offline"))return ipsFailure(__LINE__);
@@ -320,7 +327,7 @@ bool verifyIpsInteractions(const char* outdir) {
   if(ipsLabel(lv_screen_active(),"0%") || !ipsLabel(lv_screen_active(),"23%"))return ipsFailure(__LINE__);
   if(!save("ips10-stale-usage"))return ipsFailure(__LINE__);
   g_state.codexPrimaryPercent=g_state.codexSecondaryPercent=-1;advance();
-  if(ipsLabel(lv_screen_active(),"Usage quota"))return ipsFailure(__LINE__);
+  g_state.subscriptionCount=0;advance();if(ipsLabel(lv_screen_active(),"USAGE"))return ipsFailure(__LINE__);
   // Ten distinct projects must remain ten pods; similarly named worktrees are
   // not evidence of a shared project or an actual delegation relationship.
   g_state.sessionCount=10;g_state.sessionsTotal=1000;g_state.sessionsRotating=true;
@@ -351,14 +358,26 @@ bool verifyIpsInteractions(const char* outdir) {
   std::snprintf(g_state.antigravityPlan,sizeof(g_state.antigravityPlan),"Google AI Pro");advance();
   if(!ipsLabel(lv_screen_active(),"MCP used") || ipsLabel(lv_screen_active(),"812") || ipsLabel(lv_screen_active(),"credits") || !ipsLabel(lv_screen_active(),"AGY Pro"))return ipsFailure(__LINE__);
   if(IPS10Workspace::diagnostics().quotaWindows!=6 || !save("ips10-all-providers"))return ipsFailure(__LINE__);
-  lv_obj_get_coords(lv_obj_get_parent(ipsLabel(lv_screen_active(),"Usage quota")),&bounds);
+  lv_obj_get_coords(lv_obj_get_parent(ipsLabel(lv_screen_active(),"USAGE")),&bounds);
   if(bounds.y2>=g_screenH-56)return ipsFailure(__LINE__);
   // Raw credits alone must not create a quota rail, a number, or a plan chip.
   g_state.fiveHourPercent=g_state.sevenDayPercent=g_state.codexPrimaryPercent=g_state.codexSecondaryPercent=g_state.zaiPrimaryPercent=g_state.zaiSecondaryPercent=-1;
-  g_state.antigravityCredits=1000;g_state.antigravityPlan[0]=0;advance();
+  g_state.antigravityCredits=1000;g_state.antigravityPlan[0]=0;g_state.subscriptionCount=0;advance();
   if(IPS10Workspace::diagnostics().usageVisible || IPS10Workspace::diagnostics().quotaWindows || ipsLabel(lv_screen_active(),"AGY Pro") || ipsLabel(lv_screen_active(),"credits"))return ipsFailure(__LINE__);
   std::snprintf(g_state.antigravityPlan,sizeof(g_state.antigravityPlan),"Google AI Pro");advance();
-  if(!ipsLabel(lv_screen_active(),"AGY Pro") || IPS10Workspace::diagnostics().usageVisible || !save("ips10-plan-only"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),"AGY Pro") || !IPS10Workspace::diagnostics().usageVisible || !save("ips10-plan-only"))return ipsFailure(__LINE__);
+  // Reserve is selected only while a real regular limit is exhausted.
+  g_state.codexPrimaryPercent=100;g_state.codexLunaPercent=32;advance();
+  if(!ipsLabel(lv_screen_active(),"Luna left") || !ipsLabel(lv_screen_active(),"68%") || !save("ips10-luna"))return ipsFailure(__LINE__);
+  g_state.codexPrimaryPercent=0;advance();
+  if(ipsLabel(lv_screen_active(),"Luna left"))return ipsFailure(__LINE__);
+  IPS10Workspace::voiceStarted("openclaw-personal");
+  IPS10Workspace::voiceTranscript("Show my current project status");
+  g_simVoiceState="waiting";advance();
+  if(!ipsLabel(lv_screen_active(),"Processing - OpenClaw") || !ipsLabel(lv_screen_active(),"Show my current project status"))return ipsFailure(__LINE__);
+  IPS10Workspace::voiceAnswer("Two agents are working on AgentDeck.");g_simVoiceState="speaking";advance();
+  if(!ipsLabel(lv_screen_active(),"Two agents are working") || !save("ips10-voice-answer"))return ipsFailure(__LINE__);
+  g_simVoiceState="wake";
   g_state.codexPrimaryPercent=0;advance();
   if(IPS10Workspace::diagnostics().quotaWindows!=1 || !save("ips10-single-quota"))return ipsFailure(__LINE__);
   for(int i=0;i<10;++i) std::snprintf(g_state.sessions[i].projectName,sizeof(g_state.sessions[i].projectName),"Shared project");
@@ -384,8 +403,8 @@ bool verifyIpsInteractions(const char* outdir) {
   for(int i=0;i<10;++i) g_state.sessions[i].projectName[0]=0;
   advance();if(IPS10Workspace::diagnostics().projects!=10)return ipsFailure(__LINE__);
   g_state.markBridgeDisconnected();
-  g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
-  g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
+  g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
+  g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
   g_state.gatewayHasError=false;g_state.gatewayConnected=false;advance();
   if(g_state.zaiPrimaryPercent!=-1 || g_state.zaiSecondaryPercent!=-1 || g_state.zaiSecondaryIsMcp)return false;
   std::fprintf(stderr,"[sim] IPS10 observation, voice states, stable placement, pages, quotas, selection, attribution, drawer, offline: ok\n");

@@ -63,3 +63,17 @@ implementation and is not a public, versioned OpenAI API contract.
 ## Antigravity dashboard display
 
 Antigravity's local `availableCredits` is backend metering, not the model-group usage quota. Do not show the raw count (such as `1000`), a credits row, or a percentage derived from it on dashboards. Show only a confirmed plan using `formatAntigravityPlanShort` / native `UsageFormat::formatAgyPlan` (`Google AI Pro` → `AGY Pro`); omit the chip when no plan is known. Credit-only data must not create a quota rail. This preserves the existing shared formatter and Apple upstream-rail contract; integration diagnostics may still expose the underlying data.
+
+## Shared display selection
+
+Use **USAGE** for the quota/subscription section heading. `shared/src/usage-presentation.ts`
+owns provider attribution and the Luna selection predicate, with generated native mirrors.
+A reported Luna pool replaces regular Codex windows only while a non-ended regular
+window is exhausted; a reset snapshot restores regular windows even when the extra
+pool remains reported. Unknown windows never become zero. An exhausted Luna pool
+still shows its actual zero remaining allowance. Window labels follow reported
+lengths, including credit-based plans with no rolling duration.
+
+IPS10 places confirmed subscriptions (including plan-only Antigravity) inside USAGE,
+with reported subscription dates separate from reset countdowns. An unknown plan,
+a raw credit count, or an unlinked integration does not create a placeholder row.

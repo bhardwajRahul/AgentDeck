@@ -641,13 +641,14 @@ describe('SessionSlotManager list-view usage tiles', () => {
     expect(types.filter((t) => t === 'usage')).toHaveLength(2);
   });
 
-  it('replaces the Codex 5h/7d keys with one LUNA gauge while a reserve is reported', () => {
+  it('replaces the Codex 5h/7d keys with one LUNA gauge while account quota is exhausted', () => {
     const manager = new SessionSlotManager();
     manager.updateUsage({
       fiveHourPercent: 42,
       sevenDayPercent: 17,
       codexRateLimits: {
         ...CODEX_LIMITS,
+        secondary: { ...CODEX_LIMITS.secondary!, usedPercent: 100 },
         lunaReserve: { usedPercent: 32, regularResetsAt: '2099-01-01T00:00:00Z', available: true },
       },
     });

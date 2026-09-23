@@ -77,3 +77,19 @@ describe('IPS10 stable card roster', () => {
     expect(other.sessions.every((s: any) => s.coordination === undefined)).toBe(true);
   });
 });
+
+describe('IPS10 quota transport fidelity', () => {
+  it('preserves a missing 5h slot, actual window lengths, Luna, and all subscription dates', () => {
+    const usage = { type: 'usage_update', codexRateLimits: {
+      secondary: { usedPercent: 100, windowMinutes: 10080 },
+      lunaReserve: { usedPercent: 32, resetsAt: '2099-01-01T00:00:00Z' },
+    }, subscriptions: [{ name: 'ChatGPT Pro' }, { name: 'Claude' }, { name: 'GLM Coding Plan' }, { name: 'Google AI Pro', until: '2099-02-03T00:00:00Z' }] } as BridgeEvent;
+    const out = prepareForSerial(usage, { deviceInfo: { board: 'ips_10' } }) as any;
+    expect(out.codexRateLimits.primary).toBeUndefined();
+    expect(out.codexRateLimits.secondary.windowMinutes).toBe(10080);
+    expect(out.codexRateLimits.lunaReserve.usedPercent).toBe(32);
+    expect(out.subscriptions).toHaveLength(4);
+    expect(out.subscriptions[3].until).toContain('2/3');
+    expect((prepareForSerial(usage) as any).codexRateLimits.lunaReserve).toBeUndefined();
+  });
+});

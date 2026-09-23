@@ -7,6 +7,7 @@
 #include "../net/ws_client.h"
 #include "../net/wifi_manager.h"
 #include "../ui/widgets/hud_bar.h"
+#include "../ui/widgets/ips10_workspace.h"
 #include "../util/memory.h"
 #include <Arduino.h>
 #include <atomic>
@@ -63,6 +64,7 @@ void beginCapture(const char* target, bool wake) {
         capturing=false; phase=Phase::Error; HUD::notify("Voice needs WiFi - try again"); return;
     }
     snprintf(session,sizeof(session),"%s",target);
+    IPS10Workspace::voiceStarted(target);
     ++replyGeneration; replyAllowed=true;
     automatic=wake; speech=false; closing=false; used=0;
     if (wake) {

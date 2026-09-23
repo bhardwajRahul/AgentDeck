@@ -1,3 +1,4 @@
+import { selectedLunaReserve } from '@agentdeck/shared';
 /**
  * Usage data types and shared formatting helpers.
  * Used by the dedicated Usage Dial (E3) renderer.
@@ -240,7 +241,7 @@ export function buildCodexUsageEncoder(data: UsageModeData, hasReceivedData: boo
     sevenDay: { label: '7D', usedPercent: secondary?.usedPercent ?? 0, resetsAt: secondary?.resetsAt, known: secondary != null, stale: secondary?.stale === true, footnote: codexUsageFootnote(secondary, cx?.capturedAt)?.text },
     note,
     sideCard: solo ? buildCodexSideCard(data, cx, solo) : undefined,
-    luna: cx?.lunaReserve,
+    luna: selectedLunaReserve(cx),
   };
 }
 

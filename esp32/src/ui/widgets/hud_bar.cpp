@@ -2705,6 +2705,7 @@ void clearSpeaking() {
 }
 
 void notify(const char* text) {
+    IPS10Workspace::voiceNotice(text);
     voiceUiPost(VoiceUiOp::NOTICE, text);
 }
 
@@ -2724,6 +2725,7 @@ void pushVoiceQuestion(const char* q) {
 }
 
 void setVoiceAnswer(const char* a) {
+    IPS10Workspace::voiceAnswer(a);
     if (!a || !a[0]) return;
     char safe[96];
     snprintf(safe, sizeof(safe), "%s", a);

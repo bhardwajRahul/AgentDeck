@@ -147,7 +147,7 @@ struct CollaborationPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Collaboration", systemImage: "point.3.connected.trianglepath.dotted")
+                Label(CollaborationPresentation.heading, systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 17, weight: .semibold))
                 Spacer()
                 // Badge, not a word: the existing capsule idiom (caption-size
@@ -199,19 +199,19 @@ struct CollaborationPanel: View {
                         if selected.subagents != nil || selected.coordination != nil {
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                                 if let census = selected.subagents {
-                                    metric(census.active, "Subagents active", "circle.dotted", DesignTokens.UI.cyan)
-                                    metric(census.completed, "Done this wave", "checkmark.circle", DesignTokens.UI.ok)
+                                    metric(census.active, CollaborationPresentation.labels[0], CollaborationPresentation.symbols[0], DesignTokens.UI.cyan)
+                                    metric(census.completed, CollaborationPresentation.labels[1], CollaborationPresentation.symbols[1], DesignTokens.UI.ok)
                                 }
                                 if let coord = selected.coordination {
-                                    metric(coord.spawnedActive, "Spawned running", "arrow.up.right.circle", DesignTokens.UI.cyan)
-                                    metric(coord.backgroundJobs, "Jobs waited on", "hourglass", DesignTokens.UI.attn)
+                                    metric(coord.spawnedActive, CollaborationPresentation.labels[2], CollaborationPresentation.symbols[2], DesignTokens.UI.cyan)
+                                    metric(coord.backgroundJobs, CollaborationPresentation.labels[3], CollaborationPresentation.symbols[3], DesignTokens.UI.attn)
                                 }
                             }
                             if let coord = selected.coordination, coord.messagesIn + coord.messagesOut > 0 {
                                 Text("Peer messages · in \(coord.messagesIn) · out \(coord.messagesOut)\(coord.lastPeerName.map { " · last \($0)" } ?? "")")
                                     .font(.system(size: 10)).foregroundStyle(DesignTokens.Ink.s300)
                             }
-                            Text("Live session census · may differ in scope from the task record below")
+                            Text("\(CollaborationPresentation.scope) · may differ in scope from the task record below")
                                 .font(.system(size: 10)).foregroundStyle(DesignTokens.Ink.s300)
                         }
                         if !feed.children.isEmpty {
@@ -295,7 +295,7 @@ struct CollaborationPanel: View {
         // worker counts into a fabricated total. Direct children matter too.
         let hasActiveWorkers = (session.subagents?.active ?? 0) > 0 || (session.coordination?.spawnedActive ?? 0) > 0
         let pendingJobs = session.coordination?.backgroundJobs ?? 0
-        let awaitingResults = !waiting && !working && (hasActiveWorkers || pendingJobs > 0)
+        let awaitingResults = CollaborationPresentation.phase(waiting, working, session.subagents?.active ?? 0, session.coordination?.spawnedActive ?? 0, pendingJobs) == 2
         let continuation = hasActiveWorkers ? "Session · turn closed · workers still running"
             : "Session · turn closed · waiting on \(pendingJobs) job\(pendingJobs == 1 ? "" : "s")"
         return VStack(alignment: .leading, spacing: 10) {

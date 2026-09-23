@@ -261,6 +261,7 @@ describe('renderUsageEncoderBoth — single live window', () => {
   it('keeps the Codex identity while showing Luna in the wide SD+ layout', () => {
     const svg = renderUsageEncoderBoth(buildCodexUsageEncoder({
       codexRateLimits: {
+        secondary: { usedPercent: 100, windowMinutes: 10080 },
         lunaReserve: {
           usedPercent: 11,
           regularResetsAt: new Date(Date.now() + 2 * 86400000).toISOString(),

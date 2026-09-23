@@ -138,7 +138,13 @@ function normalizeCodexRateLimits(
       shortWindow = { usedPercent: 100, windowMinutes: 0 };
     }
   }
-  return { ...rl, primary: normalizeCodexWindow(shortWindow), secondary: normalizeCodexWindow(longWindow) };
+  return {
+    ...rl,
+    primary: normalizeCodexWindow(shortWindow),
+    secondary: normalizeCodexWindow(longWindow),
+    // Native devices also receive this snapshot over WiFi, bypassing serial compaction.
+    lunaReserve: rl.lunaReserve?.resetsAt && Date.parse(rl.lunaReserve.resetsAt) <= Date.now() ? undefined : rl.lunaReserve,
+  };
 }
 
 /**
