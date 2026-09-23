@@ -34,6 +34,20 @@ Firmware application size is 5,471,830 / 6,291,456 bytes (87.0%). Runtime diagno
 
 The image SHA-256 is `814276bcb0083854acea5605b550ff3f6a6654ddd601724e5c66d14b15e779bc`; build epoch `1790131837` and pre-commit label `9efef312-dirty` correspond to implementation commit `206c85ef`. The first USB write stopped at 8.1% during a concurrent daemon ownership transition. The Mac app subsequently retained the TTY while its HTTP port changed, preventing the next preflight. Recovery suspended the current CLI daemon, briefly quit the port-holding Mac app, re-identified the P4/MAC/16MB flash, and wrote the complete image successfully. No unrelated process was killed.
 
+## 2026-09-23 — IPS10 ambient project studio
+
+The IPS10 default screen now exposes work without a tap: four project spaces per page, priority activity, an attributable recent ring event, a global attention strip, and an always-visible voice state. Project names and session IDs determine spatial ordering; activity changes do not move the spaces. Additional projects rotate every 30 seconds, with an optional pause on the page caption. Detailed history and voice controls remain available on demand.
+
+Blender 5.2 produced a shared token-colored workbench, rendered once at 448×120 RGBA and encoded as a 157.5 KiB flash-resident RGB565+A8 asset. Canonical agent masks and live text are separate widgets. Ten reusable project containers and ten creature seats bound allocation. The old keycap asset is retained but no longer compiled into the studio.
+
+Usage moves into a secondary rail: Claude/Codex plus received z.ai windows and Antigravity credits. MCP and credits keep their units. A newly exposed sentinel bug was fixed: reset/disconnect previously left z.ai percentages at zero or retained them. Both now clear to unknown. Simulator fixtures now call the real reset method instead of bypassing its sentinels with memset.
+
+Validation: native landscape and portrait interaction suites passed (ambient activity/attention, seven voice states with the drawer closed, stable placement, automatic pages, ten peers/projects, provider units, zero/missing/stale usage, selection identity, ring wrap and attribution, filters/removal, drawer bounds, offline/empty). Monorepo build/typecheck and 4,654 tests passed (two skips); protocol generation left no drift. All seven token mirrors passed; design lint retains the existing 92 violations. Documentation/catalog gates passed.
+
+Limits: co-presence is not evidence of a delegation edge; only reported child counts are displayed. Front-camera frame acquisition/vision is not implemented by this change. Recognition quality remains deferred at the user's request. Physical orientation remains landscape; portrait evidence is simulator-only. Workspace diagnostics time state-to-widget processing, not display flush or FPS.
+
+USB deployment verified MAC `80:f1:b2:d0:b4:bb` / 16MB before a full write; esptool verified the image hash. Installed identity: `81730938-dirty`, epoch `1790139970`, firmware SHA256 `7f4e0c50c04da9f9292ee88b1d5035a805eaf8b4033ce9d20c47e4542f709f7d` (5,664,688-byte image; app section 89.0% of the 6MB slot). A 90-second serial observation confirmed `studio-v3`, 1280×800, three sessions/two projects and 320 advancing updates, without observed panic/reboot. Internal free heap ranged from 61–63 KiB (minimum-ever 56 KiB), with largest free blocks ranging from 17–21 KiB. Median state-to-widget time was 5.528ms; startup-inclusive maximum was 49.809ms; this is not a frame-rate measurement. The serial lease was released successfully, and the daemon then reported a fresh connected device with the same new build epoch. IPS35 native build and multi-session render also passed after the shared reset change.
+
 ## 2026-09-23 — IPS10 작업 중심 UI와 개인 OpenClaw 음성 호출
 
 IPS10의 기본 화면을 현재 작업/최근 결과 중심으로 줄이고 긴 기록은 탭 상세로

@@ -144,6 +144,7 @@ bool queuePhotoHttpUpload(uint8_t*, size_t, const char*, int, int) { return fals
 
 // ── Audio shims (defined in audio/mic_capture.cpp on-device) ────────────────
 // Mic-ready but never capturing: the PTT control renders in its resting state.
+const char* g_simVoiceState="wake";
 namespace Audio {
 bool micInit() { return true; }
 bool micReady() { return true; }
@@ -152,7 +153,7 @@ uint32_t micElapsedMs(uint32_t) { return 0; }
 void micStart(const char*) {}
 void micPump() {}
 void micStop(bool) {}
-const char* voiceState() { return "wake"; }
+const char* voiceState() { return g_simVoiceState; }
 uint16_t micLevel() { return 0; }
 void micVoiceResult(bool) {}
 void playbackStop() {}

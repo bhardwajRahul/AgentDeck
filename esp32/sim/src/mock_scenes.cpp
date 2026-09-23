@@ -65,7 +65,7 @@ void addTimeline(const char* type, const char* sid, const char* raw, const char*
 }
 
 void base(CreatureState cs) {
-  std::memset(&g_state, 0, sizeof(g_state));
+  g_state.reset();
   g_state.dataReceived = true;
   g_state.wsConnected = true;
   g_state.state = AgentState::IDLE;
@@ -169,7 +169,7 @@ bool SimScenes::apply(const char* name) {
     return applyDemoScene(agent, state);
   }
   if (std::strcmp(name, "empty") == 0) {
-    std::memset(&g_state, 0, sizeof(g_state));
+    g_state.reset();
     g_state.fiveHourPercent = g_state.sevenDayPercent = -1;
     g_state.codexPrimaryPercent = g_state.codexSecondaryPercent = -1;
     g_state.dataReceived = false;   // pre-connection: no quota data or creatures

@@ -1,7 +1,9 @@
-# IPS10 tactile keycap
+# IPS10 project studio assets
 
-`keycap.py` is the authored Blender 5.2 source. It creates a separate studio scene, reads material colors from `design/tokens.css`, renders `keycap.png` at 128×96 with transparency, then restores the previously active scene. It does not modify agent/brand geometry or bake text into the image.
+`room.py` is the authored Blender 5.2 source for the shared project workbench. It creates a separate scene, reads material colors from `design/tokens.css`, renders `room.png` at 448×120 with transparency, then restores the previous scene. It does not change the original scene or bake agent geometry, state or text into the image.
 
-`encode.py` converts that PNG to a shared, uncompressed RGB565+A8 image in `esp32/src/ui/widgets/ips10_keycap_generated.h`. The 36 KiB pixel payload stays in flash; LVGL overlays the existing canonical creature and live state. The touch target is 108×108 and shifts three pixels while pressed. All ten seats reuse the same image.
+`encode_room.py` converts the PNG to a shared, uncompressed RGB565+A8 image in `esp32/src/ui/widgets/ips10_room_generated.h`. Its 157.5 KiB pixel payload remains in flash. All ten project containers reuse it; live canonical creatures, activity, attention and recent messages are independent LVGL objects. No runtime canvas or decompression is needed.
 
-Regenerate the image using Blender's Python execution with this script's `__file__` set, then run `python3 design/ips10/encode.py` from the repository root. `python3 design/ips10/encode.py --check` verifies PNG-to-consumer drift. Render the native IPS10 interaction suite to review the complete UI rather than the isolated asset alone.
+Execute the Blender source with its `__file__` set, then run `python3 design/ips10/encode_room.py`. Add `--check` to verify PNG-to-consumer drift. Review the complete UI with the native IPS10 interaction suite in landscape and portrait.
+
+The earlier `keycap.py`, `keycap.png`, `encode.py` and generated keycap header are retained as the previous tactile-deck asset; the ambient studio does not compile that image into firmware.

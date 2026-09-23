@@ -1,7 +1,8 @@
 #include "config.h"
 #if defined(BOARD_IPS10)
 #include "ips10_workspace.h"
-#include "ips10_keycap_generated.h"
+#include "ips10_room_generated.h"
+#include "audio/mic_capture.h"
 #include "../theme.h"
 #include "../display.h"
 #include "../../state/agent_state.h"
@@ -34,6 +35,8 @@ template<size_t N> struct Text {
 };
 struct Row {
     char id[32], name[40], agent[16], state[20], tool[40], project[40];
+    char activity[160], latest[120], hm[6];
+    uint16_t children, latestRank; bool childrenKnown;
     uint32_t elapsed;
 };
 static Row rows[10];
@@ -58,17 +61,24 @@ static const lv_image_dsc_t* (*glyphFor)(const char*);
 static int detailW, sceneW;
 // Bounded, device-lifetime widget pools: ten projects / ten creatures total.
 // No canvases or per-frame heap allocations are needed for the living overview.
-static lv_obj_t *overview, *viewButton, *quotaCards[4], *quotaBars[4], *pods[10], *seats[10], *creatures[10];
-static Text<40> viewLabel, quotaValue[4], quotaReset[4], podName[10], seatState[10];
+static lv_obj_t *overview, *viewButton, *resourcePane, *quotaCards[7], *quotaBars[7], *pods[10], *seats[10], *creatures[10];
+static Text<40> viewLabel, quotaValue[7], quotaReset[7], podName[10], seatState[10];
 static Text<160> tokenLine;
 static Text<100> podStatus[10], overviewEmpty;
-static Text<48> seatTool[10];
-struct UsageSnapshot { float percent[4]; char reset[4][20]; uint32_t input, output, calls; float cost; };
+static Text<200> podActivity[10], podLatest[10], ambientVoice;
+static Text<120> attentionLine;
+static Text<48> pageLabel;
+static lv_obj_t *voiceStatusPane, *attentionPane, *roomImages[10], *quotaTitles[7];
+static int page=0, pageCount=1;
+static uint32_t pageSince=0;
+static bool pageHeld=false;
+static char projectKeys[10][40];
+struct UsageSnapshot { float percent[7]; char reset[7][20]; bool mcp; uint32_t input, output, calls; float cost; };
 static UsageSnapshot quota;
 static int podFor[10], memberSlot[10], podMembers[10], projectCount;
 static uint32_t brandColor(const char* agent) {
     if(!strcmp(agent,"claude-code") || !strcmp(agent,"claude")) return Theme::ClaudeBody;
-    if(!strcmp(agent,"codex") || !strcmp(agent,"codex-cli")) return Theme::CloudBody;
+    if(!strcmp(agent,"codex") || !strcmp(agent,"codex-cli") || !strcmp(agent,"codex-app")) return Theme::CloudBody;
     if(!strcmp(agent,"openclaw")) return Theme::CrayfishShell;
     if(!strcmp(agent,"kiro")) return Theme::KiroMark;
     if(!strcmp(agent,"antigravity")) return Theme::AntigravityMark;
@@ -120,27 +130,29 @@ static void selectCb(lv_event_t* e) {
 }
 static void filterCb(lv_event_t* e) {
     filter=static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
+    page=0;pageSince=millis();
     lastUpdate=0; update();
     lv_obj_scroll_to_y(rail,0,LV_ANIM_OFF);
 }
 static void historyCb(lv_event_t*) { history=!history;lastUpdate=0;update();lv_obj_scroll_to_y(eventBox,0,LV_ANIM_OFF); }
-static void viewCb(lv_event_t*) { overviewMode=!overviewMode;lastUpdate=0;update(); }
+static void viewCb(lv_event_t*) { overviewMode=!overviewMode;if(overviewMode)filter=0;lastUpdate=0;update(); }
+static void pageCb(lv_event_t*) { pageHeld=!pageHeld;lastUpdate=0;update(); }
 static void voiceCb(lv_event_t*) { voiceOpen=!voiceOpen;visible(voicePane,voiceOpen); }
 }
 
 lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     presentedId[0]=0;
     glyphFor=glyph; count=0; filter=0; history=false; voiceOpen=false;lastUpdate=0;
-    overviewMode=true;
+    overviewMode=true;page=0;pageSince=millis();pageHeld=false;
     const int w=g_screenW,h=g_screenH, railW=w>=1100?320:248;
     root=box(parent,0,0,w,h,Theme::DeepSea);lv_obj_set_style_radius(root,0,0);
-    caption(root,"AgentDeck  /  PROJECT DECK",24,22,380,Theme::HUDText);
+    caption(root,"AgentDeck  /  STUDIO",24,22,380,Theme::HUDText);
     viewButton=box(root,420,12,174,48,Theme::ShallowWater);
     label(viewLabel,viewButton,16,14,148,&font_workspace_20,Theme::HUDText);
     lv_obj_add_event_cb(viewButton,viewCb,LV_EVENT_CLICKED,nullptr);
     label(link,root,w-370,24,346,&font_workspace_20,Theme::HUDDim);
     lv_obj_set_style_text_align(link.obj,LV_TEXT_ALIGN_RIGHT,0);
-    if(w<1100) lv_obj_set_pos(viewButton,w-198,62);
+    if(w<1100) {lv_obj_set_pos(viewButton,w-198,12);lv_obj_set_width(link.obj,220);lv_obj_set_x(link.obj,310);}
     label(summary,root,24,76,w-248,&font_workspace_20,Theme::HUDText);
     const int gap=12, fw=(w-48-gap*3)/4;
     for(int i=0;i<4;++i) {
@@ -151,7 +163,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         lv_obj_add_event_cb(filters[i],filterCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(i)));
     }
     label(rosterTitle,root,24,205,railW,&font_workspace_20,Theme::HUDDim);
-    rail=box(root,24,238,railW,h-318,Theme::DeepSea);
+    rail=box(root,24,238,railW,h-358,Theme::DeepSea);
     lv_obj_add_flag(rail,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(rail,LV_DIR_VER);
     lv_obj_set_style_pad_bottom(rail,8,0);
     for(int i=0;i<10;++i) {
@@ -166,7 +178,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         lv_obj_add_event_cb(cards[i],selectCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(i)));
     }
     detailW=w-railW-72;
-    detail=box(root,48+railW,204,detailW,h-284,Theme::MidWater);
+    detail=box(root,48+railW,204,detailW,h-324,Theme::MidWater);
     label(heading,detail,24,22,detailW-124,&font_workspace_20,Theme::HUDText);
     label(identity,detail,24,54,detailW-124,&font_kr_12,Theme::HUDDim);
     focusGlyph=lv_image_create(detail);lv_obj_set_pos(focusGlyph,detailW-88,8);
@@ -191,7 +203,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     label(historyLabel,historyButton,14,16,120,&font_workspace_20,Theme::HUDText);
     lv_obj_add_event_cb(historyButton,historyCb,LV_EVENT_CLICKED,nullptr);
     caption(detail,"최근 활동",24,340,detailW-212);
-    eventBox=box(detail,24,386,detailW-48,h-284-402,Theme::MidWater);
+    eventBox=box(detail,24,386,detailW-48,h-324-402,Theme::MidWater);
     lv_obj_add_flag(eventBox,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(eventBox,LV_DIR_VER);
     for(int i=0;i<8;++i) {
         eventCards[i]=box(eventBox,0,i*112,detailW-48,104,Theme::DeepSea);
@@ -200,51 +212,56 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         lv_label_set_long_mode(eventText[i].obj,LV_LABEL_LONG_WRAP);
         lv_obj_set_height(eventText[i].obj,62);
     }
-    sceneW=w-48;
-    overview=box(root,24,204,sceneW,h-284,Theme::DeepSea);
-    lv_obj_add_flag(overview,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(overview,LV_DIR_VER);
-    lv_obj_set_style_pad_bottom(overview,12,0);
-    const int qw=(sceneW-24)/4;
-    const char* quotaNames[]={"Claude 5h","Claude 7d","Codex 기본","Codex 보조"};
-    for(int i=0;i<4;++i) {
-        quotaCards[i]=box(overview,i*(qw+8),0,qw,110,Theme::MidWater);
-        caption(quotaCards[i],quotaNames[i],12,10,qw-24);
-        label(quotaValue[i],quotaCards[i],12,36,qw-24,&font_workspace_20,Theme::HUDText);
-        quotaBars[i]=lv_bar_create(quotaCards[i]);lv_obj_set_pos(quotaBars[i],12,66);lv_obj_set_size(quotaBars[i],qw-24,8);
+    sceneW=w>=1100?w-304:w-48;
+    overview=box(root,24,108,sceneW,h-234,Theme::DeepSea);
+    // Four stable project spaces per page; overflow advances automatically.
+    resourcePane=box(root,w-256,108,232,h-234,Theme::DeepSea);
+    const char* quotaNames[]={"Claude 5h","Claude 7d","Codex 기본","Codex 보조","z.ai 5h","z.ai 보조","Antigravity"};
+    for(int i=0;i<7;++i) {
+        quotaCards[i]=box(resourcePane,0,i*76,232,70,Theme::MidWater);
+        auto* title=lv_label_create(quotaCards[i]);quotaTitles[i]=title;
+        lv_label_set_text_static(title,quotaNames[i]);lv_obj_set_pos(title,12,7);
+        lv_obj_set_style_text_font(title,&font_workspace_20,0);lv_obj_set_style_text_color(title,lv_color_hex(Theme::HUDDim),0);
+        label(quotaValue[i],quotaCards[i],142,8,82,&font_workspace_20,Theme::HUDText);
+        quotaBars[i]=lv_bar_create(quotaCards[i]);lv_obj_set_pos(quotaBars[i],12,36);lv_obj_set_size(quotaBars[i],208,6);
         lv_obj_set_style_bg_color(quotaBars[i],lv_color_hex(Theme::ShallowWater),LV_PART_MAIN);
-        label(quotaReset[i],quotaCards[i],12,82,qw-24,&font_kr_12,Theme::HUDDim);
+        label(quotaReset[i],quotaCards[i],12,48,208,&font_kr_12,Theme::HUDDim);
     }
-    label(tokenLine,root,24,h-54,w-238,&font_workspace_20,Theme::HUDText);
-    caption(overview,"프로젝트 데크  /  에이전트 키를 눌러 살펴보기",12,124,sceneW-24);
+    if(w<1100) {lv_obj_set_pos(resourcePane,24,h-302);lv_obj_set_size(resourcePane,w-48,150);lv_obj_set_height(overview,h-432);}
+    label(tokenLine,root,24,h-40,w-48,&font_workspace_20,Theme::HUDDim);
+    label(pageLabel,overview,0,0,sceneW,&font_kr_12,Theme::HUDDim);
+    lv_obj_add_flag(pageLabel.obj,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(pageLabel.obj,pageCb,LV_EVENT_CLICKED,nullptr);
     for(int i=0;i<10;++i) {
-        pods[i]=box(overview,0,160,sceneW,168,Theme::MidWater);
-        label(podName[i],pods[i],16,12,detailW-32,&font_workspace_20,Theme::HUDText);
-        label(podStatus[i],pods[i],16,40,detailW-32,&font_kr_12,Theme::HUDDim);
-        seats[i]=box(overview,0,0,108,108,Theme::ShallowWater);
-        lv_obj_set_style_bg_opa(seats[i],LV_OPA_TRANSP,0);
-        // Baked Blender relief + LVGL press state: depth without a 3D render loop.
-        auto* keycap=lv_image_create(seats[i]);lv_image_set_src(keycap,&IPS10Keycap::image);
-        lv_image_set_scale(keycap,208);lv_obj_set_pos(keycap,-10,-8);
-        lv_obj_clear_flag(keycap,LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_translate_y(seats[i],3,LV_STATE_PRESSED);
+        pods[i]=box(overview,0,24,sceneW,260,Theme::MidWater);
+        label(podName[i],pods[i],16,12,sceneW-32,&font_workspace_20,Theme::HUDText);
+        label(podStatus[i],pods[i],16,40,sceneW-32,&font_kr_12,Theme::HUDDim);
+        roomImages[i]=lv_image_create(pods[i]);lv_image_set_src(roomImages[i],&IPS10Room::image);lv_image_set_pivot(roomImages[i],0,0);
+        lv_obj_clear_flag(roomImages[i],LV_OBJ_FLAG_CLICKABLE);
+        label(podActivity[i],pods[i],16,154,sceneW-32,&font_workspace_20,Theme::HUDText);
+        lv_label_set_long_mode(podActivity[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(podActivity[i].obj,48);
+        label(podLatest[i],pods[i],16,207,sceneW-32,&font_workspace_20,Theme::HUDDim);
+        lv_label_set_long_mode(podLatest[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(podLatest[i].obj,48);
+        seats[i]=box(overview,0,0,72,82,Theme::ShallowWater);lv_obj_set_style_bg_opa(seats[i],LV_OPA_TRANSP,0);
         lv_obj_add_event_cb(seats[i],selectCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(i)));
-        creatures[i]=lv_image_create(seats[i]);lv_obj_set_pos(creatures[i],16,0);
-        lv_obj_clear_flag(creatures[i],LV_OBJ_FLAG_CLICKABLE);
+        creatures[i]=lv_image_create(seats[i]);lv_image_set_pivot(creatures[i],0,0);lv_obj_set_pos(creatures[i],0,0);lv_obj_clear_flag(creatures[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_image_recolor_opa(creatures[i],LV_OPA_COVER,0);
-        label(seatState[i],seats[i],8,74,92,&font_kr_12,Theme::HUDText);
-        label(seatTool[i],seats[i],8,92,92,&font_kr_12,Theme::HUDDim);
-        lv_obj_set_height(seatTool[i].obj,16);
+        label(seatState[i],seats[i],0,56,72,&font_kr_12,Theme::HUDText);
     }
-    label(overviewEmpty,overview,16,174,sceneW-32,&font_workspace_20,Theme::HUDDim);
+    label(overviewEmpty,overview,16,80,sceneW-32,&font_workspace_20,Theme::HUDDim);
+    attentionPane=box(root,24,60,w-48,38,Theme::MidWater);
+    label(attentionLine,attentionPane,12,7,w-72,&font_workspace_20,Theme::HUDText);
+    voiceStatusPane=box(root,24,h-112,w-224,68,Theme::MidWater);
+    label(ambientVoice,voiceStatusPane,16,12,w-256,&font_workspace_20,Theme::HUDText);
+    lv_label_set_long_mode(ambientVoice.obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(ambientVoice.obj,48);
     label(empty,rail,12,12,railW-24,&font_workspace_20,Theme::HUDDim);
     lv_label_set_long_mode(empty.obj,LV_LABEL_LONG_WRAP);
-    label(usage,root,24,h-26,w-230,&font_kr_12,Theme::HUDDim);
-    auto* voice=box(root,w-186,h-64,162,48,Theme::ShallowWater);
+    label(usage,root,24,h-18,w-48,&font_kr_12,Theme::HUDDim);
+    auto* voice=box(root,w-186,h-112,162,68,Theme::ShallowWater);
     caption(voice,"음성 / 스피커",18,15,138,Theme::HUDText);
     lv_obj_add_event_cb(voice,voiceCb,LV_EVENT_CLICKED,nullptr);
     // A separate drawer preserves direct voice controls without consuming the
     // working surface while closed. Width is always the full screen minus 48.
-    voicePane=box(root,24,h-252,w-48,178,Theme::ShallowWater);
+    voicePane=box(root,24,h-302,w-48,178,Theme::ShallowWater);
     lv_obj_set_style_pad_all(voicePane,10,0);lv_obj_set_style_pad_row(voicePane,0,0);
     lv_obj_set_flex_flow(voicePane,LV_FLEX_FLOW_COLUMN);
     visible(voicePane,false);
@@ -268,11 +285,23 @@ void update() {
         snprintf(r.project,sizeof(r.project),"%s",s.projectName);
         snprintf(r.agent,sizeof(r.agent),"%s",s.agentType);snprintf(r.state,sizeof(r.state),"%s",s.state);
         snprintf(r.tool,sizeof(r.tool),"%s",s.currentTool[0]?s.currentTool:s.activity[0]?s.activity:s.lastEventText);r.elapsed=s.elapsedSec;
+        snprintf(r.activity,sizeof(r.activity),"%s",category(s.state)==1 && s.question[0]?s.question:s.activity[0]?s.activity:s.lastEventTask[0]?s.lastEventTask:s.currentTool);
+        snprintf(r.latest,sizeof(r.latest),"%s",s.lastEventText);snprintf(r.hm,sizeof(r.hm),"%s",s.lastEventHm);
+        r.latestRank=TIMELINE_MAX_ENTRIES;
+        // Ring order, not HH:MM string order, remains correct across midnight.
+        for(int e=0;e<g_state.timelineCount;++e) {
+            const auto& item=g_state.timeline[(g_state.timelineHead+g_state.timelineCount-1-e+TIMELINE_MAX_ENTRIES)%TIMELINE_MAX_ENTRIES];
+            if(strcmp(item.sessionId,s.id))continue;
+            r.latestRank=e;
+            snprintf(r.latest,sizeof(r.latest),"%s",item.detail[0]?item.detail:item.raw);
+            snprintf(r.hm,sizeof(r.hm),"%s",item.hm);break;
+        }
+        r.children=s.childrenActive;r.childrenKnown=s.childrenKnown;
         ++totals[category(r.state)];
     }
     // Priority ordering is deterministic; selection still follows the ID.
     for(int i=1;i<count;++i) {
-        Row r=rows[i];int j=i;
+        static Row r; r=rows[i];int j=i; // Reused bounded scratch; keep the UI stack small.
         while(j>0 && category(rows[j-1].state)>category(r.state)) {rows[j]=rows[j-1];--j;}
         rows[j]=r;
     }
@@ -294,19 +323,40 @@ void update() {
     }
     p5=g_state.fiveHourPercent;p7=g_state.sevenDayPercent;c5=g_state.codexPrimaryPercent;c7=g_state.codexSecondaryPercent;stale=g_state.usageStale;
     quota.percent[0]=stale?-1:p5;quota.percent[1]=stale?-1:p7;quota.percent[2]=c5;quota.percent[3]=c7;
-    const char* resets[]={g_state.fiveHourReset,g_state.sevenDayReset,g_state.codexPrimaryReset,g_state.codexSecondaryReset};
-    for(int i=0;i<4;++i) snprintf(quota.reset[i],20,"%s",resets[i]);
+    quota.percent[4]=g_state.zaiPrimaryPercent;quota.percent[5]=g_state.zaiSecondaryPercent;quota.percent[6]=g_state.antigravityCredits;quota.mcp=g_state.zaiSecondaryIsMcp;
+    const char* resets[]={g_state.fiveHourReset,g_state.sevenDayReset,g_state.codexPrimaryReset,g_state.codexSecondaryReset,g_state.zaiPrimaryReset,g_state.zaiSecondaryReset,g_state.antigravityPlan};
+    for(int i=0;i<7;++i) snprintf(quota.reset[i],20,"%s",resets[i]);
     quota.input=g_state.inputTokens;quota.output=g_state.outputTokens;quota.calls=g_state.toolCalls;quota.cost=g_state.estimatedCostUsd;
     unlockState();
     char text[240];
-    visible(overview,overviewMode);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);viewLabel.set(overviewMode?"작업 상세":"프로젝트 모임");
-    for(int i=0;i<4;++i) {
+    visible(overview,overviewMode);visible(resourcePane,overviewMode);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);
+    visible(attentionPane,overviewMode);visible(summary.obj,!overviewMode);
+    for(int i=0;i<4;++i)visible(filters[i],!overviewMode);
+    viewLabel.set(overviewMode?"작업 상세":"프로젝트 모임");
+    const char* vs=Audio::voiceState();
+    const char* voiceText=!Audio::micReady()?"마이크 준비 중":!strcmp(vs,"listening")?"듣고 있습니다  /  말씀하세요":!strcmp(vs,"sending")?"음성을 보내고 있습니다":!strcmp(vs,"waiting")?"에이전트의 응답을 기다리고 있습니다":!strcmp(vs,"speaking")?"응답을 읽어드리고 있습니다":!strcmp(vs,"error")?"음성 연결을 확인해주세요":!strcmp(vs,"muted")?"음성 호출 꺼짐  /  음성 설정에서 켤 수 있습니다":"오픈클로 · 음성 호출 대기";
+    ambientVoice.set(voiceText);
+    lv_obj_set_style_border_width(voiceStatusPane,!strcmp(vs,"listening")?2:0,0);
+    lv_obj_set_style_border_color(voiceStatusPane,lv_color_hex(Theme::StatusAmber),0);
+    int quotaY=0;
+    lv_label_set_text_static(quotaTitles[5],quota.mcp?"z.ai MCP":"z.ai 보조");
+    for(int i=0;i<7;++i) {
         const float p=quota.percent[i];const bool known=p>=0;
-        if(known) snprintf(text,sizeof(text),"%.0f%% 사용",p);else snprintf(text,sizeof(text),"정보 없음");
-        quotaValue[i].set(text);visible(quotaBars[i],known);
+        // Keep primary accounts visible; extra providers appear when received.
+        const bool show=i<4 || known;visible(quotaCards[i],show);if(!show)continue;
+        if(g_screenW>=1100)lv_obj_set_pos(quotaCards[i],0,quotaY++*76);
+        else {
+            const int qw=(g_screenW-48)/4-6;
+            lv_obj_set_pos(quotaCards[i],(quotaY%4)*(qw+6),(quotaY/4)*76);lv_obj_set_width(quotaCards[i],qw);
+            lv_obj_set_style_text_font(quotaTitles[i],&font_kr_12,0);
+            lv_obj_set_pos(quotaValue[i].obj,qw-62,8);lv_obj_set_width(quotaValue[i].obj,58);
+            lv_obj_set_width(quotaBars[i],qw-24);lv_obj_set_width(quotaReset[i].obj,qw-24);++quotaY;
+        }
+        if(known)snprintf(text,sizeof(text),i==6?"%.0f":"%.0f%%",p);else snprintf(text,sizeof(text),"-");
+        quotaValue[i].set(text);visible(quotaBars[i],known && i!=6);
         lv_bar_set_value(quotaBars[i],known?(p>100?100:static_cast<int>(p)):0,LV_ANIM_OFF);
-        lv_obj_set_style_bg_color(quotaBars[i],lv_color_hex(p>=90?Theme::StatusAmber:Theme::StatusCyan),LV_PART_INDICATOR);
-        if(known && quota.reset[i][0])snprintf(text,sizeof(text),"리셋 %s",quota.reset[i]);else snprintf(text,sizeof(text),"%s",known?"리셋 정보 없음":"다음 수신 대기");
+        lv_obj_set_style_bg_color(quotaBars[i],lv_color_hex(p>=90 && i!=6?Theme::StatusAmber:Theme::StatusCyan),LV_PART_INDICATOR);
+        if(known && quota.reset[i][0])snprintf(text,sizeof(text),i==6?"%s 크레딧":"리셋 %s",quota.reset[i]);else snprintf(text,sizeof(text),"%s",known?(i==6?"크레딧":"리셋 정보 없음"):"정보 없음");
         quotaReset[i].set(text);
     }
     // These are the daemon's usage snapshot, not selected-session or project totals.
@@ -322,33 +372,62 @@ void update() {
         if(group<0) group=projectCount++;
         podFor[i]=group;memberSlot[i]=podMembers[group]++;
     }
-    const int columns=sceneW>=700?2:1, pw=(sceneW-(columns-1)*12)/columns;
-    const int seatsPerRow=(pw-24)/112;
-    int columnY[2]={160,160};
+    // Sort project spaces by identity, never by their changing activity state.
+    int order[10], remap[10];
+    for(int g=0;g<projectCount;++g) {
+        order[g]=g;
+        for(int i=0;i<count;++i)if(podFor[i]==g) {snprintf(projectKeys[g],40,"%s",rows[i].project[0]?rows[i].project:rows[i].id);break;}
+    }
+    for(int i=1;i<projectCount;++i){int key=order[i],j=i;while(j>0 && strcmp(projectKeys[order[j-1]],projectKeys[key])>0){order[j]=order[j-1];--j;}order[j]=key;}
+    for(int i=0;i<projectCount;++i)remap[order[i]]=i;
+    for(int i=0;i<count;++i)if(podFor[i]>=0)podFor[i]=remap[podFor[i]];
+    memset(podMembers,0,sizeof(podMembers));
+    for(int i=0;i<count;++i)if(podFor[i]>=0){++podMembers[podFor[i]];memberSlot[i]=0;for(int j=0;j<count;++j)if(podFor[j]==podFor[i] && strcmp(rows[j].id,rows[i].id)<0)++memberSlot[i];}
+    pageCount=(projectCount+3)/4;if(pageCount<1)pageCount=1;
+    if(page>=pageCount)page=0;
+    if(overviewMode && !pageHeld && now-pageSince>=30000){page=(page+1)%pageCount;pageSince=now;}
+    snprintf(text,sizeof(text),"프로젝트 %d  /  %d · %d%s",page+1,pageCount,projectCount,pageCount>1?(pageHeld?"  /  고정":"  /  30초마다 다음 공간"):"  /  같은 프로젝트의 에이전트");pageLabel.set(text);
+    const int pw=(sceneW-12)/2, ph=(lv_obj_get_height(overview)-36)/2;
     for(int g=0;g<10;++g) {
-        visible(pods[g],g<projectCount);if(g>=projectCount)continue;
-        const int col=g%columns, ph=60+((podMembers[g]+seatsPerRow-1)/seatsPerRow)*112;
-        lv_obj_set_pos(pods[g],col*(pw+12),columnY[col]);lv_obj_set_size(pods[g],pw,ph);columnY[col]+=ph+12;
-        int first=-1,working=0,attention=0;
-        for(int i=0;i<count;++i)if(podFor[i]==g) {if(first<0)first=i;working+=category(rows[i].state)==2;attention+=category(rows[i].state)==1;}
+        const bool show=g<projectCount && g/4==page;visible(pods[g],show);if(!show)continue;
+        const int cell=g%4;
+        lv_obj_set_pos(pods[g],(cell%2)*(pw+12),24+(cell/2)*(ph+12));lv_obj_set_size(pods[g],pw,ph);
+        int first=-1,working=0,attention=0;unsigned children=0;bool childKnown=false;
+        for(int i=0;i<count;++i)if(podFor[i]==g){if(first<0)first=i;working+=category(rows[i].state)==2;attention+=category(rows[i].state)==1;if(rows[i].childrenKnown){children+=rows[i].children;childKnown=true;}}
         lv_obj_set_width(podName[g].obj,pw-32);lv_obj_set_width(podStatus[g].obj,pw-32);
         podName[g].set(rows[first].project[0]?rows[first].project:"프로젝트 미지정");
-        snprintf(text,sizeof(text),"%d명  ·  작업 %d  ·  확인 %d",podMembers[g],working,attention);podStatus[g].set(text);
+        snprintf(text,sizeof(text),"%d명  ·  작업 %d  ·  확인 %d%s",podMembers[g],working,attention,childKnown?"  /  하위 작업 보고됨":"");
+        if(childKnown)snprintf(text,sizeof(text),"%d명 · 작업 %d · 확인 %d · 하위 %u",podMembers[g],working,attention,children);
+        podStatus[g].set(text);
+        const int roomW=pw<480?pw-32:448;
+        lv_image_set_scale(roomImages[g],roomW*256/448);
+        lv_obj_set_pos(roomImages[g],(pw-roomW)/2,48);
+        lv_obj_set_width(podActivity[g].obj,pw-32);lv_obj_set_width(podLatest[g].obj,pw-32);
+        lv_obj_set_y(podActivity[g].obj,ph-106);lv_obj_set_y(podLatest[g].obj,ph-53);
+        snprintf(text,sizeof(text),"%s · %s",nameFor(category(rows[first].state)),rows[first].activity[0]?rows[first].activity:category(rows[first].state)==3?"새 작업을 기다리고 있습니다":"작업 내용 수신 대기");podActivity[g].set(text);
+        lv_obj_set_style_text_color(podActivity[g].obj,lv_color_hex(attention?Theme::StatusAmber:Theme::HUDText),0);
+        int recent=first;
+        for(int i=0;i<count;++i)if(podFor[i]==g && rows[i].latestRank<rows[recent].latestRank)recent=i;
+        snprintf(text,sizeof(text),"최근 %s · %s",rows[recent].hm,rows[recent].latest[0]?rows[recent].latest:"아직 수신된 내용이 없습니다");podLatest[g].set(text);
     }
     for(int i=0;i<10;++i) {
-        const bool show=i<count && podFor[i]>=0;visible(seats[i],show);if(!show)continue;
-        if(lv_obj_get_parent(seats[i])!=pods[podFor[i]]) lv_obj_set_parent(seats[i],pods[podFor[i]]);
-        const int slot=memberSlot[i],cat=category(rows[i].state);
-        lv_obj_set_pos(seats[i],12+(slot%seatsPerRow)*112,56+(slot/seatsPerRow)*112);
+        const bool show=i<count && podFor[i]>=0 && podFor[i]/4==page;visible(seats[i],show);if(!show)continue;
+        if(lv_obj_get_parent(seats[i])!=pods[podFor[i]])lv_obj_set_parent(seats[i],pods[podFor[i]]);
+        const int cat=category(rows[i].state), n=podMembers[podFor[i]], slot=memberSlot[i];
+        const int step=(pw-80)/(n>5?5:n), row=slot/5;
+        lv_obj_set_pos(seats[i],40+(slot%5)*step,62+row*44);
+        lv_obj_set_size(seats[i],step>72?72:step,n>5?44:82);
         const auto* glyph=glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
-        if(glyph) {lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],192);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
-        // Only awaiting animates. Brand identity stays intact; status is a separate badge.
-        lv_obj_set_y(creatures[i],cat==1 && overviewMode && connected?((now/300+i)%2?0:4):4);
-        snprintf(text,sizeof(text),"%s %s",cat==1?"!":cat==2?">":"z",nameFor(cat));seatState[i].set(text);
-        lv_obj_set_style_text_color(seatState[i].obj,lv_color_hex(colorFor(cat)),0);
-        seatTool[i].set(rows[i].tool[0]?rows[i].tool:rows[i].agent);
+        if(glyph){lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],n>5?128:224);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
+        lv_obj_set_y(creatures[i],!strncmp(rows[i].state,"awaiting",8) && overviewMode && connected?((now/300+i)%2?0:4):4);
+        snprintf(text,sizeof(text),"%s",cat==1?"! 확인 필요":cat==2?"> 작업 중":"z 대기");seatState[i].set(text);
+        lv_obj_set_y(seatState[i].obj,n>5?34:62);lv_obj_set_style_text_color(seatState[i].obj,lv_color_hex(colorFor(cat)),0);
     }
     visible(overviewEmpty.obj,!projectCount);overviewEmpty.set(count?"이 상태의 작업이 없습니다. 다른 상태를 선택하세요.":"에이전트가 연결되면 프로젝트 모임이 나타납니다.");
+    if(!connected)attentionLine.set("연결 끊김 · 마지막 수신 상태입니다");
+    else if(totals[1]) {int first=0;while(first<count && category(rows[first].state)!=1)++first;snprintf(text,sizeof(text),"확인 %d · %s · %s",totals[1],rows[first].project,rows[first].activity);attentionLine.set(text);}
+    else {snprintf(text,sizeof(text),"%d개 프로젝트 · %d명 작업 중 · %d명 대기",projectCount,totals[2],totals[3]);attentionLine.set(text);}
+    lv_obj_set_style_text_color(attentionLine.obj,lv_color_hex(totals[1]?Theme::StatusAmber:Theme::HUDText),0);
     link.set(connected?"연결됨  ·  실시간 작업 현황":"연결 끊김  ·  마지막 수신 내용");
     lv_obj_set_style_text_color(link.obj,lv_color_hex(connected?Theme::HUDDim:Theme::StatusAmber),0);
     if(!connected) snprintf(text,sizeof(text),"연결을 복구하고 있습니다. 아래는 마지막 수신 상태입니다.");

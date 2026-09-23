@@ -314,6 +314,11 @@ struct DashboardState {
         codexSecondaryPercent = -1.0f;
         codexPrimaryReset[0] = '\0';
         codexSecondaryReset[0] = '\0';
+        zaiPrimaryPercent = -1.0f;
+        zaiSecondaryPercent = -1.0f;
+        zaiPrimaryReset[0] = '\0';
+        zaiSecondaryReset[0] = '\0';
+        zaiSecondaryIsMcp = false;
         antigravityCredits = -1.0f;
         antigravityPlan[0] = '\0';
     }
@@ -347,6 +352,11 @@ struct DashboardState {
         codexSecondaryPercent = -1.0f;
         codexPrimaryReset[0] = '\0';
         codexSecondaryReset[0] = '\0';
+        zaiPrimaryPercent = -1.0f;
+        zaiSecondaryPercent = -1.0f;
+        zaiPrimaryReset[0] = '\0';
+        zaiSecondaryReset[0] = '\0';
+        zaiSecondaryIsMcp = false;
         antigravityCredits = -1.0f;
         antigravityPlan[0] = '\0';
         usageStale = true;

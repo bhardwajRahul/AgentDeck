@@ -7,6 +7,7 @@
 namespace Audio {
 bool micInit();
 bool micReady();
+const char* voiceState();
 bool micCapturing();
 uint32_t micElapsedMs(uint32_t nowMs);
 void micStart(const char* sessionId);

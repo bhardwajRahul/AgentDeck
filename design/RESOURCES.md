@@ -30,7 +30,7 @@ index. If a location or gate changes, update this file in the same commit.
 | Brand marks (agents) | `design/brand/*.svg` | `pnpm generate-creature-glyphs` / `generate-micro-glyphs` regression tests |
 | Brand type (Latin) | `bridge/assets/fonts/` (IBM Plex Sans, JetBrains Mono) | first consumer: bridge renderers |
 | Brand type (CJK) | `design/fonts/` (IBM Plex Sans KR/JP, OFL) | `design/fonts/README.md` records origin |
-| IPS10 tactile keycap | `design/ips10/keycap.py` (Blender 5.2, token-based materials) → `keycap.png` | `python3 design/ips10/encode.py --check` verifies the flash-resident LVGL consumer; native IPS10 previews verify layout |
+| IPS10 project workbench | `design/ips10/room.py` (Blender 5.2, token-based materials) → `room.png` | `python3 design/ips10/encode_room.py --check` verifies the flash-resident LVGL consumer; native IPS10 previews verify layout |
 | Real photography / captures | `assets/` (sources: `assets/hardware-photos/`) | `scripts/crop-hardware-images.mjs` crop table |
 | Published image crops | `docs/media/` | regenerated from `assets/`, never hand-edited |
 | Doc-to-viewer binding | `agentdeck-design-system/catalog.json` | `pnpm design-system:check` |
