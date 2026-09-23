@@ -8,6 +8,7 @@
 #include "../display.h"
 #include "../../state/agent_state.h"
 #include "../../util/utf8.h"
+#include "../../util/usage_format.h"
 #include <Arduino.h>
 #include "net/serial_client.h"
 #include <cstdio>
@@ -64,8 +65,8 @@ static const lv_image_dsc_t* (*glyphFor)(const char*);
 static int detailW, sceneW;
 // Bounded, device-lifetime widget pools: ten projects / ten creatures total.
 // No canvases or per-frame heap allocations are needed for the living overview.
-static lv_obj_t *overview, *viewButton, *resourcePane, *quotaCards[7], *quotaBars[7], *pods[10], *seats[10], *creatures[10];
-static Text<40> viewLabel, quotaValue[7], quotaReset[7], podName[10], seatState[10];
+static lv_obj_t *overview, *viewButton, *resourcePane, *quotaCards[6], *quotaBars[6], *pods[10], *seats[10], *creatures[10];
+static Text<40> viewLabel, quotaValue[6], quotaReset[6], podName[10], seatState[10];
 static Text<160> tokenLine;
 static Text<100> podStatus[10], overviewEmpty;
 static Text<200> podLatest[10], ambientVoice;
@@ -78,16 +79,19 @@ static lv_obj_t* childLinks[10];
 static const lv_point_precise_t childBranch[]={{8,122},{8,134},{16,134}};
 static bool gatewayReady=false, retainedDetail=false;
 static lv_obj_t* recentCaption;
-static Text<32> quotaWindow[7];
-static lv_obj_t* providerNames[4];
+static Text<32> quotaWindow[6];
+static lv_obj_t* providerNames[3];
 static lv_obj_t* voiceButton;
+// One fixed subscription chip; raw Antigravity credits never enter the view.
+static lv_obj_t* planChip;
+static Text<48> planLabel;
 static int displayedSlot[10];
 static lv_obj_t *voiceStatusPane, *attentionPane;
 static int page=0, pageCount=1;
 static uint32_t pageSince=0;
 static bool pageHeld=false;
 static char projectKeys[10][40];
-struct UsageSnapshot { float percent[7]; char reset[7][20]; bool mcp; uint32_t input, output, calls; float cost; };
+struct UsageSnapshot { float percent[6]; char reset[6][20]; char plan[48]; bool mcp; uint32_t input, output, calls; float cost; };
 static UsageSnapshot quota;
 static int podFor[10], memberSlot[10], podMembers[10], projectCount;
 static uint32_t brandColor(const char* agent) {
@@ -243,9 +247,9 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     overview=box(root,24,96,sceneW,h-174,Theme::DeepSea);lv_obj_set_style_bg_opa(overview,LV_OPA_TRANSP,0);
     resourcePane=box(root,w-276,96,252,h-176,Theme::DeepSea);lv_obj_set_style_bg_opa(resourcePane,LV_OPA_70,0);
     caption(resourcePane,"Usage quota",14,12,224,Theme::HUDText);
-    const char* providers[]={"Claude","Codex","z.ai","Antigravity"};
-    for(int i=0;i<4;++i){caption(resourcePane,providers[i],14,44,224,Theme::HUDText);providerNames[i]=lv_obj_get_child(resourcePane,-1);}
-    for(int i=0;i<7;++i) {
+    const char* providers[]={"Claude","Codex","z.ai"};
+    for(int i=0;i<3;++i){caption(resourcePane,providers[i],14,44,224,Theme::HUDText);providerNames[i]=lv_obj_get_child(resourcePane,-1);lv_obj_set_style_text_align(providerNames[i],LV_TEXT_ALIGN_CENTER,0);}
+    for(int i=0;i<6;++i) {
         quotaCards[i]=box(resourcePane,8,72,116,150,Theme::DeepSea);lv_obj_set_style_bg_opa(quotaCards[i],LV_OPA_TRANSP,0);
         quotaBars[i]=lv_arc_create(quotaCards[i]);lv_obj_set_pos(quotaBars[i],7,0);lv_obj_set_size(quotaBars[i],100,100);
         lv_arc_set_rotation(quotaBars[i],270);lv_arc_set_bg_angles(quotaBars[i],0,360);lv_arc_set_range(quotaBars[i],0,100);
@@ -256,6 +260,9 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         label(quotaWindow[i],quotaCards[i],4,103,108,&font_kr_12,Theme::HUDDim);lv_obj_set_style_text_align(quotaWindow[i].obj,LV_TEXT_ALIGN_CENTER,0);
         label(quotaReset[i],quotaCards[i],4,124,108,&font_kr_12,Theme::HUDDim);lv_obj_set_style_text_align(quotaReset[i].obj,LV_TEXT_ALIGN_CENTER,0);
     }
+    planChip=box(root,w>=1100?500:350,18,160,40,Theme::ShallowWater);
+    label(planLabel,planChip,12,8,136,&font_studio_20,Theme::HUDDim);
+    lv_label_set_long_mode(planLabel.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(planLabel.obj,font_studio_20.line_height);
     label(tokenLine,root,24,h-48,w-260,&font_studio_20,Theme::HUDText);
     label(pageLabel,overview,0,0,sceneW,&font_kr_12,Theme::HUDDim);
     lv_obj_add_flag(pageLabel.obj,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(pageLabel.obj,pageCb,LV_EVENT_CLICKED,nullptr);
@@ -355,13 +362,14 @@ void update() {
     }
     p5=g_state.fiveHourPercent;p7=g_state.sevenDayPercent;c5=g_state.codexPrimaryPercent;c7=g_state.codexSecondaryPercent;stale=g_state.usageStale;
     quota.percent[0]=stale?-1:p5;quota.percent[1]=stale?-1:p7;quota.percent[2]=c5;quota.percent[3]=c7;
-    quota.percent[4]=g_state.zaiPrimaryPercent;quota.percent[5]=g_state.zaiSecondaryPercent;quota.percent[6]=g_state.antigravityCredits;quota.mcp=g_state.zaiSecondaryIsMcp;
-    const char* resets[]={g_state.fiveHourReset,g_state.sevenDayReset,g_state.codexPrimaryReset,g_state.codexSecondaryReset,g_state.zaiPrimaryReset,g_state.zaiSecondaryReset,g_state.antigravityPlan};
-    for(int i=0;i<7;++i) snprintf(quota.reset[i],20,"%s",resets[i]);
+    quota.percent[4]=g_state.zaiPrimaryPercent;quota.percent[5]=g_state.zaiSecondaryPercent;quota.mcp=g_state.zaiSecondaryIsMcp;
+    const char* resets[]={g_state.fiveHourReset,g_state.sevenDayReset,g_state.codexPrimaryReset,g_state.codexSecondaryReset,g_state.zaiPrimaryReset,g_state.zaiSecondaryReset};
+    for(int i=0;i<6;++i) snprintf(quota.reset[i],20,"%s",resets[i]);
+    snprintf(quota.plan,sizeof(quota.plan),"%s",g_state.antigravityPlan);
     quota.input=g_state.inputTokens;quota.output=g_state.outputTokens;quota.calls=g_state.toolCalls;quota.cost=g_state.estimatedCostUsd;
     unlockState();
     char text[240];
-    const bool hasQuota=quota.percent[0]>=0 || quota.percent[1]>=0 || quota.percent[2]>=0 || quota.percent[3]>=0 || quota.percent[4]>=0 || quota.percent[5]>=0 || quota.percent[6]>=0;
+    const bool hasQuota=quota.percent[0]>=0 || quota.percent[1]>=0 || quota.percent[2]>=0 || quota.percent[3]>=0 || quota.percent[4]>=0 || quota.percent[5]>=0;
     sceneW=g_screenW-(hasQuota?324:48);
     visible(overview,overviewMode);visible(resourcePane,hasQuota);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);
     const bool needsAttention=totals[1]>0 || !connected;
@@ -374,30 +382,41 @@ void update() {
     ambientVoice.set(voiceText);visible(voiceStatusPane,voiceText[0]);
     if(g_screenW<1100){lv_obj_set_pos(voiceStatusPane,24,g_screenH-112);lv_obj_set_width(voiceStatusPane,g_screenW-48);}
     visible(voiceButton,Audio::micReady());
-    lv_obj_set_y(resourcePane,overviewMode && needsAttention?138:90);lv_obj_set_height(resourcePane,g_screenH-(overviewMode && needsAttention?216:168)-(g_screenW<1100?54:0));
-    int providerCount=0;for(int i=0;i<4;++i)providerCount+=(quota.percent[2*i]>=0 || (i<3 && quota.percent[2*i+1]>=0));
-    const int gaugeSize=providerCount==4?64:providerCount>=3?80:100;
+    lv_obj_set_y(resourcePane,overviewMode && needsAttention?138:90);
+    // Six reused rings, with fixed geometry regardless of how many providers exist.
+    // Window labels explain the measure; reset text is secondary and optional.
+    constexpr int gaugeSize=88;
     int quotaY=48;
-    for(int provider=0;provider<4;++provider) {
-        const int begin=provider*2,end=provider==3?7:begin+2;
+    for(int provider=0;provider<3;++provider) {
+        const int begin=provider*2,end=begin+2;
         int knownCount=0;for(int i=begin;i<end;++i)knownCount+=quota.percent[i]>=0;
         visible(providerNames[provider],knownCount>0);
         if(knownCount)lv_obj_set_y(providerNames[provider],quotaY);
+        bool hasReset=false;
         int col=0;
         for(int i=begin;i<end;++i) {
             const float p=quota.percent[i];const bool known=p>=0;visible(quotaCards[i],known);if(!known)continue;
             lv_obj_set_pos(quotaCards[i],knownCount==1?68:8+col++*120,quotaY+30);
+            lv_obj_set_size(quotaCards[i],116,136);
             lv_obj_set_size(quotaBars[i],gaugeSize,gaugeSize);lv_obj_set_x(quotaBars[i],(116-gaugeSize)/2);
-            lv_obj_set_style_text_font(quotaValue[i].obj,gaugeSize<80 && i!=6?&font_studio_20:&font_studio_28,0);
-            lv_obj_set_y(quotaValue[i].obj,i==6?4:gaugeSize/2-(gaugeSize<80?12:17));lv_obj_set_y(quotaWindow[i].obj,i==6?40:gaugeSize+3);lv_obj_set_y(quotaReset[i].obj,i==6?58:gaugeSize+23);
-            snprintf(text,sizeof(text),i==6?"%.0f":"%.0f%%",p);quotaValue[i].set(text);
-            visible(quotaBars[i],i!=6);lv_arc_set_value(quotaBars[i],p>100?100:static_cast<int>(p));
-            lv_obj_set_style_arc_color(quotaBars[i],lv_color_hex(p>=90?Theme::StatusAmber:i%2?Theme::StatusCyan:Theme::StatusGreen),LV_PART_INDICATOR);
-            quotaWindow[i].set(i==6?"credits":i==5 && quota.mcp?"MCP used":i%2?"7d used":"5h used");
-            quotaReset[i].set(quota.reset[i]);visible(quotaReset[i].obj,quota.reset[i][0]);
+            lv_obj_set_style_arc_width(quotaBars[i],6,LV_PART_MAIN);lv_obj_set_style_arc_width(quotaBars[i],6,LV_PART_INDICATOR);
+            lv_obj_set_y(quotaValue[i].obj,27);
+            lv_obj_set_y(quotaWindow[i].obj,94);lv_obj_set_y(quotaReset[i].obj,114);
+            snprintf(text,sizeof(text),"%.0f%%",p);quotaValue[i].set(text);
+            lv_arc_set_value(quotaBars[i],p>100?100:static_cast<int>(p));
+            // Same meaning, same color across providers and both time windows.
+            lv_obj_set_style_arc_color(quotaBars[i],lv_color_hex(p>=90?Theme::StatusAmber:Theme::StatusCyan),LV_PART_INDICATOR);
+            quotaWindow[i].set(i==5 && quota.mcp?"MCP used":i%2?"7d used":"5h used");
+            snprintf(text,sizeof(text),"Reset %s",quota.reset[i]);quotaReset[i].set(text);
+            visible(quotaReset[i].obj,quota.reset[i][0]);hasReset|=quota.reset[i][0]!=0;
         }
-        if(knownCount)quotaY+=provider==3?80:gaugeSize+80;
+        if(knownCount)quotaY+=hasReset?178:158;
     }
+    // Content-sized rail avoids a tall empty panel when only one window is known.
+    lv_obj_set_height(resourcePane,quotaY+4);
+    const char* plan=quota.plan;while(*plan==' ')++plan;
+    visible(planChip,*plan);
+    if(*plan){UsageFormat::formatAgyPlan(plan,text,sizeof(text));planLabel.set(text);}
     // These are the daemon's usage snapshot, not selected-session or project totals.
     if(quota.input || quota.output || quota.calls) snprintf(text,sizeof(text),"Tokens  IN %lu / OUT %lu   ·   Tools %lu",static_cast<unsigned long>(quota.input),static_cast<unsigned long>(quota.output),static_cast<unsigned long>(quota.calls));
     else snprintf(text,sizeof(text),"");
@@ -593,7 +612,7 @@ void update() {
     if(elapsed>diag.maxUpdateUs)diag.maxUpdateUs=elapsed;
     diag.width=g_screenW;diag.height=g_screenH;diag.sessions=count;diag.visibleSessions=shown;
     diag.filter=filter;diag.eventCount=eventCount;diag.connected=connected;
-    diag.usageVisible=hasQuota;diag.quotaWindows=0;for(int i=0;i<7;++i)diag.quotaWindows+=quota.percent[i]>=0;diag.rosterTotal=rosterTotal;diag.rosterRotating=rosterRotating;
+    diag.usageVisible=hasQuota;diag.quotaWindows=0;for(int i=0;i<6;++i)diag.quotaWindows+=quota.percent[i]>=0;diag.rosterTotal=rosterTotal;diag.rosterRotating=rosterRotating;
     diag.history=history;diag.voiceOpen=voiceOpen;diag.overview=overviewMode;diag.projects=projectCount;
     portEXIT_CRITICAL(&diagMux);
 }

@@ -1473,7 +1473,7 @@ void parseMessage(const char* json, size_t length) {
         // Read-only, fixed UI-core snapshot. Never inspect LVGL from netTask.
         const auto d=IPS10Workspace::diagnostics();
         char reply[384];
-        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"aquarium-v5\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s,\"usageVisible\":%s,\"quotaWindows\":%u,\"rosterTotal\":%u,\"rosterRotating\":%s}",
+        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"aquarium-v6\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s,\"usageVisible\":%s,\"quotaWindows\":%u,\"rosterTotal\":%u,\"rosterRotating\":%s}",
             d.width,d.height,d.sessions,d.visibleSessions,(unsigned long)d.updates,
             (unsigned long)d.lastUpdateUs,(unsigned long)d.maxUpdateUs,d.connected?"true":"false",d.filter,d.eventCount,d.projects,d.overview?"true":"false",d.usageVisible?"true":"false",d.quotaWindows,d.rosterTotal,d.rosterRotating?"true":"false");
         Net::serialWriteJsonLine(reply);

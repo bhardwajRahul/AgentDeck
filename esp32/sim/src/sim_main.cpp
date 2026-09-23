@@ -341,9 +341,17 @@ bool verifyIpsInteractions(const char* outdir) {
   std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"processing");
   g_state.usageStale=false;g_state.fiveHourPercent=42;g_state.sevenDayPercent=68;g_state.codexPrimaryPercent=23;g_state.codexSecondaryPercent=44;
   g_state.zaiPrimaryPercent=12;g_state.zaiSecondaryPercent=7;g_state.zaiSecondaryIsMcp=true;g_state.antigravityCredits=812;advance();
-  if(!ipsLabel(lv_screen_active(),"MCP used") || !ipsLabel(lv_screen_active(),"812") || ipsLabel(lv_screen_active(),"812%"))return ipsFailure(__LINE__);
-  auto* credits=ipsLabel(lv_screen_active(),"credits");lv_obj_get_coords(credits,&bounds);
-  if(bounds.y2>=g_screenH-78 || !save("ips10-all-providers"))return ipsFailure(__LINE__);
+  std::snprintf(g_state.antigravityPlan,sizeof(g_state.antigravityPlan),"Google AI Pro");advance();
+  if(!ipsLabel(lv_screen_active(),"MCP used") || ipsLabel(lv_screen_active(),"812") || ipsLabel(lv_screen_active(),"credits") || !ipsLabel(lv_screen_active(),"AGY Pro"))return ipsFailure(__LINE__);
+  if(IPS10Workspace::diagnostics().quotaWindows!=6 || !save("ips10-all-providers"))return ipsFailure(__LINE__);
+  // Raw credits alone must not create a quota rail, a number, or a plan chip.
+  g_state.fiveHourPercent=g_state.sevenDayPercent=g_state.codexPrimaryPercent=g_state.codexSecondaryPercent=g_state.zaiPrimaryPercent=g_state.zaiSecondaryPercent=-1;
+  g_state.antigravityCredits=1000;g_state.antigravityPlan[0]=0;advance();
+  if(IPS10Workspace::diagnostics().usageVisible || IPS10Workspace::diagnostics().quotaWindows || ipsLabel(lv_screen_active(),"AGY Pro") || ipsLabel(lv_screen_active(),"credits"))return ipsFailure(__LINE__);
+  std::snprintf(g_state.antigravityPlan,sizeof(g_state.antigravityPlan),"Google AI Pro");advance();
+  if(!ipsLabel(lv_screen_active(),"AGY Pro") || IPS10Workspace::diagnostics().usageVisible || !save("ips10-plan-only"))return ipsFailure(__LINE__);
+  g_state.codexPrimaryPercent=0;advance();
+  if(IPS10Workspace::diagnostics().quotaWindows!=1 || !save("ips10-single-quota"))return ipsFailure(__LINE__);
   for(int i=0;i<10;++i) std::snprintf(g_state.sessions[i].projectName,sizeof(g_state.sessions[i].projectName),"Shared project");
   advance();if(IPS10Workspace::diagnostics().projects!=1)return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"10 agents - 10 working"))return ipsFailure(__LINE__);

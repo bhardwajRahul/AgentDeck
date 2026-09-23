@@ -59,3 +59,7 @@ credential/account changes invalidate the native cache. HTTP redirects are
 refused, credentials and responses are never logged, and token rotation and
 coupon redemption remain owned by Codex. The endpoint follows Codex's upstream
 implementation and is not a public, versioned OpenAI API contract.
+
+## Antigravity dashboard display
+
+Antigravity's local `availableCredits` is backend metering, not the model-group usage quota. Do not show the raw count (such as `1000`), a credits row, or a percentage derived from it on dashboards. Show only a confirmed plan using `formatAntigravityPlanShort` / native `UsageFormat::formatAgyPlan` (`Google AI Pro` → `AGY Pro`); omit the chip when no plan is known. Credit-only data must not create a quota rail. This preserves the existing shared formatter and Apple upstream-rail contract; integration diagnostics may still expose the underlying data.
