@@ -258,6 +258,22 @@ bool SimScenes::apply(const char* name) {
     g_state.subscriptionCount = 2;
     return true;
   }
+  if (std::strcmp(name, "aquarium") == 0) {
+    base(CreatureState::WORKING);
+    addSession("claude-code", "processing", "AgentDeck");
+    addSession("codex-cli", "processing", "AgentDeck");
+    addSession("claude-code", "awaiting_permission", "Website");
+    addSession("openclaw", "idle", "OpenClaw");
+    setStr(g_state.sessions[0].activity,sizeof(g_state.sessions[0].activity),"Refining dashboard layout");
+    setStr(g_state.sessions[1].activity,sizeof(g_state.sessions[1].activity),"Checking mobile build");
+    setStr(g_state.sessions[2].question,sizeof(g_state.sessions[2].question),"Run the build command?");
+    setStr(g_state.sessions[2].activity,sizeof(g_state.sessions[2].activity),"Updating landing page");
+    addTimeline("tool_result","s1-AgentDeck","12 checks passed",nullptr);
+    g_state.codexPrimaryPercent=23;g_state.codexSecondaryPercent=44;
+    setStr(g_state.codexPrimaryReset,sizeof(g_state.codexPrimaryReset),"1h 42m");
+    setStr(g_state.codexSecondaryReset,sizeof(g_state.codexSecondaryReset),"5d 9h");
+    return true;
+  }
   if (std::strcmp(name, "crowd") == 0) {
     // Real-world shape: many concurrent sessions in the SAME project (one big
     // huddle) plus a couple of stragglers — exercises pod grouping + seating.

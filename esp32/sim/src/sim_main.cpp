@@ -217,26 +217,27 @@ bool verifyIpsInteractions(const char* outdir) {
   const std::string overview=std::string(outdir)+"/ips10-overview.png";
   if(!renderScene("crowd",overview.c_str(),90,"focus")) return ipsFailure(__LINE__);
   if(std::strcmp(IPS10Workspace::selectedSession(),"s4-AgentDeck")) return ipsFailure(__LINE__);
-  if(!ipsLabel(lv_screen_active(),"5명  -  작업 3  -  확인 1"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),"5 agents - 3 working"))return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"IN 128000 / OUT 41000"))return ipsFailure(__LINE__);
   if(!IPS10Workspace::diagnostics().overview || IPS10Workspace::diagnostics().projects!=3)return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Bash 명령 실행") || !ipsLabel(lv_screen_active(),"권한 요청:"))return ipsFailure(__LINE__);
   const char* voiceStates[]={"listening","sending","waiting","speaking","error","muted","wake"};
-  const char* voiceLabels[]={"듣고 있습니다","보내고 있습니다","응답을 기다리고","읽어드리고","음성 연결","음성 호출 꺼짐","음성 호출 대기"};
-  for(int i=0;i<7;++i){g_simVoiceState=voiceStates[i];advance();if(!ipsLabel(lv_screen_active(),voiceLabels[i]) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
+  const char* voiceLabels[]={"Listening...","Sending voice...","Waiting for reply...","Speaking...","Voice connection error","MUTED-HIDDEN","OpenClaw ready"};
+  for(int i=0;i<7;++i){g_simVoiceState=voiceStates[i];advance();if((i==5?ipsLabel(lv_screen_active(),"OpenClaw ready")!=nullptr:!ipsLabel(lv_screen_active(),voiceLabels[i])) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
   if(g_state.zaiPrimaryPercent!=-1 || g_state.zaiSecondaryPercent!=-1)return ipsFailure(__LINE__);
-  auto* projectName=ipsLabel(lv_screen_active(),"5명  -  작업 3");
+  auto* projectName=ipsLabel(lv_screen_active(),"5 agents - 3 working");
   lv_area_t before;lv_obj_get_coords(lv_obj_get_parent(projectName),&before);
   const auto saved=g_state.sessions[0];std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"awaiting_permission");advance();
-  auto* changedProject=ipsLabel(lv_screen_active(),"5명  -  작업 2");if(!changedProject)return ipsFailure(__LINE__);
+  auto* changedProject=ipsLabel(lv_screen_active(),"5 agents - 2 working");if(!changedProject)return ipsFailure(__LINE__);
   lv_area_t after;lv_obj_get_coords(lv_obj_get_parent(changedProject),&after);
   if(before.x1!=after.x1 || before.y1!=after.y1)return false;
   g_state.sessions[0]=saved;advance();
+  SimDisplay::tick(12000);treeUpdate(12);SimDisplay::refresh();
   // Clicking an actual creature seat opens its exact session, not just its project.
   static lv_point_t point{};static bool pressed=false;
   auto* pointer=lv_indev_create();lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(pointer,[](lv_indev_t*,lv_indev_data_t* data) {data->point=point;data->state=pressed?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;});
-  auto* attention=ipsLabel(lv_screen_active(),"! 확인 필요");if(!attention)return ipsFailure(__LINE__);
+  auto* attention=ipsLabel(lv_screen_active(),"! Attention");if(!attention)return ipsFailure(__LINE__);
   lv_area_t key;lv_obj_get_coords(lv_obj_get_parent(attention),&key);
   point.x=(key.x1+key.x2)/2;point.y=key.y1+30;
   pressed=true;lv_indev_read(pointer);SimDisplay::refresh();
@@ -263,7 +264,7 @@ bool verifyIpsInteractions(const char* outdir) {
   for(int i=0;i<TIMELINE_MAX_ENTRIES+3;++i) {
     std::snprintf(entry.raw,sizeof(entry.raw),"SELECTED-EVENT-%03d",i);g_state.addTimelineEntry(entry);
   }
-  advance();if(!click("기록 보기")) return ipsFailure(__LINE__);
+  advance();if(!click("History")) return ipsFailure(__LINE__);
   char latest[40];std::snprintf(latest,sizeof(latest),"SELECTED-EVENT-%03d",TIMELINE_MAX_ENTRIES+2);
   if(!ipsLabel(lv_screen_active(),latest)) return ipsFailure(__LINE__);
   if(ipsLabel(lv_screen_active(),"GLOBAL-UNATTRIBUTED") || ipsLabel(lv_screen_active(),"OTHER-SESSION-ONLY")) return ipsFailure(__LINE__);
@@ -280,30 +281,32 @@ bool verifyIpsInteractions(const char* outdir) {
   g_state.sessions[0].alive=false;advance();
   if(!std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return ipsFailure(__LINE__);
   g_state.sessions[4].alive=false;advance();
-  if(!click("확인 필요")) return ipsFailure(__LINE__);
-  if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"이 상태의 작업이 없습니다")) return ipsFailure(__LINE__);
-  if(!click("전체")) return ipsFailure(__LINE__);
-  if(!click("음성 / 스피커")) return ipsFailure(__LINE__);
+  if(!click("Attention")) return ipsFailure(__LINE__);
+  if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"No matching sessions")) return ipsFailure(__LINE__);
+  if(!click("All")) return ipsFailure(__LINE__);
+  if(!click("Voice / speaker")) return ipsFailure(__LINE__);
   auto* talk=ipsLabel(lv_screen_active(),"Hold to talk");if(!talk)return ipsFailure(__LINE__);
   lv_area_t bounds;lv_obj_get_coords(lv_obj_get_parent(talk),&bounds);
   if(bounds.x1<0 || bounds.x2>=g_screenW || bounds.y1<0 || bounds.y2>=g_screenH)return ipsFailure(__LINE__);
-  if(!save("ips10-voice-controls") || !click("음성 / 스피커"))return ipsFailure(__LINE__);
+  if(!save("ips10-voice-controls") || !click("Voice / speaker"))return ipsFailure(__LINE__);
   g_state.wsConnected=false;g_simSerialConnected=false;advance();
-  if(!ipsLabel(lv_screen_active(),"연결 끊김"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),"Disconnected"))return ipsFailure(__LINE__);
   if(!save("ips10-offline"))return ipsFailure(__LINE__);
   g_state.sessionCount=0;advance();
-  if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"에이전트가 연결되면"))return ipsFailure(__LINE__);
+  if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"Waiting for agents"))return ipsFailure(__LINE__);
   if(!save("ips10-empty"))return ipsFailure(__LINE__);
   g_simSerialConnected=true;
-  if(!click("프로젝트 모임"))return ipsFailure(__LINE__);
+  if(!click("Aquarium"))return ipsFailure(__LINE__);
   g_state.usageStale=false;g_state.fiveHourPercent=0;g_state.codexPrimaryPercent=23;advance();
   if(!ipsLabel(lv_screen_active(),"0%"))return ipsFailure(__LINE__);
   g_state.usageStale=true;advance();
   if(ipsLabel(lv_screen_active(),"0%") || !ipsLabel(lv_screen_active(),"23%"))return ipsFailure(__LINE__);
   if(!save("ips10-stale-usage"))return ipsFailure(__LINE__);
+  g_state.codexPrimaryPercent=g_state.codexSecondaryPercent=-1;advance();
+  if(ipsLabel(lv_screen_active(),"Usage quota"))return ipsFailure(__LINE__);
   // Ten distinct projects must remain ten pods; similarly named worktrees are
   // not evidence of a shared project or an actual delegation relationship.
-  g_state.sessionCount=10;
+  g_state.sessionCount=10;g_state.sessionsTotal=1000;
   for(int i=0;i<10;++i) {
     auto& session=g_state.sessions[i];session={};session.alive=true;
     std::snprintf(session.id,sizeof(session.id),"stress-%d",i);
@@ -311,26 +314,35 @@ bool verifyIpsInteractions(const char* outdir) {
     std::snprintf(session.agentType,sizeof(session.agentType),"codex-cli");
     std::snprintf(session.state,sizeof(session.state),"processing");
   }
-  advance();if(IPS10Workspace::diagnostics().projects!=10)return ipsFailure(__LINE__);
+  advance();if(!ipsLabel(lv_screen_active(),"10 of 1000 agents"))return ipsFailure(__LINE__);
+  if(IPS10Workspace::diagnostics().projects!=10)return ipsFailure(__LINE__);
   if(!save("ips10-ten-projects"))return ipsFailure(__LINE__);
   SimDisplay::tick(31000);treeUpdate(31);SimDisplay::refresh();
-  if(!ipsLabel(lv_screen_active(),"shared-prefix-project-4") || ipsLabel(lv_screen_active(),"shared-prefix-project-0"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),g_screenW>=1100?"shared-prefix-project-4":"shared-prefix-project-2") || ipsLabel(lv_screen_active(),"shared-prefix-project-0"))return ipsFailure(__LINE__);
   // Attention is visible even when its project is on another page.
   std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"awaiting_permission");
   std::snprintf(g_state.sessions[0].question,sizeof(g_state.sessions[0].question),"OFF-PAGE-ATTENTION");advance();
   if(!ipsLabel(lv_screen_active(),"OFF-PAGE-ATTENTION"))return ipsFailure(__LINE__);
-  auto* pager=ipsLabel(lv_screen_active(),"30초");if(!pager)return ipsFailure(__LINE__);
+  auto* pager=ipsLabel(lv_screen_active(),"30s");if(!pager)return ipsFailure(__LINE__);
   lv_obj_send_event(pager,LV_EVENT_CLICKED,nullptr);advance();
   SimDisplay::tick(31000);treeUpdate(31);SimDisplay::refresh();
-  if(!ipsLabel(lv_screen_active(),"shared-prefix-project-4"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),g_screenW>=1100?"shared-prefix-project-4":"shared-prefix-project-2"))return ipsFailure(__LINE__);
   lv_obj_send_event(pager,LV_EVENT_CLICKED,nullptr);advance();
   std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"processing");
+  g_state.usageStale=false;g_state.fiveHourPercent=42;g_state.sevenDayPercent=68;g_state.codexPrimaryPercent=23;g_state.codexSecondaryPercent=44;
   g_state.zaiPrimaryPercent=12;g_state.zaiSecondaryPercent=7;g_state.zaiSecondaryIsMcp=true;g_state.antigravityCredits=812;advance();
-  if(!ipsLabel(lv_screen_active(),"z.ai MCP") || !ipsLabel(lv_screen_active(),"812") || ipsLabel(lv_screen_active(),"812%"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),"MCP used") || !ipsLabel(lv_screen_active(),"812") || ipsLabel(lv_screen_active(),"812%"))return ipsFailure(__LINE__);
+  auto* credits=ipsLabel(lv_screen_active(),"credits");lv_obj_get_coords(credits,&bounds);
+  if(bounds.y2>=g_screenH-78 || !save("ips10-all-providers"))return ipsFailure(__LINE__);
   for(int i=0;i<10;++i) std::snprintf(g_state.sessions[i].projectName,sizeof(g_state.sessions[i].projectName),"Shared project");
   advance();if(IPS10Workspace::diagnostics().projects!=1)return ipsFailure(__LINE__);
-  if(!ipsLabel(lv_screen_active(),"10명  -  작업 10"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),"10 agents - 10 working"))return ipsFailure(__LINE__);
   if(!save("ips10-ten-peers"))return ipsFailure(__LINE__);
+  // All received peers have a readable activity slot over one bounded cycle.
+  for(int i=0;i<10;++i)std::snprintf(g_state.sessions[i].activity,sizeof(g_state.sessions[i].activity),"PEER-%d-ACTIVITY",i);
+  bool seen[10]={};
+  for(int frame=0;frame<4;++frame){SimDisplay::tick(12000);treeUpdate(12);SimDisplay::refresh();for(int i=0;i<10;++i){char key[32];std::snprintf(key,sizeof(key),"PEER-%d-ACTIVITY",i);seen[i]|=ipsLabel(lv_screen_active(),key)!=nullptr;}}
+  for(bool value:seen)if(!value)return ipsFailure(__LINE__);
   for(int i=0;i<10;++i) g_state.sessions[i].projectName[0]=0;
   advance();if(IPS10Workspace::diagnostics().projects!=10)return ipsFailure(__LINE__);
   g_state.markBridgeDisconnected();
