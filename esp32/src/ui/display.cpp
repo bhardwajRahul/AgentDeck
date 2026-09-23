@@ -1,6 +1,7 @@
 #include "display.h"
 #include "config.h"
 #include "../boards/board_config.h"
+#include "../util/memory.h"
 #include "fonts/font_noto_kr_12.h"
 #if defined(BOARD_IPS10) || defined(BOARD_T_DISPLAY_PRO) || defined(BOARD_T_EMBED)
 #include "fonts/font_noto_kr_16.h"
@@ -636,10 +637,11 @@ static uint16_t* rotated_buf = nullptr;
 static ppa_client_handle_t ppaClient = nullptr;   // null → fall back to CPU transpose
 static size_t rotBufSizeG = 0;
 // One device-lifetime PPA target, sized to the largest LVGL flush slice below:
-// 1280 × 16 × RGB565 = 40,960 bytes. Three DMA-capable buffers share scarce
-// internal SRAM with ESP-Hosted; 24 lines left too little contiguous headroom
-// for the C6 SDIO RX pool and produced a deterministic reboot loop.
-static constexpr size_t IPS10_DRAW_LINES = 16;
+// 1280 × 8 × RGB565 = 20,480 bytes per buffer. Three device-lifetime buffers
+// stay in fast internal SRAM. The 16-line setup left only ~49 KiB after the
+// workspace/KWS initialized and refused every voice upload at the 60 KiB guard.
+// Eight lines return 60 KiB to ESP-Hosted without moving pixel writes to PSRAM.
+static constexpr size_t IPS10_DRAW_LINES = 8;
 #if defined(IPS10_PERF_HUD)
 volatile uint32_t g_flushInnerUs = 0;   // accumulated PPA+push time within the current frame
 volatile uint32_t g_bufInternal = 0;    // 1 = LVGL draw buffer is in internal SRAM, 0 = PSRAM
@@ -1503,7 +1505,7 @@ void displayInit() {
     static constexpr size_t BUF_LINES = 20;
 #elif defined(BOARD_IPS10)
     // IPS10 draw buffers live in INTERNAL SRAM (fast per-pixel render). Keep
-    // the two buffers plus rotated_buf at 16 lines each (about 123 KB total)
+    // the two buffers plus rotated_buf at 8 lines each (60 KiB total)
     // so ESP-Hosted retains a contiguous SDIO RX pool.
     static constexpr size_t BUF_LINES = IPS10_DRAW_LINES;
 #else
@@ -1550,6 +1552,7 @@ void displayInit() {
 #if defined(BOARD_IPS10)
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
     Serial.printf("[Display] LVGL initialized %dx%d (RGB565 native)\n", g_screenW, g_screenH);
+    logHeap("ips10-draw-buffers");
 #else
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565_SWAPPED);
     Serial.printf("[Display] LVGL initialized %dx%d (RGB565 swapped)\n", g_screenW, g_screenH);

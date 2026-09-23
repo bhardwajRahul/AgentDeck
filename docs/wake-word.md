@@ -5,6 +5,29 @@
 > upload → personal OpenClaw run → local TTS → panel playback → listening again.
 > This is a hardware smoke test, not a room-distance accuracy measurement.
 
+## Recognition diagnostics (2026-09-24)
+
+For a wake that reacts but misrecognizes the following utterance, inspect the
+running daemon as well as the settings. The Mac Studio was running an older
+npm installation that called Apple Speech directly, while its local settings
+selected `whisper-cpp`, `ko-KR`, and `large-v3-turbo`. Updating the source tree or
+firmware alone did not change that running implementation. The current loopback
+health response reports `voice.transcriber`, `voice.locale`, and
+`voice.personalRoute`; these describe configuration, not model readiness or
+recognition quality. The CLI now resolves to the stable main checkout rather
+than a temporary worktree. Previously captured microphone audio still produced
+some incorrect words when replayed through Whisper, so a successful round trip
+must not be reported as a room-distance recognition-accuracy result.
+
+The v8 hardware check also exposed an independent upload failure: the workspace
+left roughly 49 KiB internal heap against the existing 60 KiB WiFi TX guard.
+IPS10 now uses three 8-line internal DMA buffers, returning 60 KiB without moving
+per-pixel rendering into slower PSRAM. The upload guard remains intact. On the post-flash check, internal free memory
+settled at 106–108 KiB (largest block 62–65 KiB). The triggered utterance uploaded
+successfully on its first attempt, received a personal OpenClaw response, played
+it on the panel, and returned to wake state. This remains a synthetic-speech
+smoke test, not a recognition-accuracy benchmark.
+
 ## IPS10 desk companion
 
 The on-device **OpenClaw** button enables/disables the local Korean wake-word
