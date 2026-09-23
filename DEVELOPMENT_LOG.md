@@ -13,7 +13,7 @@
 - Shared generated native foreground budget: eight residents, selected and
   awaiting sessions first, with every session retained in the full roster.
   This does not infer parent/child relationships from matching project names.
-- Apple reserves scene space for attention and timeline panels; native viewing
+- Apple reserves scene space for attention panels; native viewing
   hides the timeline. Labels gain unlit backing, and wide viewports adjust the
   camera. The existing dashboard preference and default remain unchanged.
 - Android limits the native render surface and shadow map, removes expensive
@@ -53,18 +53,63 @@
   material assignments matched the committed scene in a 511-object comparison;
   this is not proof of equality of every Blender property. Android assets were
   exported from the committed source, not the unreviewed local binary.
-- Open PR #363 is an independent Node Claude-recovery fix with green CI. It is
-  not a prerequisite for the native Apple apps and was not silently folded into
-  this release. PR #362 remains the current device/dashboard work.
+- Open PR #363 is an independent Node Claude-recovery fix. A later review audit
+  found change requests despite green CI; credential rotation and executable-path
+  fixes were pushed to its contributor branch and the prior review was approved. All six CI checks passed and PR #363 was
+  squash-merged as `18708c28`.
+  It is not a prerequisite for the native Apple apps. PR #362 remains the current device/dashboard work.
 
 ## Delivery state
 
-Android 1.5.0 (20) is installed for tablet verification; iOS/macOS source version
-is 1.5.0. Store upload/submission has not occurred for this preparation. The user
-requested local cleanup before proceeding with Apple delivery. Preserve that
-ordering, complete final visual and Release archive checks, and then record each
-store's actual upload/submission/live state independently. No additional ESP32
-or deck firmware deployment is needed solely for these native app UI changes.
+Android 1.5.0 (20) was uploaded to a saved Play release draft, but was **not
+submitted**. The user then reported gray Antigravity, detached OpenClaw claws and
+lower Android visual fidelity. Apple archive workflows were canceled and store
+submission remains on hold while those defects are fixed. Android versionCode
+advances to 21 because Play already accepted 20. macOS has an unsubmitted 1.5.0
+version record; no final 1.5.0 Apple build has been selected. Existing 1.4.0
+versions remain live. No new ESP32/deck release follows from these native fixes.
+
+## Graphics correction after device review
+
+- Antigravity's uniform gray material came from using a monochrome brand token
+  in the 3D builder. An initial reuse of the 2D palette still differed
+  from the official image, as the user pointed out. Replaced that approximation
+  with Google's official full-color press PNG, sharing it through the original
+  SVG geometry's UV mapping in Apple USDZ and Android glTF.
+- OpenClaw's canonical source and glTF round-trip geometry had attached claws.
+  Android cached Filament TransformManager instance indices across habitat
+  animation transactions, which reorder component storage. Store entity IDs
+  and resolve indices at use for joints, fish and snail. The installed correction
+  shows both claws attached; churn and activity-state validation follows.
+- Matched Android water to the Apple deep-sea palette with correct linear input,
+  reduced ambient washout, added readable two-line labels, grounded the bottom
+  residents using imported geometry bounds and separated bottom/water slots.
+  The native camera field of view now comes from the existing generated rules.
+- Android unit tests, including exact official-PNG hash and color checks, pass.
+  Apple native resident/geometry tests passed 29/29, including shared shelf
+  contact. Repository build/typecheck and 4,671 Vitest tests passed (two skipped).
+  Protocol, token, docs and catalog gates passed; lint retains the 92 existing
+  working-checkout findings.
+- Android native rendering measured 30.142 fps at the increased 1200-pixel
+  thermal budget versus 30.161 at 960 pixels (thermal status 3). Idle/working
+  six-resident and 41-session churn captures exercise the corrected transforms.
+  iPad was installed and launched after the user unlocked it.
+  Release archive/store submission gates remain.
+
+## macOS composition parity
+
+The user preferred the still-installed macOS composition. Comparing its source
+and live screen exposed a regression in the newer mobile candidate: reserving
+the lower timeline fraction shortened the native scene, and the underwater
+wash/depth gradient had been removed. Restored a continuous full-canvas habitat
+behind the timeline on both native surfaces, retaining attention clearance.
+Water tint and depth-fade stops now share generated rules. Android system bars
+use light icons on its dark LCD dashboard; e-ink behavior is unchanged.
+Both corrected apps were installed and launched, and native screenshots confirm
+the continuous bottom composition, official color mark and attached claws.
+The same shared model/camera still passes 29 Apple geometry tests; Android
+unit tests and 4,671 Vitest tests pass. Android floor labels were moved above
+their residents to stay clear of the timeline fade.
 
 ## 2026-09-23 — macOS 1.5.0 preview preparation and crowd review
 

@@ -125,16 +125,16 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
                 .build(model.engine, model.light)
             val bytes = context.assets.open("living-aquarium.glb").use { it.readBytes() }
             model.loadModelGlb(ByteBuffer.allocateDirect(bytes.size).apply { put(bytes); flip() })
-            val water = dev.agentdeck.ui.theme.DesignTokens.Ink.s900
+            val water = dev.agentdeck.terrarium.TerrariumColors.DeepSea
+            fun linear(c: Float) = if (c <= .04045f) c / 12.92f else Math.pow(((c + .055f) / 1.055f).toDouble(), 2.4).toFloat()
             backdrop = com.google.android.filament.Skybox.Builder()
-                .color(water.red, water.green, water.blue, 1f).build(model.engine)
+                .color(linear(water.red), linear(water.green), linear(water.blue), 1f).build(model.engine)
             model.scene.skybox = backdrop
-            model.cameraFocalLength = 42f
             model.camera.lookAt(0.0, 4.8, 14.0, 0.0, 1.65, -0.7, 0.0, 1.0, 0.0)
             model.engine.lightManager.setDirection(
                 model.engine.lightManager.getInstance(model.light), -0.5f, -1f, -0.6f)
             fillLight = IndirectLight.Builder().irradiance(1, floatArrayOf(0.8f, 0.9f, 1f))
-                .intensity(25_000f).build(model.engine)
+                .intensity(15_000f).build(model.engine)
             model.scene.indirectLight = fillLight
             residents = dev.agentdeck.terrarium.AquariumResidents(context, model)
             root.addView(labels, FrameLayout.LayoutParams(-1, -1))
@@ -186,7 +186,7 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
         if (lastBudgetCheck == 0L || frameTimeNanos - lastBudgetCheck >= 2_000_000_000L) {
             lastBudgetCheck = frameTimeNanos
             constrained = power.isPowerSaveMode || power.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE
-            val maxEdge = if (constrained) 960 else 1440
+            val maxEdge = if (constrained) 1200 else 1440
             val scale = minOf(1f, maxEdge.toFloat() / maxOf(width, height, 1))
             val next = (width * scale).toInt().coerceAtLeast(1) to (height * scale).toInt().coerceAtLeast(1)
             if (next != bufferSize) {
@@ -199,6 +199,10 @@ class AquariumSurface(context: Context) : FrameLayout(context), Choreographer.Fr
         lastFrame = frameTimeNanos
         if (!reduceMotion) elapsedSeconds += dt
         viewer?.let { model ->
+            val aspect = width.toDouble() / height.coerceAtLeast(1)
+            val fov = if (aspect > dev.agentdeck.terrarium.TerrariumRules.NATIVE_CAMERA_WIDE_ASPECT)
+                dev.agentdeck.terrarium.TerrariumRules.NATIVE_CAMERA_WIDE_FOV else dev.agentdeck.terrarium.TerrariumRules.NATIVE_CAMERA_FOV
+            model.camera.setProjection(fov.toDouble(), aspect, .05, 1000.0, com.google.android.filament.Camera.Fov.VERTICAL)
             model.animator?.let { animator ->
                 if (animator.animationCount > 0) {
                     animator.applyAnimation(0, elapsedSeconds % animator.getAnimationDuration(0).coerceAtLeast(1f))

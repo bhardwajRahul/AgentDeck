@@ -57,6 +57,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import dev.agentdeck.terrarium.TerrariumRules
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -273,9 +275,15 @@ fun MonitorScreen(
         // Layer 1: Terrarium background (always renders)
         if (nativeAquarium) {
             dev.agentdeck.AquariumBackground(
-                Modifier.fillMaxWidth().fillMaxHeight(
-                    if (showTimeline && !hudHidden) 1f - TerrariumLayout.SAND_HEIGHT_FRACTION else 1f),
+                Modifier.fillMaxSize(),
                 terrariumState, dashState.focusedSessionId, onUnavailable = { aquariumUnavailable = true })
+            Box(Modifier.fillMaxSize().background(TerrariumColors.DeepSea.copy(alpha = TerrariumRules.NATIVE_WATER_TINT)))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                0f to TerrariumColors.DeepSea.copy(alpha = TerrariumRules.NATIVE_WATER_TINT),
+                TerrariumRules.NATIVE_DEPTH_FADE_START to Color.Transparent,
+                TerrariumRules.NATIVE_DEPTH_FADE_SHOULDER to TerrariumColors.DeepSea.copy(alpha = TerrariumRules.NATIVE_DEPTH_FADE_SHOULDER_OPACITY),
+                1f to TerrariumColors.DeepSea.copy(alpha = TerrariumRules.NATIVE_DEPTH_FADE_END_OPACITY),
+            )))
         } else ColorTerrariumBackground(
             state = terrariumState,
             mainCrayfish = mainCrayfish,

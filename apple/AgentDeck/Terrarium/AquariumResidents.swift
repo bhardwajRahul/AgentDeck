@@ -51,6 +51,7 @@ struct AquariumResident: Equatable {
 final class AquariumResidents {
     let root = Entity()
     private var templates: [String: Entity] = [:]
+    private var substrateTemplate: Entity?
     private(set) var residents: [String: Entity] = [:]
     private var descriptors: [AquariumResident] = []
     private var slotOrder: [String] = []
@@ -67,7 +68,7 @@ final class AquariumResidents {
         let rest: Transform
     }
     private var joints: [String: [Joint]] = [:]
-    private var supports: [String: ModelEntity] = [:]
+    private var supports: [String: Entity] = [:]
     private var footHeights: [String: Float] = [:]
     let shoal = AquariumShoal()
     private var time: Double = 0
@@ -75,6 +76,11 @@ final class AquariumResidents {
     var animate = true
 
     func loadTemplates(_ library: Entity) {
+        if let imported = library.findEntity(named: "aquarium_substrate") {
+            let template = imported.clone(recursive: true)
+            template.transform = Transform(matrix: imported.transformMatrix(relativeTo: nil))
+            substrateTemplate = template
+        }
         for kind in ["claudecode", "codex", "openclaw", "opencode", "antigravity", "kiro"] {
             if let imported = library.findEntity(named: "resident_" + kind) {
                 let template = imported.clone(recursive: true)
@@ -87,7 +93,7 @@ final class AquariumResidents {
         }
     }
 
-    var templateCount: Int { templates.count }
+    var templateCount: Int { substrateTemplate == nil ? 0 : templates.count }
 
     func sync(_ state: TerrariumState, aspect: Float) {
         let next = AquariumResident.foreground(AquariumResident.project(state), focusedID: state.focusedSessionId)
@@ -117,7 +123,7 @@ final class AquariumResidents {
                 // A broad, flat-topped substrate rock is fixed in habitat space.
                 // It does not follow the resident's pacing or breathing.
                 if supports[item.id] == nil {
-                    let support = Self.makeSubstrate()
+                    let support = makeSubstrate()
                     support.name = "substrate|" + item.id
                     root.addChild(support)
                     supports[item.id] = support
@@ -278,36 +284,12 @@ final class AquariumResidents {
         }, size)
     }
 
-    private static func makeSubstrate() -> ModelEntity {
-        var vertices: [SIMD3<Float>] = []
-        var indices: [UInt32] = []
-        let sides = 24
-        for (radius, height): (Float, Float) in [(0.82, 1), (1, 0.86), (1.12, 0)] {
-            for i in 0..<sides {
-                let angle = Float(i) / Float(sides) * 2 * .pi
-                let edge = radius * (1 + sin(angle * 3 + 0.4) * 0.045)
-                vertices.append([cos(angle) * edge, height, sin(angle) * edge])
-            }
-        }
-        vertices.append([0, 1, 0])
-        for i in 0..<sides {
-            let next = (i + 1) % sides
-            indices += [72, UInt32(next), UInt32(i)]
-            for row in 0..<2 {
-                let a = UInt32(row * sides + i), b = UInt32(row * sides + next)
-                indices += [a, b, b + 24, a, b + 24, a + 24]
-            }
-        }
-        var descriptor = MeshDescriptor(name: "Substrate resting shelf")
-        descriptor.positions = MeshBuffers.Positions(vertices)
-        descriptor.primitives = .triangles(indices)
-        let mesh = (try? MeshResource.generate(from: [descriptor])) ?? .generateBox(size: [1.6,1,1.6])
-        #if os(macOS)
-        let color = NSColor(DesignTokens.Ink.s700)
-        #else
-        let color = UIColor(DesignTokens.Ink.s700)
-        #endif
-        return ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: color, roughness: 0.9, isMetallic: false)])
+    private func makeSubstrate() -> Entity {
+        // A wrapper preserves the exported Z-up conversion when the runtime
+        // scales the shared shelf in the native scene's Y-up coordinates.
+        let shelf = Entity()
+        if let substrateTemplate { shelf.addChild(substrateTemplate.clone(recursive: true)) }
+        return shelf
     }
 
     private static func seed(_ id: String) -> Float {

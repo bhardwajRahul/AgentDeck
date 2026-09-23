@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 bpy.ops.wm.open_mainfile(filepath=str(ROOT / 'assets/terrarium/3d-residents.blend'))
 destination = ROOT / 'android/app/src/main/assets/residents'
 destination.mkdir(parents=True, exist_ok=True)
-for kind in ['claudecode', 'codex', 'openclaw', 'opencode', 'antigravity', 'kiro']:
-    root = bpy.data.objects['resident_' + kind]
+for kind in ['claudecode', 'codex', 'openclaw', 'opencode', 'antigravity', 'kiro', 'substrate']:
+    root = bpy.data.objects['aquarium_substrate' if kind == 'substrate' else 'resident_' + kind]
     root.location.x = 0
     bpy.ops.object.select_all(action='DESELECT')
     root.select_set(True)

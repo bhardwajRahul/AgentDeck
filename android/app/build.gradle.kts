@@ -37,7 +37,7 @@ android {
         applicationId = "dev.agentdeck"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20
+        versionCode = 21
         versionName = "1.5.0"
         buildConfigField("boolean", "APK_UPDATES", "false")
     }
@@ -123,3 +123,13 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
+
+// Package the canonical typeface directly; no manually maintained font mirror.
+val aquariumFonts by tasks.registering(Copy::class) {
+    from(rootProject.file("../bridge/assets/fonts")) {
+        include("IBMPlexSans-Regular.ttf", "LICENSES.md")
+    }
+    into(layout.buildDirectory.dir("generated/aquariumAssets/fonts"))
+}
+android.sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/aquariumAssets"))
+tasks.named("preBuild").configure { dependsOn(aquariumFonts) }

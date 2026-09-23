@@ -37,6 +37,33 @@ class AquariumResidentsTest {
         assertEquals(48, items.size) // no project-name merging of independent sessions
     }
 
+    @Test fun `Antigravity packages a sampled rainbow and texture coordinates`() {
+        val bytes = RuntimeEnvironment.getApplication().assets.open("residents/antigravity.glb").use { it.readBytes() }
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val length = buffer.getInt(12)
+        val json = JSONObject(String(bytes, 20, length, Charsets.UTF_8))
+        val pbr = json.getJSONArray("materials").getJSONObject(0).getJSONObject("pbrMetallicRoughness")
+        val texture = json.getJSONArray("textures").getJSONObject(pbr.getJSONObject("baseColorTexture").getInt("index"))
+        val image = json.getJSONArray("images").getJSONObject(texture.getInt("source"))
+        val view = json.getJSONArray("bufferViews").getJSONObject(image.getInt("bufferView"))
+        val offset = 20 + length + 8 + view.optInt("byteOffset")
+        // Official press PNG, captured 2026-09-23. Reject generated approximations.
+        val imageBytes = bytes.copyOfRange(offset, offset + view.getInt("byteLength"))
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(imageBytes).joinToString("") { "%02x".format(it) }
+        assertEquals("e0cd08ccd10cd8d08ccf0ba449823ee88495825c0841619618100d3ab089f51e", sha)
+        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, offset, view.getInt("byteLength"))
+        assertNotNull(bitmap)
+        val colors = (0 until bitmap.width step 4).flatMap { x ->
+            (0 until bitmap.height step 4).map { y -> bitmap.getPixel(x, y) }
+        }.filter { android.graphics.Color.alpha(it) > 250 }
+        assertTrue("Rainbow must not collapse to the gray brand chip", colors.distinct().size > 100)
+        assertTrue(colors.any { android.graphics.Color.green(it) > android.graphics.Color.red(it) * 1.5 })
+        assertTrue(colors.any { android.graphics.Color.blue(it) > android.graphics.Color.red(it) * 1.5 })
+        assertTrue(colors.any { android.graphics.Color.red(it) > android.graphics.Color.green(it) * 1.5 })
+        val attributes = json.getJSONArray("meshes").getJSONObject(0).getJSONArray("primitives").getJSONObject(0).getJSONObject("attributes")
+        assertTrue(attributes.has("TEXCOORD_0"))
+    }
+
     @Test fun `exported templates contain only their original character hierarchy`() {
         val context = RuntimeEnvironment.getApplication()
         for (kind in listOf("claudecode", "codex", "openclaw", "opencode", "antigravity", "kiro")) {

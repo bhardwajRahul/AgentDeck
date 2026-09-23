@@ -192,7 +192,7 @@ Both native clients use the generated foreground budget of eight residents,
 prioritizing selection and input requests without removing sessions from the
 roster. Android uses a separate Filament surface for the habitat and creatures;
 labels and dashboard panels retain display resolution. The surface's long edge
-is bounded to 1440 pixels normally and 960 under power/thermal constraints.
+is bounded to 1440 pixels normally and 1200 under power/thermal constraints.
 A 512-pixel shadow map, disabled MSAA/AO/bloom and FXAA reduce GPU work. Thermal
 and power state are sampled every two seconds rather than on every frame.
 The e-ink renderer remains separate.
@@ -202,3 +202,33 @@ improving from 8.380 to 29.836 fps with thermal status 3 in both samples;
 main UI cadence improved from 13.211 to 58.522 fps. Normal-temperature 60 fps
 is a target, not a measured guarantee. The user confirmed visibly smoother
 movement after installation.
+
+
+### Native visual fidelity
+
+Antigravity uses Google's official full-color press PNG, retained byte-for-byte
+as `design/brand/antigravity-color.png`. `build-3d-residents.py` fits its occupied
+bounds to the unchanged canonical SVG and packs the same image into USDZ and
+glTF. This preserves the broad blue base and warm crown instead of approximating
+them with a linear rainbow. The gray brand chip remains for monochrome surfaces. Neither the SVG
+silhouette nor any other character's anatomy changes.
+
+Android keeps stable entity IDs for anatomical joints, fish and the snail.
+Filament transform instances are temporary storage indices: the habitat animation
+transaction can reorder them, and removing a resident can move them again.
+Resolve an instance immediately before reading or writing it. Caching these
+indices detached OpenClaw's claws and could animate an unrelated mesh.
+
+Native vertical field of view is generated from `shared/src/terrarium-rules.ts`.
+Android's water uses the existing deep-sea color converted from sRGB to linear
+before reaching Filament, with restrained ambient fill. The two-line resident
+label uses a readable backing and semantic status colors. Its IBM Plex face is
+packaged at build time from the canonical `bridge/assets/fonts/` directory.
+
+Bottom residents rest on the same `aquarium_substrate` mesh authored in the
+resident Blender source, exported to USDZ and `residents/substrate.glb`. Imported
+foot bounds determine contact height; fixed shelves do not move with work steps.
+
+The final color/geometry correction measured 30.142 fps at the 1200-pixel
+thermal budget, versus 30.161 fps at 960 pixels on the same tablet (thermal
+status 3). This improves spatial detail without claiming a higher refresh rate.

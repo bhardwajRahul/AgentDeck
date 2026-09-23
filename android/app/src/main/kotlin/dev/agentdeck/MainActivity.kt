@@ -74,6 +74,13 @@ class MainActivity : ComponentActivity() {
         appliedAllowUnsupported = startup.allowUnsupportedDevice
         deviceProfile = DeviceProfile.detect(this, startup.panelOverride)
         DeviceProfileHolder.install(deviceProfile)
+        if (!deviceProfile.isEink) {
+            // LCD dashboards use dark water even when the system theme is light.
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = false
+                isAppearanceLightNavigationBars = false
+            }
+        }
 
         // Unsupported devices get guidance instead of a broken layout, unless
         // the user has explicitly overruled that.

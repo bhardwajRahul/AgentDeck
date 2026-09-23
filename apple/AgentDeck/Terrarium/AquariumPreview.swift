@@ -41,7 +41,7 @@ struct LivingAquariumScene: View {
             RealityView { content in
                 content.camera = .virtual
                 let camera = PerspectiveCamera()
-                camera.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > 2 ? 32 : 38
+                camera.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > CGFloat(TerrariumRules.nativeCameraWideAspect) ? TerrariumRules.nativeCameraWideFov : TerrariumRules.nativeCameraFov
                 camera.look(at: [0, 1.65, -0.7], from: [0, 4.8, 14], relativeTo: nil)
                 content.add(camera)
                 sceneCamera = camera
@@ -91,7 +91,7 @@ struct LivingAquariumScene: View {
                     failure = "The 3D aquarium could not be opened. Your dashboard is still available."
                 }
             } update: { _ in
-                sceneCamera?.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > 2 ? 32 : 38
+                sceneCamera?.camera.fieldOfViewInDegrees = geometry.size.width / max(1, geometry.size.height) > CGFloat(TerrariumRules.nativeCameraWideAspect) ? TerrariumRules.nativeCameraWideFov : TerrariumRules.nativeCameraFov
                 residents.sync(terrariumState, aspect: Float(geometry.size.width / max(1, geometry.size.height)))
             }
             .gesture(SpatialTapGesture().targetedToAnyEntity().onEnded { value in

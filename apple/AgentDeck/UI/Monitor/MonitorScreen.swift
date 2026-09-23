@@ -157,13 +157,22 @@ struct MonitorScreen: View {
         if preferences.effectiveDashboardType == .aquarium3D {
             if #available(iOS 18.0, macOS 15.0, *) {
                 GeometryReader { geometry in
-                    let bottom = preferences.showTimeline && !hudHidden ? geometry.size.height * MonitorLayout.sandFraction : 0
                     let top = featuredAwaitingSession == nil ? 0 : attentionHeight + 24
                     ZStack(alignment: .top) {
                         TerrariumColors.deepSea
                         LivingAquariumScene(terrariumState: terrariumState, onCreatureTapped: handleCreatureTap, onBackgroundTapped: backgroundTapHandler)
-                            .frame(height: max(1, geometry.size.height - bottom - top))
+                            .frame(height: max(1, geometry.size.height - top))
                             .padding(.top, top)
+                        // Keep the habitat continuous behind the timeline, as on macOS.
+                        TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeWaterTint))
+                            .allowsHitTesting(false)
+                        LinearGradient(stops: [
+                            .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeWaterTint)), location: 0),
+                            .init(color: .clear, location: CGFloat(TerrariumRules.nativeDepthFadeStart)),
+                            .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeDepthFadeShoulderOpacity)), location: CGFloat(TerrariumRules.nativeDepthFadeShoulder)),
+                            .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeDepthFadeEndOpacity)), location: 1),
+                        ], startPoint: .top, endPoint: .bottom)
+                        .allowsHitTesting(false)
                     }
                 }
                 .ignoresSafeArea()

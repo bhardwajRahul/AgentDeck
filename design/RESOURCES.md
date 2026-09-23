@@ -33,6 +33,7 @@ index. If a location or gate changes, update this file in the same commit.
 | Real photography / captures | `assets/` (sources: `assets/hardware-photos/`) | `scripts/crop-hardware-images.mjs` crop table |
 | Android LCD aquarium habitat | `assets/terrarium/aquarium-habitat.blend` | `assets/terrarium/export-habitat.py`; manual Blender export and on-device visual review |
 | Native 3D aquarium study / TRMNL plate | `assets/terrarium/living-aquarium.blend` | `export-living-aquarium.py` / `export-paper-aquarium.py` in the same directory; native preview and panel review |
+| Native 3D agent residents | `assets/terrarium/3d-residents.blend`, built from `design/brand/*.svg` | `build-3d-residents.py` + `export-android-residents.py`; Apple import and Android asset tests |
 | Published image crops | `docs/media/` | regenerated from `assets/`, never hand-edited |
 | Doc-to-viewer binding | `agentdeck-design-system/catalog.json` | `pnpm design-system:check` |
 | Documentation coverage | `catalog.json` → `coverage.scan` / `coverage.exclusions` | `pnpm design-system:check` — a `docs/*.md` that is neither cataloged nor excluded-with-a-reason fails the build |
@@ -52,7 +53,7 @@ Agent marks identify compatible third-party tools; they do not imply sponsorship
 or endorsement. Preserve the exact upstream geometry and the source record below
 when regenerating constrained-device masks.
 
-**Every** mark in `design/brand/` comes from one upstream package —
+The original six monochrome SVG marks in `design/brand/` come from one upstream package —
 `@lobehub/icons-static-svg@1.94.0` (MIT), npm integrity
 `sha512-Inx1TYkjLH6YeHOIHeVW9+OM/xxRnk8TmcQVKquFUDBmE3X9sUuRGt7kALrrDBNNAbrWz7Qq6fAiFj9E9Mmw9Q==`.
 This table used to hold Kiro alone, which read as though Kiro were the one mark
@@ -71,6 +72,7 @@ asked for anything beyond that.
 | Claude Code | `icons/claudecode.svg` | Anthropic |
 | Codex | `icons/codex.svg` | OpenAI |
 | Antigravity | `icons/antigravity.svg` | Google |
+| Antigravity full-color texture | [Official press PNG](https://antigravity.google/assets/image/brand/antigravity-icon__full-color.png), captured 2026-09-23; `antigravity-color.png` is byte-identical | Google |
 | Kiro ghost | `icons/kiro.svg` | Amazon.com, Inc. or its affiliates |
 | opencode | `icons/opencode.svg` | the opencode project |
 | OpenClaw | `icons/openclaw.svg` | the OpenClaw project |
