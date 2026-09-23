@@ -647,11 +647,18 @@ volatile uint32_t g_flushInnerUs = 0;   // accumulated PPA+push time within the 
 volatile uint32_t g_bufInternal = 0;    // 1 = LVGL draw buffer is in internal SRAM, 0 = PSRAM
 #endif
 
+// Fixed, UI-task-owned counters: no allocation or cross-core reader.
+static uint32_t touchLastUs=0, touchGapMaxUs=0, touchReadMaxUs=0, touchPolls=0;
 static bool touch_read_gsl3680(uint16_t* x, uint16_t* y) {
+    const uint32_t start=micros();
+    if(touchLastUs && start-touchLastUs>touchGapMaxUs) touchGapMaxUs=start-touchLastUs;
+    touchLastUs=start; ++touchPolls;
     if (!tp_handle) return false;
     esp_lcd_touch_read_data(tp_handle);
     uint8_t cnt = 0;
     bool touched = esp_lcd_touch_get_coordinates(tp_handle, x, y, NULL, &cnt, 1);
+    const uint32_t elapsed=micros()-start;
+    if(elapsed>touchReadMaxUs) touchReadMaxUs=elapsed;
     return touched && cnt > 0;
 }
 
@@ -1028,6 +1035,23 @@ void requestPortrait() { s_stripPortrait = true; }
 #endif
 
 #if defined(BOARD_IPS10)
+void recordFrameTiming(uint32_t viewUs, uint32_t lvglUs) {
+    static uint32_t since=0, loops=0, maxView=0, maxLvgl=0;
+    static uint64_t sumView=0, sumLvgl=0;
+    sumView+=viewUs; sumLvgl+=lvglUs; ++loops;
+    if(viewUs>maxView) maxView=viewUs;
+    if(lvglUs>maxLvgl) maxLvgl=lvglUs;
+    const uint32_t now=millis();
+    if(now-since<5000) return;
+    Serial.printf("[UIPerf] loops=%lu viewAvgUs=%lu viewMaxUs=%lu lvglAvgUs=%lu lvglMaxUs=%lu touchPolls=%lu touchGapMaxUs=%lu touchReadMaxUs=%lu freeblkKB=%u\n",
+        (unsigned long)loops, (unsigned long)(sumView/loops), (unsigned long)maxView,
+        (unsigned long)(sumLvgl/loops), (unsigned long)maxLvgl,
+        (unsigned long)touchPolls, (unsigned long)touchGapMaxUs, (unsigned long)touchReadMaxUs,
+        unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)/1024));
+    since=now; loops=maxView=maxLvgl=0; sumView=sumLvgl=0;
+    touchPolls=touchGapMaxUs=touchReadMaxUs=0;
+}
+
 void setTouchTrace(bool on) {
     s_touchTrace = on;
     esp_lcd_touch_gsl3680_set_trace(on);

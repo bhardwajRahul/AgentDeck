@@ -853,6 +853,9 @@ static void pumpVoiceHttp() {
                   (unsigned)(voiceHttpAttempts + 1), (unsigned)len,
                   (unsigned)(freeInternal / 1024));
     Serial.printf("[Voice] upload peer=%s:%u\n", ip, unsigned(port));
+    const uint32_t uploadStarted = millis();
+    size_t minInternal = freeInternal;
+    uint32_t pressureWaits = 0;
     int code = -1;
     if (freeInternal < 60 * 1024) {
         Serial.println("[Voice] internal heap too low for WiFi TX — refusing upload");
@@ -870,6 +873,7 @@ static void pumpVoiceHttp() {
             size_t off = 0;
             uint32_t startMs = millis();
             uint32_t lastProgressMs = startMs;
+            size_t burstBytes = 0;
             while (off < len && client.connected() &&
                    (uint32_t)(millis() - startMs) < 90000 &&
                    (uint32_t)(millis() - lastProgressMs) < 20000) {
@@ -879,13 +883,33 @@ static void pumpVoiceHttp() {
                 // yield immediately instead of starving them after ~80 KB.
                 ws.loop();
                 Net::serialLoop();
+                // Bounded bursts keep control RX and the UI responsive. Retain
+                // the SRAM reserve throughout TX, not just before connecting:
+                // ESP-Hosted can otherwise abort on a failed internal allocation.
+                const size_t available = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+                if (available < minInternal) minInternal = available;
+                if (available < 60 * 1024) {
+                    ++pressureWaits;
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                    burstBytes = 0;
+                    continue;
+                }
                 size_t chunk = len - off;
                 if (chunk > 512) chunk = 512;
                 int wrote = ::send(client.fd(), buf + off, chunk, MSG_DONTWAIT);
-                if (wrote > 0) { off += size_t(wrote); lastProgressMs = millis(); }
-                else if (wrote < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
-                         errno != ENOMEM && errno != ENOBUFS) break;
-                vTaskDelay(pdMS_TO_TICKS(20));
+                if (wrote > 0) {
+                    off += size_t(wrote); lastProgressMs = millis();
+                    burstBytes += size_t(wrote);
+                    // At most 2 KiB between scheduler yields. A successful
+                    // 512-byte send no longer incurs a fixed 20 ms penalty.
+                    if (burstBytes >= 2048) { vTaskDelay(1); burstBytes = 0; }
+                } else {
+                    if (wrote < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
+                        errno != ENOMEM && errno != ENOBUFS) break;
+                    ++pressureWaits;
+                    burstBytes = 0;
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
             }
             if (off == len) {
                 // "HTTP/1.1 200 OK" — enough of the status line to judge.
@@ -928,6 +952,9 @@ static void pumpVoiceHttp() {
     }
     Serial.printf("[Voice] HTTP upload %u bytes -> %d (attempt %u)\n",
                   (unsigned)len, code, (unsigned)(voiceHttpAttempts + 1));
+    Serial.printf("[VoicePerf] uploadMs=%lu minInternalKB=%u pressureWaits=%lu\n",
+                  (unsigned long)(millis() - uploadStarted), unsigned(minInternal / 1024),
+                  (unsigned long)pressureWaits);
     if (code != 200) {
 #if defined(BOARD_IPS10)
         Audio::micVoiceResult(false);

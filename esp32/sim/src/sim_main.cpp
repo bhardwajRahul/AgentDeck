@@ -221,9 +221,9 @@ bool verifyIpsInteractions(const char* outdir) {
   if(ipsLabel(lv_screen_active(),"IN 128000 / OUT 41000"))return ipsFailure(__LINE__);
   if(!IPS10Workspace::diagnostics().overview || IPS10Workspace::diagnostics().projects!=3)return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Bash 명령 실행") || !ipsLabel(lv_screen_active(),"권한 요청:"))return ipsFailure(__LINE__);
-  const char* voiceStates[]={"listening","sending","waiting","speaking","error","muted","wake"};
-  const char* voiceLabels[]={"Listening","Recognizing speech","Processing","Speaking","Voice error","Microphone muted","OpenClaw offline"};
-  for(int i=0;i<7;++i){g_simVoiceState=voiceStates[i];advance();if(!ipsLabel(lv_screen_active(),voiceLabels[i]) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
+  const char* voiceStates[]={"listening","sending","transcribing","waiting","speaking","error","muted","wake"};
+  const char* voiceLabels[]={"Listening","Sending audio","Recognizing speech","Processing","Speaking","Voice error","Microphone muted","OpenClaw offline"};
+  for(size_t i=0;i<sizeof(voiceStates)/sizeof(voiceStates[0]);++i){g_simVoiceState=voiceStates[i];advance();if(!ipsLabel(lv_screen_active(),voiceLabels[i]) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
   g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
   g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
   g_state.gatewayHasError=false;g_state.gatewayConnected=false;advance();

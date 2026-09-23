@@ -27,7 +27,7 @@ std::atomic<uint16_t> level{0};
 std::atomic<uint32_t> started{0}, resultAt{0};
 std::atomic<bool> deliveredResult{false}, replyAllowed{true};
 std::atomic<uint32_t> replyGeneration{0};
-enum class Phase { Idle, Listening, Sending, Waiting, Speaking, Error };
+enum class Phase { Idle, Listening, Sending, Transcribing, Waiting, Speaking, Error };
 std::atomic<Phase> phase{Phase::Idle};
 TaskHandle_t task = nullptr;
 portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
@@ -43,7 +43,7 @@ size_t prePos = 0, preCount = 0, used = 0;
 char session[40]{};
 bool active = false, automatic = false, speech = false;
 uint32_t lastSpeech = 0, closeAt = 0, cooldownUntil = 0, waitingSince = 0;
-bool closing = false, wasSuppressed = true;
+bool closing = false, wasSuppressed = true, pendingNotice = false;
 int slot = -1;
 
 // ES8311 RX has historically supplied interleaved signal + empty slots despite
@@ -86,7 +86,7 @@ void finish(bool cancel) {
     // beginCapture refuses every new recording during that ownership window.
     bool queued=Net::queueVoiceHttpUpload(reinterpret_cast<uint8_t*>(utterance),used*2,
         "ips_10",session,RATE,uint32_t(used*1000/RATE));
-    waitingSince=millis(); phase=queued?Phase::Sending:Phase::Error;
+    waitingSince=millis(); pendingNotice=false; phase=queued?Phase::Sending:Phase::Error;
     HUD::notify(queued?"OpenClaw - sending":"Voice upload failed - try again");
     Serial.printf("[WakeVoice] capture end samples=%u queued=%d\n",unsigned(used),int(queued));
 }
@@ -121,16 +121,27 @@ void run(void*) {
             else if(automatic && speech && now-lastSpeech>SILENCE_MS) finish(false);
             vTaskDelay(1);continue;
         }
+        if(phase==Phase::Sending && !Net::voiceUploadBusy()) phase=Phase::Transcribing;
         uint32_t result=resultAt.exchange(0);
         if(result) {phase=deliveredResult?Phase::Waiting:Phase::Error;waitingSince=now;}
         bool playback=playbackActive();
         if(playback) {phase=Phase::Speaking;cooldownUntil=now+700;}
         else if(phase==Phase::Speaking) phase=Phase::Idle;
-        if((phase==Phase::Sending || phase==Phase::Waiting) && now-waitingSince>25000) {
-            phase=Phase::Idle;HUD::notify("Reply pending - call again when needed");
+        if(phase==Phase::Sending || phase==Phase::Transcribing || phase==Phase::Waiting) {
+            if(now-waitingSince>25000 && !pendingNotice) {
+                pendingNotice=true;
+                HUD::notify(phase==Phase::Sending?"Still sending audio":phase==Phase::Transcribing?"Still recognizing speech":"OpenClaw is still working");
+            }
+            // Host personal turns can run for ten minutes. Do not reopen wake
+            // detection at 25 s and accidentally overlap a still-pending turn.
+            // A lost result must nevertheless have a bounded recovery path.
+            if(now-waitingSince>11*60*1000) {
+                phase=Phase::Error;replyAllowed=false;++replyGeneration;
+                HUD::notify("Voice response timed out - try again");
+            }
         }
         bool suppressed=!WakeWord::enabled() || playback || Net::voiceUploadBusy() ||
-            phase==Phase::Sending || phase==Phase::Waiting || int32_t(now-cooldownUntil)<0;
+            phase==Phase::Sending || phase==Phase::Transcribing || phase==Phase::Waiting || int32_t(now-cooldownUntil)<0;
         if(suppressed) {if(!wasSuppressed) WakeWord::reset();wasSuppressed=true;preCount=0;}
         else {
             if(wasSuppressed) WakeWord::reset();wasSuppressed=false;
@@ -178,7 +189,7 @@ void micVoiceResult(bool delivered){deliveredResult=delivered;resultAt=millis();
 const char* voiceState(){
     switch(phase.load()){
         case Phase::Listening:return "listening";case Phase::Sending:return "sending";
-        case Phase::Waiting:return "waiting";case Phase::Speaking:return "speaking";
+        case Phase::Transcribing:return "transcribing";case Phase::Waiting:return "waiting";case Phase::Speaking:return "speaking";
         case Phase::Error:return "error";default:return WakeWord::enabled()?"wake":"muted";
     }
 }

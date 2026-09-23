@@ -14,6 +14,7 @@
 #include "../display.h"
 #include "../../state/agent_state.h"
 #include "../../util/utf8.h"
+#include "../../util/memory.h"
 #include "../../util/usage_format.h"
 #include <Arduino.h>
 #include "net/serial_client.h"
@@ -73,7 +74,7 @@ static Text<32> filterText[4], filterNumber[4], historyLabel;
 static const lv_image_dsc_t* (*glyphFor)(const char*);
 static int detailW, sceneW;
 // Bounded, device-lifetime widget pools: ten projects / ten creatures total.
-// No canvases or per-frame heap allocations are needed for the living overview.
+// The static ocean is cached once; live updates never allocate frame canvases.
 static lv_obj_t *overview, *viewButton, *resourcePane, *quotaCards[6], *quotaBars[6], *pods[10], *seats[10], *creatures[10];
 static Text<40> quotaValue[6], quotaReset[6], podName[10], seatState[10];
 static Text<240> voiceHeard;
@@ -96,6 +97,42 @@ static Text<80> providerPlan[4];
 static lv_obj_t* lunaMoon;
 static lv_obj_t* modeButtons[2];
 static lv_obj_t* voiceButton;
+
+// Cache the static ocean after scaling/blending, once per orientation. Only
+// this cold-path image source lives in PSRAM; hot LVGL/PPA draw buffers stay
+// internal. Device-lifetime owner, at most 2,048,000 B: too large for stack or
+// scarce SRAM, reused across screen rebuilds rather than allocated per frame.
+static uint8_t* oceanPixels=nullptr;
+static int oceanWidth=0, oceanHeight=0;
+static constexpr size_t OceanBytes=1280*800*2;
+static bool cachedOcean(lv_obj_t* parent, int w, int h) {
+    const size_t bytes=lv_draw_buf_width_to_stride(w,LV_COLOR_FORMAT_RGB565)*h;
+    if(bytes>OceanBytes)return false;
+    if(!oceanPixels) {
+        oceanPixels=static_cast<uint8_t*>(heap_caps_malloc(OceanBytes,MALLOC_CAP_SPIRAM));
+        if(!oceanPixels){Serial.println("[Workspace] ocean cache unavailable; using flash source");return false;}
+        logHeap("ips10-ocean-cache");
+    }
+    auto* canvas=lv_canvas_create(parent);
+    lv_canvas_set_buffer(canvas,oceanPixels,w,h,LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(canvas,0,0);lv_obj_clear_flag(canvas,LV_OBJ_FLAG_CLICKABLE);
+    if(oceanWidth!=w || oceanHeight!=h) {
+        lv_canvas_fill_bg(canvas,lv_color_hex(Theme::DeepSea),LV_OPA_COVER);
+        // LVGL applies the same scale, antialiasing and opacity as the original
+        // image widget; this work runs only during screen initialization.
+        static lv_layer_t layer;
+        static lv_draw_image_dsc_t draw;
+        lv_canvas_init_layer(canvas,&layer);
+        lv_draw_image_dsc_init(&draw);draw.src=&IPS10Ocean::image;
+        draw.scale_x=draw.scale_y=w*400>=h*640?w*256/640:h*256/400;
+        draw.pivot={0,0};draw.opa=LV_OPA_30;
+        const int x=-(640*draw.scale_x/256-w)/2;
+        lv_area_t area={x,0,x+639,399};
+        lv_draw_image(&layer,&draw,&area);lv_canvas_finish_layer(canvas,&layer);
+        oceanWidth=w;oceanHeight=h;
+    }
+    return true;
+}
 
 static int displayedSlot[10];
 static lv_obj_t *voiceStatusPane, *attentionPane;
@@ -188,10 +225,12 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     overviewMode=true;page=0;pageSince=millis();pageHeld=false;
     const int w=g_screenW,h=g_screenH, railW=w>=1100?320:248;
     root=box(parent,0,0,w,h,Theme::DeepSea);lv_obj_set_style_radius(root,0,0);
+    if(!cachedOcean(root,w,h)) {
     auto* ocean=lv_image_create(root);lv_image_set_src(ocean,&IPS10Ocean::image);
     const int oceanScale=w*400>=h*640?w*256/640:h*256/400;
     lv_image_set_pivot(ocean,0,0);lv_image_set_scale(ocean,oceanScale);lv_obj_set_x(ocean,-(640*oceanScale/256-w)/2);
     lv_obj_set_style_image_opa(ocean,LV_OPA_30,0);lv_obj_clear_flag(ocean,LV_OBJ_FLAG_CLICKABLE);
+    }
     auto* logo=lv_image_create(root);lv_image_set_src(logo,&img_logo_48);lv_obj_set_pos(logo,24,16);lv_obj_set_style_image_recolor_opa(logo,LV_OPA_COVER,0);lv_obj_set_style_image_recolor(logo,lv_color_hex(Theme::StatusCyan),0);
     caption(root,"AgentDeck",84,23,240,Theme::HUDText);
     auto* wordmark=lv_obj_get_child(root,-1);lv_obj_set_style_text_font(wordmark,&font_studio_28,0);
@@ -425,7 +464,7 @@ void update() {
     portENTER_CRITICAL(&voiceMux);voiceView=voicePending;portEXIT_CRITICAL(&voiceMux);
     const char* vs=Audio::voiceState();
     const char* owner=!strcmp(voiceView.target,"openclaw-personal")?"OpenClaw":voiceView.target[0]?voiceView.target:"OpenClaw";
-    const char* voiceText=!Audio::micReady()?"Microphone unavailable":!strcmp(vs,"listening")?"Listening":!strcmp(vs,"sending")?"Recognizing speech":!strcmp(vs,"waiting")?"Processing":!strcmp(vs,"speaking")?"Speaking":!strcmp(vs,"error")?"Voice error":(!strcmp(vs,"muted") || !WakeWord::enabled())?"Microphone muted":!WakeWord::ready()?"Wake word unavailable":!gatewayReady?"OpenClaw offline":"Say OpenClaw";
+    const char* voiceText=!Audio::micReady()?"Microphone unavailable":!strcmp(vs,"listening")?"Listening":!strcmp(vs,"sending")?"Sending audio":!strcmp(vs,"transcribing")?"Recognizing speech":!strcmp(vs,"waiting")?"Processing":!strcmp(vs,"speaking")?"Speaking":!strcmp(vs,"error")?"Voice error":(!strcmp(vs,"muted") || !WakeWord::enabled())?"Microphone muted":!WakeWord::ready()?"Wake word unavailable":!gatewayReady?"OpenClaw offline":"Say OpenClaw";
     snprintf(text,sizeof(text),"%s%s%s",voiceText,(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?" · ":"",(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?owner:"");
     ambientVoice.set(text);visible(voiceStatusPane,true);
     voiceHeard.set(!strcmp(vs,"error") && voiceView.notice[0]?voiceView.notice:voiceView.question[0]?voiceView.question:voiceView.notice);
@@ -561,7 +600,7 @@ void update() {
         lv_obj_set_pos(seats[i],rowX,rowY);lv_obj_set_size(seats[i],cellW,rowHeight-8);
         const auto* relief=reliefFor(rows[i].agent);const auto* glyph=relief?relief:glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
         lv_obj_set_style_image_recolor_opa(creatures[i],relief?LV_OPA_TRANSP:LV_OPA_COVER,0);
-        if(glyph){lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],relief?219:320);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
+        if(glyph){if(lv_image_get_src(creatures[i])!=glyph)lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],relief?219:320);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
         lv_obj_set_pos(creatures[i],0,cat==1 && overviewMode && connected?((now/300+i)%2?0:4):4);
         snprintf(text,sizeof(text),"#%d %s",memberSlot[i]+1,cat==1?"! Attention":cat==2?"Working":"Idle");seatState[i].set(text);
         lv_obj_set_pos(seatState[i].obj,96,0);lv_obj_set_width(seatState[i].obj,cellW-96);
@@ -607,7 +646,7 @@ void update() {
         lv_obj_set_style_text_color(rowState[i].obj,lv_color_hex(colorFor(cat)),0);
         rowTool[i].set(r.tool[0]?r.tool:"No active tool");
         const auto* glyph=glyphFor?glyphFor(r.agent):nullptr;visible(marks[i],glyph);
-        if(glyph) {lv_image_set_src(marks[i],glyph);lv_image_set_scale(marks[i],128);lv_obj_set_style_image_recolor(marks[i],lv_color_hex(brandColor(r.agent)),0);}
+        if(glyph) {if(lv_image_get_src(marks[i])!=glyph)lv_image_set_src(marks[i],glyph);lv_image_set_scale(marks[i],128);lv_obj_set_style_image_recolor(marks[i],lv_color_hex(brandColor(r.agent)),0);}
     }
     visible(empty.obj,!shown);empty.set(count?"No matching sessions":"Waiting for agents");
     // Keep known quotas beside every view. Detail prioritizes actual content.
@@ -631,7 +670,7 @@ void update() {
         snprintf(text,sizeof(text),"%s  /  %s  /  %lus",selected.agentType,selected.modelName[0]?selected.modelName:"Model unavailable",static_cast<unsigned long>(selected.elapsedSec));identity.set(text);
         const int cat=category(selected.state);
         const auto* fg=glyphFor?glyphFor(selected.agentType):nullptr;visible(focusGlyph,fg);
-        if(fg){lv_image_set_src(focusGlyph,fg);lv_obj_set_style_image_recolor(focusGlyph,lv_color_hex(brandColor(selected.agentType)),0);}
+        if(fg){if(lv_image_get_src(focusGlyph)!=fg)lv_image_set_src(focusGlyph,fg);lv_obj_set_style_image_recolor(focusGlyph,lv_color_hex(brandColor(selected.agentType)),0);}
         int knownNodes=0;
         for(int i=0;i<4;++i)knownNodes+=(i<2?selected.childrenKnown:selected.coordinationKnown);
         int shownNodes=0;

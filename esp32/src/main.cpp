@@ -964,6 +964,9 @@ static void uiTask(void* param) {
 #endif
         // LVGL timer handler
         lv_timer_handler();
+#if defined(BOARD_IPS10)
+        UI::recordFrameTiming(tView1-tView0, micros()-tView1);
+#endif
 
 #if defined(IPS10_PERF_HUD)
         // On-screen perf overlay source: track the WORST single frame over a rolling ~1.5s window.
