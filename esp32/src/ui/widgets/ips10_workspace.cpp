@@ -97,6 +97,13 @@ static Text<80> providerPlan[4];
 static lv_obj_t* lunaMoon;
 static lv_obj_t* modeButtons[2];
 static lv_obj_t* voiceButton;
+static lv_obj_t* voiceMeter;
+static lv_obj_t* voiceBars[7];
+static Text<96> voiceCaptureHint;
+static Text<32> voiceControlLabel;
+static uint32_t voiceLastUpdate=0;
+static char lastVoicePhase[24]{};
+static int meterLevel=0;
 
 // Cache the static ocean after scaling/blending, once per orientation. Only
 // this cold-path image source lives in PSRAM; hot LVGL/PPA draw buffers stay
@@ -216,13 +223,64 @@ static void historyCb(lv_event_t*) { history=!history;lastUpdate=0;update();lv_o
 static void viewCb(lv_event_t*) { overviewMode=!overviewMode;if(overviewMode)filter=0;lastUpdate=0;update(); }
 static void pageCb(lv_event_t*) { pageHeld=!pageHeld;lastUpdate=0;update(); }
 static void modeCb(lv_event_t* e) { overviewMode=lv_event_get_user_data(e)==nullptr;lastUpdate=0;update(); }
-static void voiceCb(lv_event_t*) { voiceOpen=!voiceOpen;visible(voicePane,voiceOpen); }
+static void voiceCb(lv_event_t*) {
+    if(!strcmp(Audio::voiceState(),"listening")){Audio::micStop(false);return;}
+    voiceOpen=!voiceOpen;visible(voicePane,voiceOpen);
+}
+// Fast, small-area feedback runs before the 250 ms dashboard-data throttle.
+// A phase transition bypasses even this 50 ms meter cadence. No state-lock
+// walk or per-frame buffer allocation is needed to show microphone activity.
+static void updateVoice(uint32_t now,bool force=false) {
+    const char* phase=Audio::voiceState();
+    const bool changed=strcmp(lastVoicePhase,phase)!=0;
+    if(!changed && !force && voiceLastUpdate && now-voiceLastUpdate<50)return;
+    voiceLastUpdate=now?now:1;
+    if(changed) {
+        snprintf(lastVoicePhase,sizeof(lastVoicePhase),"%s",phase);
+        Serial.printf("[VoiceFeedback] state=%s captureElapsedMs=%lu\n",phase,(unsigned long)Audio::micElapsedMs(now));
+    }
+    char text[240];
+    portENTER_CRITICAL(&voiceMux);voiceView=voicePending;portEXIT_CRITICAL(&voiceMux);
+    const char* vs=phase;
+    const char* owner=!strcmp(voiceView.target,"openclaw-personal")?"OpenClaw":voiceView.target[0]?voiceView.target:"OpenClaw";
+    const char* voiceText=!Audio::micReady()?"Microphone unavailable":!strcmp(vs,"listening")?"Listening":!strcmp(vs,"sending")?"Sending audio":!strcmp(vs,"transcribing")?"Recognizing speech":!strcmp(vs,"waiting")?"Processing":!strcmp(vs,"speaking")?"Speaking":!strcmp(vs,"error")?"Voice error":(!strcmp(vs,"muted") || !WakeWord::enabled())?"Microphone muted":!WakeWord::ready()?"Wake word unavailable":!gatewayReady?"OpenClaw offline":"Say OpenClaw";
+    snprintf(text,sizeof(text),"%s%s%s",voiceText,(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?" · ":"",(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?owner:"");
+    ambientVoice.set(text);visible(voiceStatusPane,true);
+    voiceHeard.set(!strcmp(vs,"error") && voiceView.notice[0]?voiceView.notice:voiceView.question[0]?voiceView.question:voiceView.notice);
+    voiceSaid.set(voiceView.answer);visible(voiceSaid.obj,voiceView.answer[0]);
+    snprintf(text,sizeof(text),"%s · Reply",owner);voiceAnswerLabel.set(text);visible(voiceAnswerLabel.obj,voiceView.answer[0]);
+    lv_obj_set_width(voiceHeard.obj,voiceView.answer[0]?(g_screenW-96)/2:g_screenW-96);
+    const bool listening=!strcmp(vs,"listening");
+    visible(voiceButton,Audio::micReady());voiceControlLabel.set(listening?"Finish":"Voice controls");
+    visible(voiceMeter,listening);visible(voiceCaptureHint.obj,listening);
+    lv_obj_set_style_bg_color(voiceStatusPane,lv_color_hex(listening?Theme::ShallowWater:Theme::DeepSea),0);
+    lv_obj_set_style_border_width(voiceStatusPane,listening?3:0,0);
+    lv_obj_set_style_border_color(voiceStatusPane,lv_color_hex(Theme::StatusAmber),0);
+    lv_obj_set_style_text_font(ambientVoice.obj,listening?&font_studio_28:&font_studio_16,0);
+    lv_obj_set_style_text_color(ambientVoice.obj,lv_color_hex(listening?Theme::StatusAmber:Theme::StatusCyan),0);
+    visible(voiceHeard.obj,!listening);
+    if(listening) {
+        visible(voiceSaid.obj,false);visible(voiceAnswerLabel.obj,false);
+        const auto mic=Audio::micFeedback();
+        voiceCaptureHint.set(mic.speaking?"Hearing you":mic.heard?(mic.quietMs>=450?"Finishing...":"Listening for more..."):"Speak now");
+        const unsigned signal=mic.level>mic.noise?mic.level-mic.noise:0;
+        const unsigned span=mic.threshold>mic.noise?mic.threshold-mic.noise:80;
+        int target=int(signal*100/(span*3));if(target>100)target=100;
+        meterLevel=target>meterLevel?target:(meterLevel*3+target)/4;
+        static constexpr int shape[]={45,70,100,85,60,90,50};
+        for(int i=0;i<7;++i) {
+            const int height=4+meterLevel*shape[i]*32/10000;
+            lv_obj_set_height(voiceBars[i],height);lv_obj_set_y(voiceBars[i],(36-height)/2);
+        }
+    } else meterLevel=0;
+}
 }
 
 lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     presentedId[0]=0;
     glyphFor=glyph; count=0; filter=0; history=false; voiceOpen=false;lastUpdate=0;
     overviewMode=true;page=0;pageSince=millis();pageHeld=false;
+    voiceLastUpdate=0;lastVoicePhase[0]=0;meterLevel=0;
     const int w=g_screenW,h=g_screenH, railW=w>=1100?320:248;
     root=box(parent,0,0,w,h,Theme::DeepSea);lv_obj_set_style_radius(root,0,0);
     if(!cachedOcean(root,w,h)) {
@@ -361,11 +419,19 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     label(voiceAnswerLabel,voiceStatusPane,w/2,10,w/2-250,&font_studio_16,Theme::HUDDim);
     lv_label_set_long_mode(voiceHeard.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(voiceHeard.obj,50);
     lv_label_set_long_mode(voiceSaid.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(voiceSaid.obj,50);
+    label(voiceCaptureHint,voiceStatusPane,16,54,w-400,&font_workspace_20,Theme::HUDText);
+    voiceMeter=box(voiceStatusPane,w-328,46,112,36,Theme::DeepSea);
+    lv_obj_set_style_bg_opa(voiceMeter,LV_OPA_TRANSP,0);
+    for(int i=0;i<7;++i) {
+        voiceBars[i]=box(voiceMeter,i*16,16,8,4,Theme::StatusAmber);
+        lv_obj_set_style_radius(voiceBars[i],4,0);
+    }
+    visible(voiceMeter,false);visible(voiceCaptureHint.obj,false);
     label(empty,rail,12,12,railW-24,&font_studio_20,Theme::HUDDim);
     lv_label_set_long_mode(empty.obj,LV_LABEL_LONG_WRAP);
 
     auto* voice=box(root,w-192,h-104,152,32,Theme::ShallowWater);voiceButton=voice;
-    caption(voice,"Voice controls",8,5,140,Theme::HUDText);
+    label(voiceControlLabel,voice,8,5,140,&font_studio_20,Theme::HUDText);voiceControlLabel.set("Voice controls");
     lv_obj_add_event_cb(voice,voiceCb,LV_EVENT_CLICKED,nullptr);
     // A separate drawer preserves direct voice controls without consuming the
     // working surface while closed. Width is always the full screen minus 48.
@@ -379,6 +445,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
 void update() {
     if(!root) return;
     const uint32_t now=millis();
+    updateVoice(now);
     if(lastUpdate && now-lastUpdate<250) return;
     lastUpdate=now?now:1;
     const uint32_t started=micros();
@@ -443,6 +510,7 @@ void update() {
     quota.subscriptionCount=g_state.subscriptionCount;
     memcpy(quota.subscriptions,g_state.subscriptions,sizeof(quota.subscriptions));
     unlockState();
+    updateVoice(now,true);
     char text[240];
     const bool luna=UsagePresentation::lunaActive(quota.percent[2],quota.percent[3],quota.luna);
     if(luna){quota.percent[2]=quota.luna;quota.percent[3]=-1;snprintf(quota.reset[2],20,"%s",quota.lunaReset);}
@@ -461,17 +529,6 @@ void update() {
         lv_obj_set_style_border_width(modeButtons[i],activeMode?1:0,0);
         lv_obj_set_style_border_color(modeButtons[i],lv_color_hex(Theme::StatusCyan),0);
     }
-    portENTER_CRITICAL(&voiceMux);voiceView=voicePending;portEXIT_CRITICAL(&voiceMux);
-    const char* vs=Audio::voiceState();
-    const char* owner=!strcmp(voiceView.target,"openclaw-personal")?"OpenClaw":voiceView.target[0]?voiceView.target:"OpenClaw";
-    const char* voiceText=!Audio::micReady()?"Microphone unavailable":!strcmp(vs,"listening")?"Listening":!strcmp(vs,"sending")?"Sending audio":!strcmp(vs,"transcribing")?"Recognizing speech":!strcmp(vs,"waiting")?"Processing":!strcmp(vs,"speaking")?"Speaking":!strcmp(vs,"error")?"Voice error":(!strcmp(vs,"muted") || !WakeWord::enabled())?"Microphone muted":!WakeWord::ready()?"Wake word unavailable":!gatewayReady?"OpenClaw offline":"Say OpenClaw";
-    snprintf(text,sizeof(text),"%s%s%s",voiceText,(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?" · ":"",(!strcmp(vs,"waiting") || !strcmp(vs,"speaking"))?owner:"");
-    ambientVoice.set(text);visible(voiceStatusPane,true);
-    voiceHeard.set(!strcmp(vs,"error") && voiceView.notice[0]?voiceView.notice:voiceView.question[0]?voiceView.question:voiceView.notice);
-    voiceSaid.set(voiceView.answer);visible(voiceSaid.obj,voiceView.answer[0]);
-    snprintf(text,sizeof(text),"%s · Reply",owner);voiceAnswerLabel.set(text);visible(voiceAnswerLabel.obj,voiceView.answer[0]);
-    lv_obj_set_width(voiceHeard.obj,voiceView.answer[0]?(g_screenW-96)/2:g_screenW-96);
-    visible(voiceButton,Audio::micReady());
     lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):g_screenW<1100?370:204);
     // Six reused rings, with fixed geometry regardless of how many providers exist.
     // Window labels explain the measure; reset text is secondary and optional.

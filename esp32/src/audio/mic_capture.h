@@ -36,6 +36,9 @@ uint32_t micElapsedMs(uint32_t nowMs);
 #if defined(BOARD_IPS10)
 const char* voiceState();
 uint16_t micLevel();
+struct MicFeedback { uint16_t level, noise, threshold, quietMs; bool speaking, heard; };
+// A small observational snapshot; audio owner alone makes endpoint decisions.
+MicFeedback micFeedback();
 void micVoiceResult(bool delivered);
 bool micReplyAllowed();
 uint32_t micReplyGeneration();

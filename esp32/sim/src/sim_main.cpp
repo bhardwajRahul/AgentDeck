@@ -116,6 +116,8 @@ int main(int argc, char** argv) {
 #if defined(BOARD_IPS10)
 #include "../../src/audio/wake_word.h"
 #include "../../src/ui/widgets/ips10_workspace.h"
+#include "audio/mic_capture.h"
+extern Audio::MicFeedback g_simMicFeedback;
 extern bool g_simSerialConnected;
 #endif
 
@@ -224,6 +226,18 @@ bool verifyIpsInteractions(const char* outdir) {
   const char* voiceStates[]={"listening","sending","transcribing","waiting","speaking","error","muted","wake"};
   const char* voiceLabels[]={"Listening","Sending audio","Recognizing speech","Processing","Speaking","Voice error","Microphone muted","OpenClaw offline"};
   for(size_t i=0;i<sizeof(voiceStates)/sizeof(voiceStates[0]);++i){g_simVoiceState=voiceStates[i];advance();if(!ipsLabel(lv_screen_active(),voiceLabels[i]) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
+  g_simVoiceState="listening";g_simMicFeedback={80,100,230,0,false,false};advance();
+  if(!ipsLabel(lv_screen_active(),"Speak now") || !ipsLabel(lv_screen_active(),"Finish"))return ipsFailure(__LINE__);
+  const auto beforeVoiceCadence=IPS10Workspace::diagnostics().updates;
+  g_simMicFeedback={1600,100,230,0,true,true};
+  SimDisplay::tick(50);treeUpdate(.05f);SimDisplay::refresh();
+  if(!ipsLabel(lv_screen_active(),"Hearing you") || IPS10Workspace::diagnostics().updates!=beforeVoiceCadence || !save("ips10-listening-live"))return ipsFailure(__LINE__);
+  g_simMicFeedback={100,100,230,500,false,true};
+  SimDisplay::tick(50);treeUpdate(.05f);SimDisplay::refresh();
+  if(!ipsLabel(lv_screen_active(),"Finishing..."))return ipsFailure(__LINE__);
+  g_simVoiceState="transcribing";SimDisplay::tick(1);treeUpdate(.001f);SimDisplay::refresh();
+  if(!ipsLabel(lv_screen_active(),"Recognizing speech"))return ipsFailure(__LINE__);
+  g_simVoiceState="wake";
   g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
   g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"Say OpenClaw"))return ipsFailure(__LINE__);
   g_state.gatewayHasError=false;g_state.gatewayConnected=false;advance();

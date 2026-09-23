@@ -1187,7 +1187,9 @@ static void voicePressCb(lv_event_t* e) {
     // micStart on purpose: micStart's codec-ensure runs synchronously on this
     // thread, so the tone's playback task never races those ~40 I2C writes.
     // The mic picks up the tick's tail; the recognizer shrugs it off.
+#if !defined(BOARD_IPS10)
     Audio::playTone(1200, 25, 0.18f);
+#endif // IPS10's audio owner plays its cue after capture is ready.
     HUD::setListening(label);
     lv_obj_set_style_bg_color(voiceBtn, lv_color_hex(Theme::StatusAmber), 0);
     lv_obj_set_style_text_color(voiceBtnLabel, lv_color_hex(0x0B1D1A), 0);

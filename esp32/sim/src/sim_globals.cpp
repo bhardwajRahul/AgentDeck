@@ -6,6 +6,7 @@
 #include <FastLED.h>
 #include <WiFi.h>
 #include "config.h"
+#include "audio/mic_capture.h"
 #include "state/agent_state.h"
 
 // Korean-fallback label font. On-device (display.cpp) this is a RAM copy of
@@ -145,6 +146,9 @@ bool queuePhotoHttpUpload(uint8_t*, size_t, const char*, int, int) { return fals
 // ── Audio shims (defined in audio/mic_capture.cpp on-device) ────────────────
 // Mic-ready but never capturing: the PTT control renders in its resting state.
 const char* g_simVoiceState="wake";
+#if defined(BOARD_IPS10)
+Audio::MicFeedback g_simMicFeedback{0,80,196,0,false,false};
+#endif
 namespace Audio {
 bool micInit() { return true; }
 bool micReady() { return true; }
@@ -155,6 +159,9 @@ void micPump() {}
 void micStop(bool) {}
 const char* voiceState() { return g_simVoiceState; }
 uint16_t micLevel() { return 0; }
+#if defined(BOARD_IPS10)
+MicFeedback micFeedback() { return g_simMicFeedback; }
+#endif
 void micVoiceResult(bool) {}
 void playbackStop() {}
 // Press/sent feedback tone (audio/speaker_playback.cpp on-device). Silent here;

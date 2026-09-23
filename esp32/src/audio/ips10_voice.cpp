@@ -1,6 +1,7 @@
 #include "../../boards/board_config.h"
 #if defined(BOARD_IPS10)
 #include "mic_capture.h"
+#include "voice_endpoint.h"
 #include "wake_word.h"
 #include "speaker_playback.h"
 #include "es8311_codec.h"
@@ -19,7 +20,10 @@
 namespace Audio {
 namespace {
 constexpr size_t RATE = 16000, MAX_SAMPLES = RATE * 31, PRE_SAMPLES = RATE / 4;
-constexpr uint32_t MAX_MS = 30000, SILENCE_MS = 1200, NO_SPEECH_MS = 6000;
+constexpr uint32_t MAX_MS = 30000;
+VoiceEndpoint endpoint;
+std::atomic<uint16_t> noiseLevel{80}, speechThreshold{196}, quietMs{0};
+std::atomic<bool> speechActive{false}, speechHeard{false};
 // One owner task reads I2S, maintains the frontend and lends a frozen upload buffer.
 // No UI/network callback reads I2S or writes capture buffers.
 std::atomic<bool> ready{false}, capturing{false};
@@ -41,8 +45,8 @@ int16_t* pre = nullptr;
 static int16_t raw[512], mono[512];
 size_t prePos = 0, preCount = 0, used = 0;
 char session[40]{};
-bool active = false, automatic = false, speech = false;
-uint32_t lastSpeech = 0, closeAt = 0, cooldownUntil = 0, waitingSince = 0;
+bool active = false, automatic = false;
+uint32_t closeAt = 0, cooldownUntil = 0, waitingSince = 0;
 bool closing = false, wasSuppressed = true, pendingNotice = false;
 int slot = -1;
 
@@ -66,19 +70,23 @@ void beginCapture(const char* target, bool wake) {
     snprintf(session,sizeof(session),"%s",target);
     IPS10Workspace::voiceStarted(target);
     ++replyGeneration; replyAllowed=true;
-    automatic=wake; speech=false; closing=false; used=0;
+    automatic=wake; closing=false; used=0;
     if (wake) {
         // Keep the end of the wake word + immediate command onset. The host
         // recognizer receives the entire utterance; it is never re-recorded.
         for(size_t i=0;i<preCount;++i) utterance[used++]=pre[(prePos+PRE_SAMPLES-preCount+i)%PRE_SAMPLES];
     }
-    started=millis(); lastSpeech=started; active=true; capturing=true; phase=Phase::Listening;
+    started=millis();endpoint.begin(started);
+    noiseLevel=endpoint.noise();speechThreshold=endpoint.threshold();
+    quietMs=0;speechActive=false;speechHeard=false;
+    active=true; capturing=true; phase=Phase::Listening;
     HUD::setListening(wake?"OpenClaw - listening":"Listening");
-    if(wake) playTone(1200,35,0.12f);
-    Serial.printf("[WakeVoice] capture %s target=%s\n",wake?"wake":"PTT",session);
+    playTone(1047,120,0.28f);
+    Serial.printf("[WakeVoice] capture %s target=%s noise=%u threshold=%u\n",wake?"wake":"PTT",session,unsigned(endpoint.noise()),unsigned(endpoint.threshold()));
 }
 void finish(bool cancel) {
     if(cancel) {replyAllowed=false;++replyGeneration;}
+    speechActive=false;
     active=false; capturing=false; closing=false; automatic=false; cooldownUntil=millis()+1000;
     WakeWord::reset(); preCount=0;
     if(cancel || !used) {phase=Phase::Idle;HUD::notify(cancel?"Voice cancelled":"Heard nothing");return;}
@@ -106,19 +114,27 @@ void run(void*) {
         size_t bytes=captureRead(reinterpret_cast<uint8_t*>(raw),sizeof(raw));
         if(!bytes) {vTaskDelay(pdMS_TO_TICKS(10));continue;}
         size_t n=normalize(bytes/2);
-        uint64_t sum=0;
-        for(size_t i=0;i<n;++i) {int32_t v=mono[i];sum+=uint64_t(v*v);}
-        uint16_t rms=n?uint16_t(sqrt(double(sum)/n)):0;level=rms;
+        uint64_t sum=0;int64_t signedSum=0;
+        for(size_t i=0;i<n;++i) {int32_t v=mono[i];sum+=uint64_t(v*v);signedSum+=v;}
+        const double mean=n?double(signedSum)/n:0;
+        const double variance=n?double(sum)/n-mean*mean:0;
+        uint16_t rms=variance>0?uint16_t(sqrt(variance)):0;level=rms;
         uint32_t now=millis();
         if(active) {
             size_t add=n<MAX_SAMPLES-used?n:MAX_SAMPLES-used;
             memcpy(utterance+used,mono,add*sizeof(int16_t));used+=add;
-            // Ignore the acknowledgement tone and wake-word tail for endpointing.
-            if(now-started.load()>450 && rms>150) {speech=true;lastSpeech=now;}
+            const auto decision=endpoint.update(now,rms,uint32_t(n*1000/RATE));
+            speechActive=endpoint.speaking();speechHeard=endpoint.heard();
+            quietMs=uint16_t(endpoint.quietMs(now)>65535?65535:endpoint.quietMs(now));
             if(closing && int32_t(now-closeAt)>=0) finish(false);
             else if(now-started.load()>=MAX_MS || used==MAX_SAMPLES) finish(false);
-            else if(automatic && !speech && now-started.load()>NO_SPEECH_MS) finish(true);
-            else if(automatic && speech && now-lastSpeech>SILENCE_MS) finish(false);
+            else if(automatic && decision!=VoiceEndpoint::Result::Continue) {
+                Serial.printf("[VoiceEndpoint] %s elapsedMs=%lu quietMs=%u rms=%u threshold=%u\n",
+                    decision==VoiceEndpoint::Result::Complete?"complete":"no-speech",
+                    (unsigned long)(now-started.load()),unsigned(quietMs.load()),unsigned(rms),unsigned(endpoint.threshold()));
+                finish(decision==VoiceEndpoint::Result::NoSpeech);
+                if(decision==VoiceEndpoint::Result::NoSpeech)HUD::notify("No speech detected - try again");
+            }
             vTaskDelay(1);continue;
         }
         if(phase==Phase::Sending && !Net::voiceUploadBusy()) phase=Phase::Transcribing;
@@ -145,6 +161,7 @@ void run(void*) {
         if(suppressed) {if(!wasSuppressed) WakeWord::reset();wasSuppressed=true;preCount=0;}
         else {
             if(wasSuppressed) WakeWord::reset();wasSuppressed=false;
+            endpoint.observeNoise(rms);
             for(size_t i=0;i<n;++i) {pre[prePos]=mono[i];prePos=(prePos+1)%PRE_SAMPLES;if(preCount<PRE_SAMPLES)++preCount;}
             if(WakeWord::process(mono,n)) {
                 Serial.printf("[WakeVoice] detected score=%u\n",unsigned(WakeWord::score()));
@@ -185,6 +202,7 @@ void micStop(bool cancel){
 }
 void micPump(){} // single lifetime task owns I2S, including manual PTT
 uint16_t micLevel(){return level;}
+MicFeedback micFeedback(){return {level.load(),noiseLevel.load(),speechThreshold.load(),quietMs.load(),speechActive.load(),speechHeard.load()};}
 void micVoiceResult(bool delivered){deliveredResult=delivered;resultAt=millis();}
 const char* voiceState(){
     switch(phase.load()){
