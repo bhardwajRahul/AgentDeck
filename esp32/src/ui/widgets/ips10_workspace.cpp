@@ -2,6 +2,9 @@
 #if defined(BOARD_IPS10)
 #include "ips10_workspace.h"
 #include "ips10_ocean_generated.h"
+#include "ips10_relief_claude_generated.h"
+#include "ips10_relief_codex_generated.h"
+#include "ips10_relief_openclaw_generated.h"
 #include "../assets/logo.h"
 #include "audio/mic_capture.h"
 #include "../theme.h"
@@ -18,9 +21,12 @@ LV_FONT_DECLARE(font_workspace_20);
 LV_FONT_DECLARE(font_workspace_36);
 LV_FONT_DECLARE(font_studio_28);
 LV_FONT_DECLARE(font_studio_20);
+LV_FONT_DECLARE(font_studio_16);
 
 namespace IPS10Workspace {
 namespace {
+// IPS10 layout rhythm: outer 24, inter-panel 16, content inset 16.
+namespace Grid { constexpr int Outer=24, Gap=16, Inset=16, Header=96, AgentRow=120; }
 // Fixed stores avoid label heap churn while live state changes. LVGL owns the
 // widgets; these stores are reused across orientation rebuilds, never allocated
 // in update(). Only the selected session's eight newest events are copied.
@@ -74,9 +80,6 @@ static Text<120> attentionLine;
 static Text<128> pageLabel;
 static Text<160> agentActivity[10];
 static Text<40> cohortLabel[10], childLabel[10];
-static lv_obj_t* activityIcons[10];
-static lv_obj_t* childLinks[10];
-static const lv_point_precise_t childBranch[]={{8,122},{8,134},{16,134}};
 static bool gatewayReady=false, retainedDetail=false;
 static lv_obj_t* recentCaption;
 static Text<32> quotaWindow[6];
@@ -101,6 +104,14 @@ static uint32_t brandColor(const char* agent) {
     if(!strncmp(agent,"kiro",4)) return Theme::KiroMark;
     if(!strcmp(agent,"antigravity")) return Theme::AntigravityMark;
     return Theme::OpenCodeOuter;
+}
+// Three flash-resident 112px reliefs (110.25 KiB total), shared by all seats.
+// Unsupported agents retain their canonical glyph; unknown agents remain hidden.
+static const lv_image_dsc_t* reliefFor(const char* agent) {
+    if(!strcmp(agent,"claude-code") || !strcmp(agent,"claude"))return &IPS10Relief_claude::image;
+    if(!strcmp(agent,"codex") || !strcmp(agent,"codex-cli") || !strcmp(agent,"codex-app"))return &IPS10Relief_codex::image;
+    if(!strcmp(agent,"openclaw"))return &IPS10Relief_openclaw::image;
+    return nullptr;
 }
 static portMUX_TYPE diagMux=portMUX_INITIALIZER_UNLOCKED;
 static Diagnostics diag{};
@@ -139,13 +150,6 @@ static int category(const char* s) {
 }
 static uint32_t colorFor(int c) { return c==1?Theme::StatusAmber:c==2?Theme::StatusBlue:Theme::HUDDim; }
 static const char* nameFor(int c) { return c==1?"Attention":c==2?"Working":"Idle"; }
-static const char* toolSymbol(const char* tool) {
-    if(strstr(tool,"Edit") || strstr(tool,"Write") || strstr(tool,"edit") || strstr(tool,"write"))return LV_SYMBOL_EDIT;
-    if(strstr(tool,"Read") || strstr(tool,"read"))return LV_SYMBOL_FILE;
-    if(strstr(tool,"Search") || strstr(tool,"Grep") || strstr(tool,"search"))return LV_SYMBOL_EYE_OPEN;
-    if(strstr(tool,"Bash") || strstr(tool,"build") || strstr(tool,"test"))return LV_SYMBOL_KEYBOARD;
-    return LV_SYMBOL_LIST;
-}
 static bool matches(const Row& r) { return !filter || category(r.state)==filter; }
 static void selectCb(lv_event_t* e) {
     const int i=static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
@@ -174,7 +178,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     auto* ocean=lv_image_create(root);lv_image_set_src(ocean,&IPS10Ocean::image);
     const int oceanScale=w*400>=h*640?w*256/640:h*256/400;
     lv_image_set_pivot(ocean,0,0);lv_image_set_scale(ocean,oceanScale);lv_obj_set_x(ocean,-(640*oceanScale/256-w)/2);
-    lv_obj_set_style_image_opa(ocean,LV_OPA_70,0);lv_obj_clear_flag(ocean,LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_image_opa(ocean,LV_OPA_30,0);lv_obj_clear_flag(ocean,LV_OBJ_FLAG_CLICKABLE);
     auto* logo=lv_image_create(root);lv_image_set_src(logo,&img_logo_48);lv_obj_set_pos(logo,24,16);lv_obj_set_style_image_recolor_opa(logo,LV_OPA_COVER,0);lv_obj_set_style_image_recolor(logo,lv_color_hex(Theme::StatusCyan),0);
     caption(root,"AgentDeck",84,23,240,Theme::HUDText);
     auto* wordmark=lv_obj_get_child(root,-1);lv_obj_set_style_text_font(wordmark,&font_studio_28,0);
@@ -203,15 +207,15 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         marks[i]=lv_image_create(cards[i]);lv_obj_set_pos(marks[i],0,4);
         lv_obj_set_style_image_recolor_opa(marks[i],LV_OPA_COVER,0);
         label(rowTitle[i],cards[i],64,16,railW-80,&font_studio_20,Theme::HUDText);
-        label(rowState[i],cards[i],64,44,railW-80,&font_kr_12,Theme::HUDDim);
-        label(rowTool[i],cards[i],16,72,railW-32,&font_kr_12,Theme::HUDDim);
+        label(rowState[i],cards[i],64,44,railW-80,&font_studio_16,Theme::HUDDim);
+        label(rowTool[i],cards[i],16,72,railW-32,&font_studio_16,Theme::HUDDim);
         lv_obj_set_height(rowTool[i].obj,18);
         lv_obj_add_event_cb(cards[i],selectCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(i)));
     }
     detailW=w-railW-72;
     detail=box(root,48+railW,204,detailW,h-324,Theme::MidWater);
-    label(heading,detail,24,22,detailW-124,&font_studio_20,Theme::HUDText);
-    label(identity,detail,24,54,detailW-124,&font_kr_12,Theme::HUDDim);
+    label(heading,detail,24,16,detailW-124,&font_studio_20,Theme::HUDText);
+    label(identity,detail,24,54,detailW-124,&font_studio_16,Theme::HUDDim);
     focusGlyph=lv_image_create(detail);lv_obj_set_pos(focusGlyph,detailW-88,8);
     lv_obj_set_style_image_recolor_opa(focusGlyph,LV_OPA_COVER,0);
     // These are reported collaboration counts, never inferred progress. The
@@ -225,10 +229,10 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     label(stateText,detail,24,164,detailW-48,&font_studio_20,Theme::HUDText);
     activityScroll=box(detail,24,192,detailW-48,54,Theme::MidWater);
     lv_obj_add_flag(activityScroll,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(activityScroll,LV_DIR_VER);
-    label(activity,activityScroll,0,0,detailW-56,&font_studio_20,Theme::HUDText);
+    label(activity,activityScroll,0,0,detailW-56,&font_workspace_20,Theme::HUDText);
     lv_label_set_long_mode(activity.obj,LV_LABEL_LONG_WRAP);
-    label(census,detail,24,252,detailW-48,&font_kr_12,Theme::HUDDim);
-    label(instruction,detail,24,276,detailW-48,&font_studio_20,Theme::HUDDim);
+    label(census,detail,24,252,detailW-48,&font_studio_16,Theme::HUDDim);
+    label(instruction,detail,24,276,detailW-48,&font_workspace_20,Theme::HUDDim);
     lv_obj_set_height(instruction.obj,44);
     historyButton=box(detail,detailW-166,324,142,48,Theme::ShallowWater);
     label(historyLabel,historyButton,14,16,120,&font_studio_20,Theme::HUDText);
@@ -238,17 +242,17 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     lv_obj_add_flag(eventBox,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(eventBox,LV_DIR_VER);
     for(int i=0;i<8;++i) {
         eventCards[i]=box(eventBox,0,i*112,detailW-48,104,Theme::DeepSea);
-        label(eventMeta[i],eventCards[i],14,12,detailW-76,&font_kr_12,Theme::StatusCyan);
-        label(eventText[i],eventCards[i],14,36,detailW-76,&font_studio_20,Theme::HUDText);
+        label(eventMeta[i],eventCards[i],14,12,detailW-76,&font_studio_16,Theme::StatusCyan);
+        label(eventText[i],eventCards[i],14,36,detailW-76,&font_workspace_20,Theme::HUDText);
         lv_label_set_long_mode(eventText[i].obj,LV_LABEL_LONG_WRAP);
         lv_obj_set_height(eventText[i].obj,62);
     }
     sceneW=w-324;
     overview=box(root,24,96,sceneW,h-174,Theme::DeepSea);lv_obj_set_style_bg_opa(overview,LV_OPA_TRANSP,0);
     resourcePane=box(root,w-276,96,252,h-176,Theme::DeepSea);lv_obj_set_style_bg_opa(resourcePane,LV_OPA_70,0);
-    caption(resourcePane,"Usage quota",14,12,224,Theme::HUDText);
+    caption(resourcePane,"Usage quota",16,16,220,Theme::HUDText);
     const char* providers[]={"Claude","Codex","z.ai"};
-    for(int i=0;i<3;++i){caption(resourcePane,providers[i],14,44,224,Theme::HUDText);providerNames[i]=lv_obj_get_child(resourcePane,-1);lv_obj_set_style_text_align(providerNames[i],LV_TEXT_ALIGN_CENTER,0);}
+    for(int i=0;i<3;++i){caption(resourcePane,providers[i],16,48,220,Theme::HUDText);providerNames[i]=lv_obj_get_child(resourcePane,-1);lv_obj_set_style_text_align(providerNames[i],LV_TEXT_ALIGN_LEFT,0);}
     for(int i=0;i<6;++i) {
         quotaCards[i]=box(resourcePane,8,72,116,150,Theme::DeepSea);lv_obj_set_style_bg_opa(quotaCards[i],LV_OPA_TRANSP,0);
         quotaBars[i]=lv_arc_create(quotaCards[i]);lv_obj_set_pos(quotaBars[i],7,0);lv_obj_set_size(quotaBars[i],100,100);
@@ -257,42 +261,40 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         lv_obj_set_style_arc_width(quotaBars[i],8,LV_PART_MAIN);lv_obj_set_style_arc_width(quotaBars[i],8,LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(quotaBars[i],lv_color_hex(Theme::ShallowWater),LV_PART_MAIN);
         label(quotaValue[i],quotaCards[i],4,33,108,&font_studio_28,Theme::HUDText);lv_obj_set_style_text_align(quotaValue[i].obj,LV_TEXT_ALIGN_CENTER,0);
-        label(quotaWindow[i],quotaCards[i],4,103,108,&font_kr_12,Theme::HUDDim);lv_obj_set_style_text_align(quotaWindow[i].obj,LV_TEXT_ALIGN_CENTER,0);
-        label(quotaReset[i],quotaCards[i],4,124,108,&font_kr_12,Theme::HUDDim);lv_obj_set_style_text_align(quotaReset[i].obj,LV_TEXT_ALIGN_CENTER,0);
+        label(quotaWindow[i],quotaCards[i],4,103,108,&font_studio_16,Theme::HUDDim);lv_obj_set_style_text_align(quotaWindow[i].obj,LV_TEXT_ALIGN_CENTER,0);
+        label(quotaReset[i],quotaCards[i],4,124,108,&font_studio_16,Theme::HUDDim);lv_obj_set_style_text_align(quotaReset[i].obj,LV_TEXT_ALIGN_CENTER,0);
     }
     planChip=box(root,w>=1100?500:350,18,160,40,Theme::ShallowWater);
     label(planLabel,planChip,12,8,136,&font_studio_20,Theme::HUDDim);
     lv_label_set_long_mode(planLabel.obj,LV_LABEL_LONG_DOT);lv_obj_set_height(planLabel.obj,font_studio_20.line_height);
-    label(tokenLine,root,24,h-48,w-260,&font_studio_20,Theme::HUDText);
-    label(pageLabel,overview,0,0,sceneW,&font_kr_12,Theme::HUDDim);
+    label(tokenLine,root,24,h-64,w-260,&font_workspace_20,Theme::HUDText);
+    label(pageLabel,overview,0,0,sceneW,&font_studio_16,Theme::HUDDim);
     lv_obj_add_flag(pageLabel.obj,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(pageLabel.obj,pageCb,LV_EVENT_CLICKED,nullptr);
     for(int i=0;i<10;++i) {
-        pods[i]=box(overview,0,24,sceneW,560,Theme::DeepSea);lv_obj_set_style_bg_opa(pods[i],LV_OPA_TRANSP,0);
-        lv_obj_set_style_border_width(pods[i],1,0);lv_obj_set_style_border_side(pods[i],LV_BORDER_SIDE_RIGHT,0);lv_obj_set_style_border_color(pods[i],lv_color_hex(Theme::ShallowWater),0);
-        label(podName[i],pods[i],16,12,sceneW-32,&font_studio_28,Theme::HUDText);
-        label(podStatus[i],pods[i],16,52,sceneW-32,&font_studio_20,Theme::HUDDim);
-        label(cohortLabel[i],pods[i],16,80,sceneW-32,&font_kr_12,Theme::HUDDim);
-        label(podLatest[i],pods[i],16,480,sceneW-32,&font_studio_20,Theme::HUDDim);
-        lv_label_set_long_mode(podLatest[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(podLatest[i].obj,78);
+        pods[i]=box(overview,0,24,sceneW,560,Theme::MidWater);lv_obj_set_style_bg_opa(pods[i],LV_OPA_80,0);
+        lv_obj_set_style_border_width(pods[i],0,0);lv_obj_set_style_border_side(pods[i],LV_BORDER_SIDE_RIGHT,0);lv_obj_set_style_border_color(pods[i],lv_color_hex(Theme::ShallowWater),0);
+        label(podName[i],pods[i],16,16,sceneW-32,&font_studio_20,Theme::HUDText);
+        label(podStatus[i],pods[i],16,44,sceneW-32,&font_studio_16,Theme::HUDDim);
+        label(cohortLabel[i],pods[i],16,72,sceneW-32,&font_studio_16,Theme::HUDDim);
+        label(podLatest[i],pods[i],16,480,sceneW-32,&font_workspace_20,Theme::HUDDim);
+        lv_label_set_long_mode(podLatest[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(podLatest[i].obj,72);
         seats[i]=box(overview,0,0,100,126,Theme::DeepSea);lv_obj_set_style_bg_opa(seats[i],LV_OPA_TRANSP,0);
         lv_obj_add_event_cb(seats[i],selectCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(i)));
         creatures[i]=lv_image_create(seats[i]);lv_image_set_pivot(creatures[i],0,0);lv_obj_clear_flag(creatures[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_image_recolor_opa(creatures[i],LV_OPA_COVER,0);
-        label(seatState[i],seats[i],0,104,100,&font_kr_12,Theme::HUDText);
-        childLinks[i]=lv_line_create(seats[i]);lv_line_set_points(childLinks[i],childBranch,3);lv_obj_set_style_line_width(childLinks[i],2,0);lv_obj_set_style_line_color(childLinks[i],lv_color_hex(Theme::StatusCyan),0);
-        label(childLabel[i],seats[i],20,124,90,&font_kr_12,Theme::StatusCyan);
-        activityIcons[i]=lv_label_create(overview);lv_obj_set_style_text_font(activityIcons[i],&lv_font_montserrat_20,0);lv_obj_set_style_text_color(activityIcons[i],lv_color_hex(Theme::StatusCyan),0);
-        label(agentActivity[i],overview,0,0,300,&font_studio_20,Theme::HUDText);
+        label(seatState[i],seats[i],0,104,100,&font_studio_16,Theme::HUDText);
+        label(childLabel[i],seats[i],20,124,90,&font_studio_16,Theme::StatusCyan);
+        label(agentActivity[i],overview,0,0,300,&font_workspace_20,Theme::HUDText);
         lv_label_set_long_mode(agentActivity[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(agentActivity[i].obj,68);
     }
     label(overviewEmpty,overview,16,180,sceneW-32,&font_studio_28,Theme::HUDDim);
     attentionPane=box(root,24,76,w-48,48,Theme::DeepSea);lv_obj_set_style_border_width(attentionPane,1,0);lv_obj_set_style_border_color(attentionPane,lv_color_hex(Theme::StatusAmber),0);
     label(attentionLine,attentionPane,14,12,w-76,&font_studio_20,Theme::StatusAmber);
     voiceStatusPane=box(root,w-522,15,350,48,Theme::DeepSea);lv_obj_set_style_bg_opa(voiceStatusPane,LV_OPA_TRANSP,0);
-    label(ambientVoice,voiceStatusPane,8,11,334,&font_studio_20,Theme::StatusCyan);
+    label(ambientVoice,voiceStatusPane,8,11,334,&font_workspace_20,Theme::StatusCyan);
     label(empty,rail,12,12,railW-24,&font_studio_20,Theme::HUDDim);
     lv_label_set_long_mode(empty.obj,LV_LABEL_LONG_WRAP);
-    label(usage,root,24,h-18,w-48,&font_kr_12,Theme::HUDDim);
+    label(usage,root,24,h-32,w-48,&font_studio_16,Theme::HUDDim);
     auto* voice=box(root,w-200,h-58,176,44,Theme::ShallowWater);voiceButton=voice;
     caption(voice,"Voice / speaker",14,10,156,Theme::HUDText);
     lv_obj_add_event_cb(voice,voiceCb,LV_EVENT_CLICKED,nullptr);
@@ -370,7 +372,7 @@ void update() {
     unlockState();
     char text[240];
     const bool hasQuota=quota.percent[0]>=0 || quota.percent[1]>=0 || quota.percent[2]>=0 || quota.percent[3]>=0 || quota.percent[4]>=0 || quota.percent[5]>=0;
-    sceneW=g_screenW-(hasQuota?324:48);
+    sceneW=g_screenW-(hasQuota?316:48);
     visible(overview,overviewMode);visible(resourcePane,hasQuota);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);
     const bool needsAttention=totals[1]>0 || !connected;
     visible(attentionPane,overviewMode && needsAttention);visible(summary.obj,!overviewMode);
@@ -382,10 +384,10 @@ void update() {
     ambientVoice.set(voiceText);visible(voiceStatusPane,voiceText[0]);
     if(g_screenW<1100){lv_obj_set_pos(voiceStatusPane,24,g_screenH-112);lv_obj_set_width(voiceStatusPane,g_screenW-48);}
     visible(voiceButton,Audio::micReady());
-    lv_obj_set_y(resourcePane,overviewMode && needsAttention?138:90);
+    lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):204);
     // Six reused rings, with fixed geometry regardless of how many providers exist.
     // Window labels explain the measure; reset text is secondary and optional.
-    constexpr int gaugeSize=88;
+    constexpr int gaugeSize=80;
     int quotaY=48;
     for(int provider=0;provider<3;++provider) {
         const int begin=provider*2,end=begin+2;
@@ -400,8 +402,8 @@ void update() {
             lv_obj_set_size(quotaCards[i],116,136);
             lv_obj_set_size(quotaBars[i],gaugeSize,gaugeSize);lv_obj_set_x(quotaBars[i],(116-gaugeSize)/2);
             lv_obj_set_style_arc_width(quotaBars[i],6,LV_PART_MAIN);lv_obj_set_style_arc_width(quotaBars[i],6,LV_PART_INDICATOR);
-            lv_obj_set_y(quotaValue[i].obj,27);
-            lv_obj_set_y(quotaWindow[i].obj,94);lv_obj_set_y(quotaReset[i].obj,114);
+            lv_obj_set_y(quotaValue[i].obj,23);
+            lv_obj_set_y(quotaWindow[i].obj,84);lv_obj_set_y(quotaReset[i].obj,104);
             snprintf(text,sizeof(text),"%.0f%%",p);quotaValue[i].set(text);
             lv_arc_set_value(quotaBars[i],p>100?100:static_cast<int>(p));
             // Same meaning, same color across providers and both time windows.
@@ -410,7 +412,7 @@ void update() {
             snprintf(text,sizeof(text),"Reset %s",quota.reset[i]);quotaReset[i].set(text);
             visible(quotaReset[i].obj,quota.reset[i][0]);hasReset|=quota.reset[i][0]!=0;
         }
-        if(knownCount)quotaY+=hasReset?178:158;
+        if(knownCount)quotaY+=hasReset?164:148;
     }
     // Content-sized rail avoids a tall empty panel when only one window is known.
     lv_obj_set_height(resourcePane,quotaY+4);
@@ -449,17 +451,22 @@ void update() {
     else snprintf(text,sizeof(text),"%d agents · %d projects%s",count,projectCount,pageCount>1?(pageHeld?" · Paused":" · Auto rotate 12s"):"");
     if(rosterTotal>count && pageCount==1)snprintf(text,sizeof(text),"%d of %u agents · %s",count,rosterTotal,rosterRotating?"Roster rotates 60s":"Priority view");
     pageLabel.set(text);visible(pageLabel.obj,count>0);
-    int weights=0;for(int g=page*capacity;g<projectCount && g<(page+1)*capacity;++g)weights+=2+(podMembers[g]<3?podMembers[g]:3);
+    const int columns=projectCount<capacity?(projectCount?projectCount:1):capacity;
+    const int projectWidth=(sceneW-(columns-1)*Grid::Gap)/columns;
+    int maxPeers=0;bool pageHasLatest=false;
+    for(int g=page*capacity;g<projectCount && g<(page+1)*capacity;++g){const int peers=podMembers[g]<3?podMembers[g]:3;if(peers>maxPeers)maxPeers=peers;}
+    for(int i=0;i<count;++i)if(podFor[i]>=page*capacity && podFor[i]<(page+1)*capacity && rows[i].latest[0])pageHasLatest=true;
     int projectX=0;
-    const int ph=lv_obj_get_height(overview)-24;
+    const int peerRows=projectWidth>=600?1:maxPeers;
+    const int ph=Grid::Header+peerRows*Grid::AgentRow+(pageHasLatest?88:16);
     for(int i=0;i<10;++i)displayedSlot[i]=-1;
     for(int g=0;g<10;++g) {
         const bool show=g<projectCount && g/capacity==page;visible(pods[g],show);if(!show)continue;
-        const int weight=2+(podMembers[g]<3?podMembers[g]:3),pw=sceneW*weight/(weights?weights:1);
-        lv_obj_set_pos(pods[g],projectX,24);projectX+=pw;lv_obj_set_size(pods[g],pw-12,ph);
+        const int pw=projectWidth;
+        lv_obj_set_pos(pods[g],projectX,40);projectX+=pw+Grid::Gap;lv_obj_set_size(pods[g],pw,ph);
         int first=-1,working=0,attention=0;
         for(int i=0;i<count;++i)if(podFor[i]==g){if(first<0)first=i;working+=category(rows[i].state)==2;attention+=category(rows[i].state)==1;}
-        lv_obj_set_width(podName[g].obj,pw-44);lv_label_set_long_mode(podName[g].obj,LV_LABEL_LONG_DOT);lv_obj_set_height(podName[g].obj,font_studio_28.line_height);lv_obj_set_width(podStatus[g].obj,pw-44);
+        lv_obj_set_width(podName[g].obj,pw-32);lv_label_set_long_mode(podName[g].obj,LV_LABEL_LONG_DOT);lv_obj_set_height(podName[g].obj,font_studio_20.line_height);lv_obj_set_width(podStatus[g].obj,pw-32);
         podName[g].set(rows[first].project[0]?rows[first].project:"Unnamed project");
         snprintf(text,sizeof(text),"%d %s · %d working",podMembers[g],podMembers[g]==1?"agent":"agents",working);podStatus[g].set(text);
         int members[10],nMembers=0;
@@ -474,31 +481,35 @@ void update() {
         snprintf(text,sizeof(text),"Showing %d of %d · Rotate 8s",slots,nMembers);cohortLabel[g].set(text);visible(cohortLabel[g].obj,nMembers>3);lv_obj_set_width(cohortLabel[g].obj,pw-44);
         int recent=first;for(int i=0;i<count;++i)if(podFor[i]==g && rows[i].latestRank<rows[recent].latestRank)recent=i;
         visible(podLatest[g].obj,rows[recent].latest[0]);
-        int activities=0;for(int i=0;i<count;++i)if(podFor[i]==g && displayedSlot[i]>=0 && rows[i].activity[0])++activities;
-        const int latestY=292+activities*64;lv_obj_set_pos(podLatest[g].obj,16,latestY<ph-78?latestY:ph-78);lv_obj_set_width(podLatest[g].obj,pw-44);
+        lv_obj_set_pos(podLatest[g].obj,16,Grid::Header+peerRows*Grid::AgentRow+16);lv_obj_set_width(podLatest[g].obj,pw-32);
         snprintf(text,sizeof(text),"Latest %s\n%s",rows[recent].hm,rows[recent].latest);podLatest[g].set(text);
     }
     for(int i=0;i<10;++i) {
-        const bool show=i<count && displayedSlot[i]>=0;visible(seats[i],show);visible(agentActivity[i].obj,show);visible(activityIcons[i],show && rows[i].activity[0]);if(!show)continue;
+        const bool show=i<count && displayedSlot[i]>=0;visible(seats[i],show);visible(agentActivity[i].obj,show);if(!show)continue;
         if(lv_obj_get_parent(seats[i])!=pods[podFor[i]])lv_obj_set_parent(seats[i],pods[podFor[i]]);
         if(lv_obj_get_parent(agentActivity[i].obj)!=pods[podFor[i]])lv_obj_set_parent(agentActivity[i].obj,pods[podFor[i]]);
-        if(lv_obj_get_parent(activityIcons[i])!=pods[podFor[i]])lv_obj_set_parent(activityIcons[i],pods[podFor[i]]);
-        const int pw=lv_obj_get_width(pods[podFor[i]])+12;
-        const int cat=category(rows[i].state),slot=displayedSlot[i],n=podMembers[podFor[i]]>3?3:podMembers[podFor[i]];
-        const int step=(pw-40)/n,diam=step<104?step-8:96;
-        lv_obj_set_pos(seats[i],20+slot*step,112);lv_obj_set_size(seats[i],step,158);
-        const auto* glyph=glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
-        if(glyph){lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],diam*256/64);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
-        lv_obj_set_y(creatures[i],!strncmp(rows[i].state,"awaiting",8) && overviewMode && connected?((now/300+i)%2?0:4):4);
+        const int pw=projectWidth; // LVGL may not have resolved this frame's resized bounds yet.
+        const int cat=category(rows[i].state),slot=displayedSlot[i];
+        const int peers=podMembers[podFor[i]]<3?podMembers[podFor[i]]:3;
+        const bool across=pw>=600;
+        const int cellW=across?(pw-32-(peers-1)*16)/peers:pw-32;
+        const int rowX=16+(across?slot*(cellW+16):0),rowY=Grid::Header+(across?0:slot*Grid::AgentRow);
+        // One aligned agent row: illustration left, state and work right.
+        lv_obj_set_pos(seats[i],rowX,rowY);lv_obj_set_size(seats[i],cellW,112);
+        const auto* relief=reliefFor(rows[i].agent);const auto* glyph=relief?relief:glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
+        lv_obj_set_style_image_recolor_opa(creatures[i],relief?LV_OPA_TRANSP:LV_OPA_COVER,0);
+        if(glyph){lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],relief?219:320);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
+        lv_obj_set_pos(creatures[i],0,cat==1 && overviewMode && connected?((now/300+i)%2?0:4):4);
         snprintf(text,sizeof(text),"#%d %s",memberSlot[i]+1,cat==1?"! Attention":cat==2?"Working":"Idle");seatState[i].set(text);
-        lv_obj_set_width(childLabel[i].obj,step-20);snprintf(text,sizeof(text),"%u workers",rows[i].children);childLabel[i].set(text);visible(childLabel[i].obj,rows[i].childrenKnown && rows[i].children>0);visible(childLinks[i],rows[i].childrenKnown && rows[i].children>0);lv_obj_set_y(seatState[i].obj,104);
+        lv_obj_set_pos(seatState[i].obj,96,0);lv_obj_set_width(seatState[i].obj,cellW-96);
+        lv_obj_set_pos(childLabel[i].obj,96,88);lv_obj_set_width(childLabel[i].obj,cellW-96);
+        snprintf(text,sizeof(text),"%u workers",rows[i].children);childLabel[i].set(text);visible(childLabel[i].obj,rows[i].childrenKnown && rows[i].children>0);
         lv_obj_set_style_text_color(seatState[i].obj,lv_color_hex(cat==1?Theme::StatusAmber:Theme::HUDDim),0);
-        int activityRow=0;
-        for(int j=0;j<count;++j)if(podFor[j]==podFor[i] && displayedSlot[j]>=0 && displayedSlot[j]<slot && rows[j].activity[0])++activityRow;
-        lv_obj_set_pos(activityIcons[i],16,280+activityRow*64);lv_label_set_text_static(activityIcons[i],toolSymbol(rows[i].tool));
-        lv_obj_set_pos(agentActivity[i].obj,44,276+activityRow*64);lv_obj_set_width(agentActivity[i].obj,pw-72);lv_obj_set_height(agentActivity[i].obj,60);
-        snprintf(text,sizeof(text),"#%d · %s",memberSlot[i]+1,rows[i].activity[0]?rows[i].activity:nameFor(cat));agentActivity[i].set(text);visible(agentActivity[i].obj,rows[i].activity[0]);
+        // The canonical creature is already the graphical anchor; no disconnected icon column.
+        lv_obj_set_pos(agentActivity[i].obj,rowX+96,rowY+24);lv_obj_set_width(agentActivity[i].obj,cellW-96);lv_obj_set_height(agentActivity[i].obj,60);
+        agentActivity[i].set(rows[i].activity);visible(agentActivity[i].obj,rows[i].activity[0]);
         lv_obj_set_style_text_color(agentActivity[i].obj,lv_color_hex(cat==1?Theme::StatusAmber:Theme::HUDText),0);
+
     }
     visible(overviewEmpty.obj,!projectCount);overviewEmpty.set(count?"No sessions match this filter.":"Waiting for agents");
     if(!connected)attentionLine.set("Disconnected · Last received state");
@@ -508,7 +519,7 @@ void update() {
     link.set(connected?"Connected":"Disconnected");
     lv_obj_set_style_text_color(link.obj,lv_color_hex(connected?Theme::HUDDim:Theme::StatusAmber),0);
     if(!connected) snprintf(text,sizeof(text),"Disconnected · Reconnecting");
-    else if(totals[1]) snprintf(text,sizeof(text),"%d %s need attention",totals[1],totals[1]==1?"session":"sessions");
+    else if(totals[1]) snprintf(text,sizeof(text),"%d %s",totals[1],totals[1]==1?"session needs attention":"sessions need attention");
     else if(totals[2]) snprintf(text,sizeof(text),"%d agents working",totals[2]);
     else snprintf(text,sizeof(text),"%s",count?"Ready for the next task":"Waiting for agents");
     summary.set(text);
@@ -541,9 +552,9 @@ void update() {
     const bool portrait=g_screenW<1100;
     const int rw=portrait?sceneW:hasQuota?224:280;
     detailW=portrait?sceneW:sceneW-rw-24;
-    lv_obj_set_size(rail,rw,portrait?112:g_screenH-310);lv_obj_set_scroll_dir(rail,portrait?LV_DIR_HOR:LV_DIR_VER);lv_obj_set_width(rosterTitle.obj,rw);
-    lv_obj_set_pos(detail,portrait?24:48+rw,portrait?370:204);lv_obj_set_size(detail,detailW,portrait?g_screenH-530:g_screenH-282);
-    for(int i=0;i<4;++i){const int fw=(sceneW-36)/4;lv_obj_set_x(filters[i],24+i*(fw+12));lv_obj_set_width(filters[i],fw);lv_obj_set_width(filterText[i].obj,portrait?fw-16:fw-70);lv_obj_set_pos(filterText[i].obj,portrait?8:16,portrait?5:24);lv_obj_set_style_text_font(filterText[i].obj,portrait?&font_kr_12:&font_studio_20,0);lv_obj_set_pos(filterNumber[i].obj,fw-52,portrait?22:12);}
+    lv_obj_set_y(rosterTitle.obj,220);lv_obj_set_size(rail,rw,portrait?112:g_screenH-310);lv_obj_set_scroll_dir(rail,portrait?LV_DIR_HOR:LV_DIR_VER);lv_obj_set_width(rosterTitle.obj,rw);
+    lv_obj_set_pos(detail,portrait?24:48+rw,portrait?370:204);lv_obj_set_y(resourcePane,overviewMode?(needsAttention?178:130):portrait?370:204);lv_obj_set_size(detail,detailW,portrait?g_screenH-530:g_screenH-282);
+    for(int i=0;i<4;++i){const int fw=(sceneW-36)/4;lv_obj_set_x(filters[i],24+i*(fw+12));lv_obj_set_width(filters[i],fw);lv_obj_set_width(filterText[i].obj,portrait?fw-16:fw-70);lv_obj_set_pos(filterText[i].obj,portrait?8:16,portrait?5:24);lv_obj_set_style_text_font(filterText[i].obj,portrait?&font_studio_16:&font_studio_20,0);lv_obj_set_pos(filterNumber[i].obj,fw-52,portrait?22:12);}
     for(int i=0;i<10;++i){const int cardW=portrait?224:rw;lv_obj_set_width(cards[i],cardW);if(portrait)lv_obj_set_pos(cards[i],i*236,0);else lv_obj_set_x(cards[i],0);lv_obj_set_width(rowTitle[i].obj,cardW-80);lv_obj_set_height(rowTitle[i].obj,font_studio_20.line_height);lv_obj_set_width(rowState[i].obj,cardW-32);lv_obj_set_x(rowState[i].obj,16);lv_obj_set_y(rowState[i].obj,48);lv_obj_set_width(rowTool[i].obj,cardW-32);}
     lv_obj_set_width(heading.obj,detailW-112);lv_obj_set_width(identity.obj,detailW-48);lv_obj_set_x(focusGlyph,detailW-80);
     visible(detail,!overviewMode && (chosen>=0 || retainedDetail));

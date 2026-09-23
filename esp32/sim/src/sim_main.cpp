@@ -230,6 +230,13 @@ bool verifyIpsInteractions(const char* outdir) {
   if(g_state.zaiPrimaryPercent!=-1 || g_state.zaiSecondaryPercent!=-1)return ipsFailure(__LINE__);
   auto* projectName=ipsLabel(lv_screen_active(),"5 agents - 3 working");
   lv_area_t before;lv_obj_get_coords(lv_obj_get_parent(projectName),&before);
+  // Project title, metadata and quota title share explicit container baselines.
+  lv_area_t projectTitleBounds, projectMetaBounds, quotaTitleBounds;
+  lv_obj_get_coords(lv_obj_get_child(lv_obj_get_parent(projectName),0),&projectTitleBounds);
+  lv_obj_get_coords(projectName,&projectMetaBounds);
+  lv_obj_get_coords(ipsLabel(lv_screen_active(),"Usage quota"),&quotaTitleBounds);
+  if(projectTitleBounds.x1!=projectMetaBounds.x1 || projectTitleBounds.x1!=before.x1+16 || projectTitleBounds.y1!=quotaTitleBounds.y1)return ipsFailure(__LINE__);
+
   const auto saved=g_state.sessions[0];std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"awaiting_permission");advance();
   auto* changedProject=ipsLabel(lv_screen_active(),"5 agents - 2 working");if(!changedProject)return ipsFailure(__LINE__);
   lv_area_t after;lv_obj_get_coords(lv_obj_get_parent(changedProject),&after);
@@ -344,6 +351,8 @@ bool verifyIpsInteractions(const char* outdir) {
   std::snprintf(g_state.antigravityPlan,sizeof(g_state.antigravityPlan),"Google AI Pro");advance();
   if(!ipsLabel(lv_screen_active(),"MCP used") || ipsLabel(lv_screen_active(),"812") || ipsLabel(lv_screen_active(),"credits") || !ipsLabel(lv_screen_active(),"AGY Pro"))return ipsFailure(__LINE__);
   if(IPS10Workspace::diagnostics().quotaWindows!=6 || !save("ips10-all-providers"))return ipsFailure(__LINE__);
+  lv_obj_get_coords(lv_obj_get_parent(ipsLabel(lv_screen_active(),"Usage quota")),&bounds);
+  if(bounds.y2>=g_screenH-56)return ipsFailure(__LINE__);
   // Raw credits alone must not create a quota rail, a number, or a plan chip.
   g_state.fiveHourPercent=g_state.sevenDayPercent=g_state.codexPrimaryPercent=g_state.codexSecondaryPercent=g_state.zaiPrimaryPercent=g_state.zaiSecondaryPercent=-1;
   g_state.antigravityCredits=1000;g_state.antigravityPlan[0]=0;advance();
@@ -357,6 +366,16 @@ bool verifyIpsInteractions(const char* outdir) {
   if(!ipsLabel(lv_screen_active(),"10 agents - 10 working"))return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Showing 3 of 10"))return ipsFailure(__LINE__);
   if(!save("ips10-ten-peers"))return ipsFailure(__LINE__);
+  int peerY=-1,peerSeats=0;
+  for(int i=1;i<=10;++i){char keyText[32];std::snprintf(keyText,sizeof(keyText),"#%d Working",i);
+    auto* stateLabel=ipsLabel(lv_screen_active(),keyText);if(!stateLabel)continue;
+    auto* seat=lv_obj_get_parent(stateLabel);lv_area_t seatBounds,podBounds;
+    lv_obj_get_coords(seat,&seatBounds);lv_obj_get_coords(lv_obj_get_parent(seat),&podBounds);
+    if(seatBounds.x1<podBounds.x1 || seatBounds.x2>podBounds.x2 || seatBounds.y2>podBounds.y2)return ipsFailure(__LINE__);
+    if(g_screenW>=1100 && peerY>=0 && peerY!=seatBounds.y1)return ipsFailure(__LINE__);
+    peerY=seatBounds.y1;++peerSeats;
+  }
+  if(peerSeats!=3)return ipsFailure(__LINE__);
   // All received peers have a readable activity slot over one bounded cycle.
   for(int i=0;i<10;++i)std::snprintf(g_state.sessions[i].activity,sizeof(g_state.sessions[i].activity),"PEER-%d-ACTIVITY",i);
   bool seen[10]={};
