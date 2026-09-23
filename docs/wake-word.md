@@ -1,9 +1,9 @@
 # Wake Word Detection
 
-> **Status (2026-09-23):** IPS10 now includes a real TFLite Micro listener.
-> Its first OTA boot has confirmed model initialization and continuous ES8311
-> input. End-to-end acoustic verification is tracked below; historical training
-> scores are not measurements of the panel in a room.
+> **Status (2026-09-23):** Deployed to IPS10 and the Mac Studio Node daemon.
+> An acoustic synthetic-speech test passed wake detection → capture → HTTP
+> upload → personal OpenClaw run → local TTS → panel playback → listening again.
+> This is a hardware smoke test, not a room-distance accuracy measurement.
 
 ## IPS10 desk companion
 
@@ -21,6 +21,28 @@ The foreground dashboard shows current work or the last outcome, with event
 history behind the detail view. Empty child-agent telemetry is omitted instead
 of filling cards with diagnostic text. Voice status and stop controls remain
 visible below the work area.
+
+### Surface and camera decisions
+
+IPS10 is the desk's glanceable work surface: stable agent/project cards answer
+who is working, on what, and whether input is needed. A tap reveals the details;
+the default view does not repeat a timeline under every agent. The office scene
+continues to use real agent state. Blender-authored baked poses can extend that
+scene later; this change does not introduce a real-time 3D renderer.
+
+Voice has an always-visible enable/disable control, listening feedback,
+silence endpointing, and a stop control. It uses the panel microphone even when
+the Mac display sleeps. Room-distance recognition, acoustic echo cancellation,
+and speaking over an answer are not established by the synthetic smoke tests.
+
+For the unused front camera, the first useful experiments are opt-in presence
+(to switch between glance and detail density) and a user-requested still image
+for a question to the personal agent. Prefer local, low-rate processing and
+retain no frames for presence. Person identity, emotion, and attention are not
+needed. CSI capture/ISP integration, frame validation, and resource coexistence
+with display/audio must precede any lightweight vision model. The firmware's
+`camera_probe` only reads the expected sensor ID over the existing SCCB bus; it
+does not start a camera stream or claim successful capture.
 
 ### Transport and ownership
 
@@ -64,11 +86,49 @@ is not a held-out accuracy or far-field false-trigger result.
 
 Camera support remains a separate hardware bring-up: this repository has no
 IPS10 CSI capture driver. A new [OV02C10 component tested on this board](https://github.com/sullb/esphome-p4-csi-camera)
-provides a useful implementation reference, but its sensor identity must be
-verified on this unit before adopting its register table. Useful first features
+provides a useful implementation reference. The deployed read-only probe confirmed
+`0x5602` (OV02C10) on this unit; no video frame has been captured. Useful first features
 are opt-in presence-based information density and an explicitly requested still
 image for the personal agent. Do not infer identity, emotion or attention from
 presence, or claim a camera feature before a real frame has been validated.
+
+
+### Deployment verification (2026-09-23)
+
+- IPS10 USB deployment: ESP32-P4 revision 1.3, detected 16 MB flash, full image
+  write with hash verification and hard reset. Running build epoch `1790127440`
+  (`3fe22c11-dirty`, compiled before commit `310d2c8e`) was read back from the
+  device. A preceding Wi-Fi OTA timed out at chunk 3290; USB completed.
+- Mac Studio: supervised Node daemon build `ad38d0e5312e`, source CLI linked to
+  the stable checkout. Local Whisper transcribes Korean; the existing native
+  helper generates 16 kHz speech. HTTP receipt returned in 67 ms in a host test.
+- Initial acoustic testing passed a full round trip, then a repeated upload
+  stalled at 81,920/200,512 bytes. Firmware now uses nonblocking 512-byte sends,
+  drains WS/serial control traffic during transfer, and bounds both total and
+  stalled duration. Two subsequent 200,512-byte uploads returned HTTP 200 and
+  both replies completed on the same boot. Idle internal heap returned to 79 KB.
+- A subsequent 8 KB reply-download burst briefly drove minimum internal heap to
+  2 KB. The Mac now paces IPS10 replies at 1 KB/20 ms, above 16 kHz mono playback
+  rate; firmware starts playback before the entire answer has arrived. A final
+  404,812-byte reply was downloaded/fed completely; minimum internal heap on
+  that boot stayed at 63 KB, versus 2 KB before host pacing.
+- A Korean negative utterance caused no additional detection. Wake-only speech
+  followed by silence returned to listening without uploading a command.
+  Muting froze the inference/detection counters even when the wake word played;
+  re-enabling restored the listener. The enabled preference survived reboot.
+- **Recognition limitation:** replaying the captured microphone WAV through
+  the local recognizer produced word substitutions (for example, requested
+  “음성 연결 확인” became “음성 연결 고민”). Successful delivery/playback does not
+  establish faithful command transcription. Human speech, placement/distance,
+  background noise and language accuracy need a broader acceptance set. The
+  current recognizer is local Whisper, not a calibrated far-field speech system.
+  One later acoustic replay also failed to wake the panel; a successful local
+  listening loop does not guarantee detection of every utterance. Manual PTT
+  remains available when the wake word is missed.
+- Native LVGL simulations passed tap/detail/close/hold/wake-toggle interactions
+  and modal bounds in landscape and portrait. Build, typecheck and 4,654 tests
+  passed (2 skipped). Protocol generation and token mirrors passed. Design lint
+  still reports pre-existing HTML/JS violations outside the changed files.
 
 
 ## 1. Porcupine (Mac — 현재 운영)
