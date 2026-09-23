@@ -1,3 +1,4 @@
+#include "../../audio/wake_word.h"
 #include "hud_bar.h"
 #include "../theme.h"
 #include "../display.h"
@@ -852,8 +853,8 @@ static void detailOpen(int idx) {
     detailRefresh();
 }
 #if defined(BOARD_IPS10) && defined(BOARD_HAS_VOICE_CAPTURE)
-// Short tap: toggle this session as the hold-to-talk target. Long press (the
-// separate callback below) opens the detail overlay, so the two never collide:
+// Long press selects the hold-to-talk target; a short tap opens details.
+// The gestures never collide:
 // LVGL only fires SHORT_CLICKED when the press ended before the long-press
 // threshold.
 static void cellTapCb(lv_event_t* e) {
@@ -994,6 +995,7 @@ static lv_obj_t* makeUsageBlock(lv_obj_t* parent, const lv_image_dsc_t* icon, ui
 // board-local by design (see voiceTargetSid); the button's sub-label always
 // names the session the next hold will speak to, because a mic whose target is
 // discovered only after release is a mic nobody trusts twice.
+static lv_obj_t* wakeLabel = nullptr;
 static lv_obj_t* voiceBtn = nullptr;
 static lv_obj_t* voiceBtnLabel = nullptr;
 static lv_obj_t* voiceBtnTarget = nullptr;   // sub-label: who hears the next hold
@@ -1211,6 +1213,16 @@ static void voiceReleaseCb(lv_event_t* e) {
 // Called from update(): a transient notice has to clear itself, and update() is
 // the only thing already ticking on the LVGL thread.
 static void voiceTick() {
+    static uint32_t lastWakeUpdate = 0;
+    if (wakeLabel && millis() - lastWakeUpdate >= 250) {
+        lastWakeUpdate = millis();
+        char text[96];
+        snprintf(text, sizeof(text), "OpenClaw %s " LV_SYMBOL_BULLET " %s",
+                 !WakeWord::ready() ? "unavailable" : WakeWord::enabled() ? "ON" : "OFF",
+                 Audio::voiceState());
+        if (strcmp(lv_label_get_text(wakeLabel), text) != 0) lv_label_set_text(wakeLabel, text);
+    }
+
     VoiceUiCommand command = {VoiceUiOp::NONE, {0}};
     portENTER_CRITICAL(&voiceUiMux);
     command = pendingVoiceUi;
@@ -1306,6 +1318,39 @@ static void voiceTick() {
 // up the space rather than sit underneath: floating it absolutely put the button
 // on top of a live card, which the host simulator caught before any hardware did.
 static void voiceCreate(lv_obj_t* pane) {
+    lv_obj_t* wakeRow = lv_obj_create(pane);
+    lv_obj_set_size(wakeRow, ips10SidebarW - 28, 52);
+    lv_obj_set_style_pad_all(wakeRow, 4, 0);
+    lv_obj_set_style_bg_opa(wakeRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(wakeRow, 0, 0);
+    lv_obj_set_flex_flow(wakeRow, LV_FLEX_FLOW_ROW);
+    lv_obj_clear_flag(wakeRow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* wakeButton = lv_button_create(wakeRow);
+    lv_obj_set_height(wakeButton, 44);
+    lv_obj_set_flex_grow(wakeButton, 1);
+    lv_obj_set_style_bg_color(wakeButton, lv_color_hex(Theme::MidWater), 0);
+    lv_obj_set_style_text_color(wakeButton, lv_color_hex(Theme::HUDText), 0);
+    wakeLabel = lv_label_create(wakeButton);
+    lv_obj_set_style_text_font(wakeLabel, &font_kr_12, 0);
+    lv_obj_center(wakeLabel);
+    lv_label_set_text(wakeLabel, "OpenClaw - starting");
+    lv_obj_add_event_cb(wakeButton, [](lv_event_t*) {
+        if (!WakeWord::ready()) return;
+        WakeWord::setEnabled(!WakeWord::enabled());
+        if (!WakeWord::enabled()) Audio::micStop(true);
+        HUD::notify(WakeWord::enabled() ? "Say OpenClaw" : "Wake word off");
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* stop = lv_button_create(wakeRow);
+    lv_obj_set_size(stop, 64, 44);
+    lv_obj_set_style_bg_color(stop, lv_color_hex(Theme::MidWater), 0);
+    lv_obj_t* stopLabel = lv_label_create(stop);
+    lv_label_set_text(stopLabel, LV_SYMBOL_STOP);
+    lv_obj_center(stopLabel);
+    lv_obj_add_event_cb(stop, [](lv_event_t*) {
+        Audio::playbackStop();
+        Audio::micStop(true);
+    }, LV_EVENT_CLICKED, nullptr);
+
     lv_obj_t* row = lv_obj_create(pane);
     lv_obj_set_size(row, ips10SidebarW - 28, 96);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -1591,7 +1636,12 @@ void init(lv_obj_t* parent) {
     // the shared update() path guards them out.
     lblSessions = nullptr;
 
-    // === Agent treemap — absolute-positioned cells tile the whole region in 2D ===
+    lv_obj_t* workspaceHint = lv_label_create(panelLeft);
+    lv_obj_set_style_text_font(workspaceHint, &font_kr_12, 0);
+    lv_obj_set_style_text_color(workspaceHint, lv_color_hex(Theme::HUDDim), 0);
+    lv_label_set_text(workspaceHint, "WORKSPACE  /  Tap: details  /  Hold: voice target");
+
+    // === Agent work cards — stable positions, current task first ===
     cellsBox = lv_obj_create(panelLeft);
     lv_obj_set_width(cellsBox, ips10SidebarW - 28);
     lv_obj_set_flex_grow(cellsBox, 1);          // eat all leftover vertical space
@@ -1617,9 +1667,9 @@ void init(lv_obj_t* parent) {
         cell[i] = lv_obj_create(cellsBox);
         lv_obj_set_size(cell[i], 80, 60);
         lv_obj_set_pos(cell[i], 0, 0);
-        // D1 card: light card background for maximum readability (cards on a dark green deck)
-        lv_obj_set_style_bg_color(cell[i], lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_bg_grad_color(cell[i], lv_color_hex(0xF1F5F9), 0); // slate-100 gradient
+        // Low-glare work surface for an always-on desk companion.
+        lv_obj_set_style_bg_color(cell[i], lv_color_hex(Theme::MidWater), 0);
+        lv_obj_set_style_bg_grad_color(cell[i], lv_color_hex(Theme::DeepSea), 0);
         lv_obj_set_style_bg_grad_dir(cell[i], LV_GRAD_DIR_VER, 0);
         lv_obj_set_style_bg_opa(cell[i], LV_OPA_COVER, 0);   // opaque (no per-pixel blend)
         lv_obj_set_style_radius(cell[i], 12, 0);
@@ -1635,16 +1685,15 @@ void init(lv_obj_t* parent) {
         lv_obj_set_flex_flow(cell[i], LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(cell[i], LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 #if defined(BOARD_IPS10) && defined(BOARD_HAS_VOICE_CAPTURE)
-        // Voice builds: a short tap picks this session as the hold-to-talk
-        // target (cyan outline + button sub-label), a long press opens the
-        // detail overlay. This replaces the earlier "passive status tiles"
+        // Voice builds: a short tap opens task details; a long press picks
+        // the hold-to-talk target (cyan outline + button sub-label). This replaces the earlier "passive status tiles"
         // stance, which dated from when this panel's touch controller had
         // never reported a point — the mic gave the cards their first real
         // reason to be pressable. Approve/Deny stay separate child buttons and
         // do not bubble up here.
         lv_obj_add_flag(cell[i], LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(cell[i], cellTapCb, LV_EVENT_SHORT_CLICKED, (void*)(intptr_t)i);
-        lv_obj_add_event_cb(cell[i], cellLongPressCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(cell[i], cellLongPressCb, LV_EVENT_SHORT_CLICKED, (void*)(intptr_t)i);
+        lv_obj_add_event_cb(cell[i], cellTapCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)i);
 #else
         // Cells are PASSIVE status tiles: everything the user needs is shown inline as text
         // (name · state · tool · activity · meta) and awaiting cells expose explicit Approve/Deny
@@ -1663,7 +1712,7 @@ void init(lv_obj_t* parent) {
 
         // Name line: ●agent-name (bold) + colored [STATE]
         cellName[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellName[i], lv_color_hex(0x0F172A), 0); // slate-900 (very dark)
+        lv_obj_set_style_text_color(cellName[i], lv_color_hex(Theme::HUDText), 0);
         lv_obj_set_style_text_font(cellName[i], &font_kr_20, 0);
         lv_label_set_recolor(cellName[i], true);
         lv_label_set_long_mode(cellName[i], LV_LABEL_LONG_DOT);
@@ -1685,7 +1734,7 @@ void init(lv_obj_t* parent) {
         lv_label_set_text(cellPill[i], "");
 
         cellProj[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellProj[i], lv_color_hex(0x475569), 0); // slate-600 (medium-dark)
+        lv_obj_set_style_text_color(cellProj[i], lv_color_hex(Theme::HUDDim), 0);
         lv_obj_set_style_text_font(cellProj[i], &font_kr_16, 0);
         lv_label_set_long_mode(cellProj[i], LV_LABEL_LONG_DOT);
         lv_obj_set_width(cellProj[i], 60);
@@ -1725,7 +1774,7 @@ void init(lv_obj_t* parent) {
 
         // Body: the TIMELINE feed — newest milestone bright, older rows dimmed via recolor markup.
         cellBody[i] = lv_label_create(cell[i]);
-        lv_obj_set_style_text_color(cellBody[i], lv_color_hex(0x1E293B), 0); // slate-800
+        lv_obj_set_style_text_color(cellBody[i], lv_color_hex(Theme::HUDText), 0);
         lv_obj_set_style_text_font(cellBody[i], &font_kr_16, 0);
         lv_obj_set_style_text_line_space(cellBody[i], 6, 0);
         lv_label_set_recolor(cellBody[i], true);
@@ -2586,9 +2635,9 @@ void update() {
         bool linkUp = g_state.wsConnected || Net::serialConnected();
         if (tbDaemon) {
             char sb[64];
-            snprintf(sb, sizeof(sb), "#%06lX " LV_SYMBOL_BULLET "# daemon " LV_SYMBOL_BULLET " %d agent%s " LV_SYMBOL_BULLET " %s",
+            snprintf(sb, sizeof(sb), "#%06lX " LV_SYMBOL_BULLET "# %d agent%s " LV_SYMBOL_BULLET " %s",
                      (unsigned long)(linkUp ? D1_OK : D1_IDLE), n, n == 1 ? "" : "s",
-                     g_state.wsConnected ? "ws" : (Net::serialConnected() ? "serial" : "offline"));
+                     linkUp ? "Connected" : "Offline");
             lv_label_set_text(tbDaemon, sb);
         }
 #if defined(IPS10_PERF_HUD)
@@ -2830,7 +2879,9 @@ void update() {
                 snprintf(coord, sizeof(cellCoordText[i]), LV_SYMBOL_LOOP " %u spawned " LV_SYMBOL_BULLET " waiting on %u",
                          mc[i].spawnedActive, mc[i].backgroundJobs);
             else
-                snprintf(coord, sizeof(cellCoordText[i]), "no child data");
+                coord[0] = '\0';
+            if (coord[0]) lv_obj_clear_flag(cellCoord[i], LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(cellCoord[i], LV_OBJ_FLAG_HIDDEN);
             lv_label_set_text_static(cellCoord[i], coord);
             const bool childBusy = mc[i].childrenKnown && mc[i].childrenActive > 0;
             lv_obj_set_style_text_color(cellCoord[i], lv_color_hex(childBusy || waiting > 0
@@ -2845,7 +2896,7 @@ void update() {
                 lv_label_set_text(cellPill[i], parentState);
                 lv_obj_set_style_bg_color(cellPill[i], lv_color_hex(mc[i].stateCol), 0);
                 lv_obj_set_style_text_color(cellPill[i],
-                    lv_color_hex(idle ? 0x1E293B : 0x05140F), 0);
+                    lv_color_hex(idle ? Theme::HUDText : Theme::DeepSea), 0);
                 lv_obj_set_style_bg_opa(cellPill[i], idle ? (lv_opa_t)90 : LV_OPA_COVER, 0);
                 lv_obj_clear_flag(cellPill[i], LV_OBJ_FLAG_HIDDEN);
             } else {
@@ -2886,34 +2937,14 @@ void update() {
             else if (!idle && mc[i].activity[0]) body = mc[i].activity;
             else if (mc[i].body[0]) body = mc[i].body;
             if (body[0] && ph >= 104) {
-                // TIMELINE feed: the newest line renders bright; up to
-                // `feedCount` older rows follow dimmed (recolor markup), the
-                // count gated by cell height so tall treemap cells spend their
-                // former empty deck on per-session history.
-                char full[900];
-                size_t off = (size_t)snprintf(full, sizeof(full), "%s", body);
-                if (off >= sizeof(full)) off = sizeof(full) - 1;
-                int extraRows = ph >= 380 ? 3 : (ph >= 280 ? 2 : (ph >= 190 ? 1 : 0));
-                // An awaiting card leads with the question — its milestone line
-                // (mc.body) joins the dimmed history instead of vanishing, so
-                // the tall amber tile still tells what the agent was doing.
-                if (awaiting && body == mc[i].question && mc[i].body[0] && extraRows > 0
-                    && off < sizeof(full) - 16) {
-                    int nn = snprintf(full + off, sizeof(full) - off, "\n#64748b %s#", mc[i].body);
-                    if (nn > 0) off += (size_t)nn;
-                    if (off >= sizeof(full)) off = sizeof(full) - 1;
-                    extraRows--;
-                }
-                if (extraRows > mc[i].feedCount) extraRows = mc[i].feedCount;
-                for (int r = 0; r < extraRows && off < sizeof(full) - 16; r++) {
-                    int nn = snprintf(full + off, sizeof(full) - off, "\n#64748b %s#", mc[i].feed[r]);
-                    if (nn > 0) off += (size_t)nn;
-                    if (off >= sizeof(full)) off = sizeof(full) - 1;
-                }
+                // At-a-glance cards show the current action or last outcome.
+                // Full event history remains in the long-press detail view.
+                char full[320];
+                snprintf(full, sizeof(full), "%s", body);
                 Utf8::utf8TrimEnd(full);   // byte cap can split a 한글 glyph
                 sanitizeIps10Text(full);
                 lv_label_set_text(cellBody[i], full);
-                lv_obj_set_height(cellBody[i], ph >= 216 ? 80 : 40);
+                lv_obj_set_height(cellBody[i], ph >= 216 ? 54 : 40);
                 lv_obj_clear_flag(cellBody[i], LV_OBJ_FLAG_HIDDEN);
             } else {
                 lv_obj_add_flag(cellBody[i], LV_OBJ_FLAG_HIDDEN);

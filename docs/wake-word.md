@@ -1,8 +1,65 @@
 # Wake Word Detection
 
-> **Status note (2026-08-05):** Porcupine (§1) is the only wake word AgentDeck ships; it was last verified 2026-03. §2 microWakeWord is **not in the firmware** — the on-board listener was removed on 2026-08-05 and only the trained model + the trainer recipe remain. Read §2 as a resume guide, not as a description of running code.
+> **Status (2026-09-23):** IPS10 now includes a real TFLite Micro listener.
+> Its first OTA boot has confirmed model initialization and continuous ES8311
+> input. End-to-end acoustic verification is tracked below; historical training
+> scores are not measurements of the panel in a room.
 
-AgentDeck는 두 가지 wake word 감지 시스템을 지원한다.
+## IPS10 desk companion
+
+The on-device **OpenClaw** button enables/disables the local Korean wake-word
+model and retains the setting across reboot. New installations default off.
+Say **오픈클로**, wait for the short listening tone, then speak the command.
+A pause ends the utterance; the stop button cancels recording or stops playback.
+During reply playback the listener is suppressed, so the speaker cannot trigger
+itself. This is half-duplex voice interaction, not acoustic echo cancellation.
+Manual hold-to-talk is retained. Tap a work card for task details; hold a card
+to choose the manual voice target. Wake-word requests always address the
+personal OpenClaw session regardless of the selected work card.
+
+The foreground dashboard shows current work or the last outcome, with event
+history behind the detail view. Empty child-agent telemetry is omitted instead
+of filling cards with diagnostic text. Voice status and stop controls remain
+visible below the work area.
+
+### Transport and ownership
+
+- IPS10 owns I2S RX in one lifetime task. Its frontend, streaming model state,
+  pre-roll and bounded 30-second capture reuse boot allocations. Capture and
+  model arenas live in PSRAM. The upload borrows a frozen capture buffer;
+  another recording cannot overwrite it while the HTTP worker owns it.
+- Only a triggered utterance is sent over the existing paired Wi-Fi voice
+  endpoint. Wake-word processing requires no cloud audio stream.
+- The Node daemon transcribes the utterance and calls `chat.send` on
+  `agent:main:main` (override: `voice.openclawSessionKey`, restricted to an
+  agent's main session). It matches both the acknowledged run ID and session
+  key before speaking. Cron and unrelated chat completions cannot provide
+  the response. Existing `voice.locale` and `voice.speakReplies` apply.
+- This personal-session route currently requires the Node daemon on the Mac
+  Studio. The Swift daemon has not gained the new personal voice route.
+- Firmware diagnostics expose `wakeReady`, `wakeEnabled`, detection/inference
+  counters, worst inference time, score, microphone level and voice phase in
+  a requested `device_info` frame. `wake_word_config` changes the persisted
+  setting; `mic_test` reads the owner's telemetry without stealing I2S frames.
+
+### Model and limits
+
+The embedded 63,520-byte model uses 40-channel frontend features at 16 kHz,
+30 ms windows / 10 ms steps, and two slices per invocation. The frontend is
+pinned to `esphome-libs/esp-micro-speech-features` commit
+`351c4c69530f5a802da5433581c4863afadf0a00` (Apache-2.0).
+Detection requires three consecutive outputs at least 128/256 after warm-up.
+A 12-sample training-audio smoke test reached detection on all samples; this
+is not a held-out accuracy or far-field false-trigger result.
+
+Camera support remains a separate hardware bring-up: this repository has no
+IPS10 CSI capture driver. A new [OV02C10 component tested on this board](https://github.com/sullb/esphome-p4-csi-camera)
+provides a useful implementation reference, but its sensor identity must be
+verified on this unit before adopting its register table. Useful first features
+are opt-in presence-based information density and an explicitly requested still
+image for the personal agent. Do not infer identity, emotion or attention from
+presence, or claim a camera feature before a real frame has been validated.
+
 
 ## 1. Porcupine (Mac — 현재 운영)
 
@@ -16,9 +73,9 @@ Mac Studio 모니터 마이크로 "오픈클로" 키워드 감지.
 - **설정**: `~/.agentdeck/settings.json` — `wakeWordMic`, `wakeWordSensitivity`
 - **제한**: 모니터 sleep 시 마이크 비활성 → 감지 불가
 
-## 2. microWakeWord (ESP32 — 펌웨어에서 제거됨, 모델만 보관)
+## 2. microWakeWord training history
 
-목표는 ESP32-S3의 내장 마이크로 상시 감지해서 모니터가 잠들어도 동작하게 하는 것이었다. **현재 펌웨어에는 이 기능이 없다.**
+목표는 ESP32-S3의 내장 마이크로 상시 감지해서 모니터가 잠들어도 동작하게 하는 것이었다. 2026-08-05의 제거 경위는 아래에 보존한다. 현재 IPS10 구현은 위 절을 참조한다.
 
 - **엔진**: microWakeWord (TFLite Micro, MixConv streaming)
 - **모델**: `esp32/models/openclaw_wake_word.tflite` (62KB, INT8 양자화)

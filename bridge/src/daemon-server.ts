@@ -1,3 +1,4 @@
+import { startPersonalVoiceTurn } from './personal-voice-turn.js';
 /**
  * AgentDeck Daemon — lightweight monitoring server.
  *
@@ -6475,6 +6476,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     return sink;
   };
 
+  const personalVoiceActive = new Map<string, string>();
+
   const finishVoiceCapture = async (
     captured: {
       wavPath: string;
@@ -6496,6 +6499,37 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           const locale = typeof voiceCfg?.locale === 'string' && voiceCfg.locale
             ? voiceCfg.locale : undefined;
           const text = await transcribeWithHelper(captured.wavPath, locale);
+          if (captured.sessionId === 'openclaw-personal') {
+            if (!gatewayAdapter?.isAlive()) throw new Error('openclaw_unavailable');
+            const settings = loadDaemonSettings().voice as { openclawSessionKey?: unknown } | undefined;
+            const key = typeof settings?.openclawSessionKey === 'string'
+              ? settings.openclawSessionKey : 'agent:main:main';
+            const device = sink.deviceKey();
+            const generation = randomUUID();
+            personalVoiceActive.set(device, generation);
+            const turn = await startPersonalVoiceTurn(gatewayAdapter, text, key);
+            const voiceId = `openclaw-voice:${turn.runId}`;
+            const armSink = audioArmSinkFor(sink, captured.board);
+            // This ID is never used by generic timeline completions. Only the
+            // session+run matched response below can cause personal speech.
+            voiceReply.disarm(armSink);
+            voiceReply.arm(armSink, voiceId);
+            sink.send(JSON.stringify({ type: 'voice_result', text, sessionId: captured.sessionId,
+              delivered: true, via: 'gateway-personal', runId: turn.runId }));
+            log(`[agentdeck] personal voice accepted: ${key} run=${turn.runId} board=${device}`);
+            void turn.completion.then((answer) => {
+              if (personalVoiceActive.get(device) !== generation) return;
+              personalVoiceActive.delete(device);
+              speakReplyTo(voiceId, answer);
+            }).catch((error) => {
+              if (personalVoiceActive.get(device) !== generation) return;
+              personalVoiceActive.delete(device);
+              voiceReply.disarm(armSink);
+              if (sink.isOpen()) sink.send(JSON.stringify({ type: 'voice_result', text: '',
+                delivered: false, error: 'openclaw_reply_failed', detail: String(error).slice(0, 160) }));
+            });
+            return;
+          }
           const sessionId = resolveDeviceSessionId(captured.sessionId);
           debug('voice', `transcript "${text.slice(0, 60)}" → ${sessionId.slice(0, 20) || '(no session)'}`);
           // Always tell the board what was heard, even when it is empty or

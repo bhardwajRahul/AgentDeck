@@ -151,11 +151,21 @@ uint32_t micElapsedMs(uint32_t) { return 0; }
 void micStart(const char*) {}
 void micPump() {}
 void micStop(bool) {}
+const char* voiceState() { return "wake"; }
+uint16_t micLevel() { return 0; }
+void micVoiceResult(bool) {}
+void playbackStop() {}
 // Press/sent feedback tone (audio/speaker_playback.cpp on-device). Silent here;
 // it is referenced from the voice control's event callbacks, which the sim
 // still has to link even though it never dispatches an input event.
 void playTone(uint32_t, uint32_t, float) {}
 }  // namespace Audio
+namespace WakeWord {
+static bool wakeEnabled = true;
+bool ready() { return true; }
+bool enabled() { return wakeEnabled; }
+void setEnabled(bool value) { wakeEnabled = value; }
+}
 
 // ── ES8311 codec shims (audio/es8311_codec.cpp on-device) ───────────────────
 // The IPS10 voice banner's volume steppers read and write the codec level. The

@@ -1,0 +1,62 @@
+import { randomUUID } from 'node:crypto';
+
+export interface VoiceChat {
+  state: string; sessionKey: string; runId: string; text?: string;
+}
+export interface PersonalVoiceGateway {
+  on(event: 'voice_chat', listener: (event: VoiceChat) => void): unknown;
+  off(event: 'voice_chat', listener: (event: VoiceChat) => void): unknown;
+  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string): Promise<{ runId?: string }>;
+}
+
+/** A device voice turn belongs to a personal session AND its acknowledged run.
+ * Register before chat.send: an immediate final can precede the RPC response.
+ * Never fall back to the gateway's most recently active (possibly cron) key. */
+export async function startPersonalVoiceTurn(
+  gateway: PersonalVoiceGateway, text: string, sessionKey = 'agent:main:main',
+  timeoutMs = 10 * 60_000,
+): Promise<{ runId: string; completion: Promise<string> }> {
+  if (!/^agent:[^:]+:main$/.test(sessionKey)) throw new Error('invalid_personal_session');
+  const message = text.replace(/^\s*(?:오픈\s*클로|open\s*claw)[\s,.!?:，-]*/i, '').trim();
+  if (!message) throw new Error('no_command');
+  let expected: string | undefined;
+  const early = new Map<string, VoiceChat>();
+  let lastText = '';
+  let resolve!: (text: string) => void;
+  let reject!: (error: Error) => void;
+  let done = false;
+  const completion = new Promise<string>((yes, no) => { resolve = yes; reject = no; });
+  // A fast failure may arrive while the caller is still waiting for the ack.
+  void completion.catch(() => {});
+  const close = (error?: string, text?: string) => {
+    if (done) return;
+    done = true; clearTimeout(timer); gateway.off('voice_chat', listener);
+    error ? reject(new Error(error)) : resolve(text ?? '');
+  };
+  const consume = (event: VoiceChat) => {
+    if (event.text) lastText = event.text.slice(0, 16000);
+    if (event.state === 'final') close(undefined, lastText);
+    else if (event.state === 'aborted' || event.state === 'error') close(`openclaw_${event.state}`);
+  };
+  const listener = (event: VoiceChat) => {
+    if (done || event.sessionKey !== sessionKey || !event.runId) return;
+    if (expected) { if (event.runId === expected) consume(event); return; }
+    if (early.size >= 8 && !early.has(event.runId)) early.delete(early.keys().next().value!);
+    const previous = early.get(event.runId);
+    early.set(event.runId, { ...event, text: (event.text || previous?.text || '').slice(0, 16000) });
+  };
+  const timer = setTimeout(() => close('openclaw_reply_timeout'), timeoutMs);
+  timer.unref?.();
+  gateway.on('voice_chat', listener);
+  try {
+    const ack = await gateway.sendPersonalPrompt(message, sessionKey, randomUUID());
+    if (typeof ack.runId !== 'string' || !ack.runId) throw new Error('openclaw_missing_run_id');
+    expected = ack.runId;
+    if (early.has(expected)) consume(early.get(expected)!);
+    early.clear();
+    return { runId: expected, completion };
+  } catch (error) {
+    close(error instanceof Error ? error.message : 'openclaw_send_failed');
+    throw error;
+  }
+}

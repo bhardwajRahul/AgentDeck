@@ -1495,6 +1495,11 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
    * so misuse — wrong params for a method, or calling an unknown method — is
    * a compile error here rather than a runtime surprise.
    */
+  /** Explicit personal voice route; acknowledgement is not inferred from enqueue. */
+  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string) {
+    return this.rpcCall('chat.send', { sessionKey, message: text, idempotencyKey });
+  }
+
   private rpcCall<M extends keyof GatewayMethodMap>(
     method: M,
     params: GatewayMethodMap[M]['params'],
@@ -1585,6 +1590,9 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
         const state = payload.state as string;
         const runId = payload.runId as string;
         const sessionKey = payload.sessionKey as string;
+        this.emit('voice_chat', {
+          state, runId, sessionKey, text: this.extractMessageText(payload),
+        });
 
         // Debug: log payload structure for diagnostic (delta/final only)
         if (state === 'delta' || state === 'final') {

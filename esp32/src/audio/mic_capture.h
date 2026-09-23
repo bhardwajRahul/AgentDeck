@@ -32,4 +32,11 @@ void micStop(bool cancel);
 /** Milliseconds captured in the current utterance (0 when idle). */
 uint32_t micElapsedMs(uint32_t nowMs);
 
+// IPS10 smart-speaker telemetry/control; implemented by its single audio owner.
+#if defined(BOARD_IPS10)
+const char* voiceState();
+uint16_t micLevel();
+void micVoiceResult(bool delivered);
+#endif
+
 }  // namespace Audio
