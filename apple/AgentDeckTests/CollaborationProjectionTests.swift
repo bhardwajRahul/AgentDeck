@@ -1,5 +1,6 @@
 import XCTest
 #if os(macOS)
+import Combine
 import SwiftUI
 #endif
 @testable import AgentDeck
@@ -466,6 +467,12 @@ final class CollaborationFeedTests: XCTestCase {
         await feed.observe(sessionId: "s1", port: 1)
         let view = CollaborationPanel(maxHeight: 1000, port: 1, feed: feed, inspectedID: "s1")
             .environmentObject(holder).frame(width: 390, height: 1000).environment(\.colorScheme, .dark)
+        // Mounting the panel starts its own async observation. Wait for that
+        // refresh rather than assuming a CI runner finishes it within 100 ms.
+        let refreshed = expectation(description: "Mounted collaboration feed is ready")
+        let readySubscription = feed.$state.dropFirst().first(where: { $0 == .ready })
+            .sink { _ in refreshed.fulfill() }
+        defer { readySubscription.cancel() }
         let hosting = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 1000),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -473,7 +480,7 @@ final class CollaborationFeedTests: XCTestCase {
         window.contentView = hosting
         defer { window.close() }
         hosting.frame = NSRect(x: 0, y: 0, width: 390, height: 1000)
-        try await Task.sleep(for: .milliseconds(100))
+        await fulfillment(of: [refreshed], timeout: 5)
         XCTAssertEqual(holder.state.focusedSessionId, "s1")
         XCTAssertEqual(feed.state, .ready)
         XCTAssertEqual(feed.relations.count, 3)

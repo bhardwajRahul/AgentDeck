@@ -210,6 +210,7 @@
     margin: var(--s-12) 0 0; border-radius: var(--r-2xl); overflow: hidden;
     background: var(--ink-900); box-shadow: var(--sh-card);
   }
+  .hero-shot video { display: block; width: 100%; height: auto; aspect-ratio: 180 / 103; }
   .hero-shot img { display: block; width: 100%; aspect-ratio: 3/2; object-fit: cover; }
   .hero-shot figcaption {
     padding: var(--s-3) var(--s-4); font-size: 13px; color: var(--ink-500);
@@ -297,6 +298,13 @@
       <a class="btn btn-primary" href="#get-agentdeck" data-i18n="cta.start">Choose your setup</a>
       <a class="btn btn-ghost" href="demo/" data-i18n="cta.demo">Try the live preview</a>
     </div>
+    <figure id="aquarium" class="hero-shot">
+      <video controls playsinline preload="none" poster="media/aquarium-dashboard.jpg" width="1440" height="824" aria-describedby="aquarium-caption">
+        <source src="media/aquarium-demo.mp4" type="video/mp4">
+        <a href="media/aquarium-demo.mp4" data-i18n="video.download">Download the aquarium demo</a>
+      </video>
+      <figcaption id="aquarium-caption" data-i18n="video.caption">The native Android aquarium, recorded with sample sessions. Tap empty water to hide the panels and move closer; tap again to return. Silent video, 18 seconds.</figcaption>
+    </figure>
     <section id="get-agentdeck" class="get-started" aria-labelledby="get-agentdeck-title">
       <div class="get-started-head">
         <p class="eyebrow" data-i18n="get.eyebrow">Get AgentDeck</p>
@@ -336,14 +344,34 @@
     </section>
     <div class="stats">
       <div class="stat"><div class="n">29</div><div class="l" data-i18n="stat.surfaces">display surfaces</div></div>
-      <div class="stat"><div class="n">4</div><div class="l" data-i18n="stat.agents">coding agents</div></div>
-      <div class="stat"><div class="n">100%</div><div class="l" data-i18n="stat.local">local — no cloud</div></div>
+      <div class="stat"><div class="n">1</div><div class="l" data-i18n="stat.agents">shared session model</div></div>
+      <div class="stat"><div class="n">Local</div><div class="l" data-i18n="stat.local">hub on your computer</div></div>
     </div>
     <figure class="hero-shot">
       <img src="media/setup-full.jpg" alt="A desk running AgentDeck on every surface at once — monitors, TRMNL 7.5&quot; e-ink, XTeink readers, Timebox Mini, Pixoo64, TC001, Stream Deck+, Ulanzi D200H, iPad, and phone" loading="eager" onerror="this.parentNode.style.display='none'">
       <figcaption data-i18n="hero.caption">One daemon, one session model — every surface above is live at the same time.</figcaption>
     </figure>
   </header>
+
+  <h2 data-i18n="aquarium.h">Your agents, in view</h2>
+  <p class="section-lede" data-i18n="aquarium.p">Choose a dashboard that fits your screen and the way you work. Existing appearance choices stay yours.</p>
+  <div class="cards">
+    <a class="card" href="https://github.com/puritysb/AgentDeck/blob/master/docs/configuration.md#dashboard-appearance">
+      <div class="ci" data-i18n="view.ci">Native aquarium</div>
+      <h3 data-i18n="view.h">Work, then watch</h3>
+      <p data-i18n="view.p">Live 3D creatures on Apple and Android LCD screens. Mobile viewing mode fades the panels and brings the habitat closer. E-ink keeps its own calm, static backdrop.</p>
+    </a>
+    <a class="card" href="https://github.com/puritysb/AgentDeck/blob/master/docs/apple-app.md#collaboration-beta">
+      <div class="ci">Collaboration</div>
+      <h3 data-i18n="collab.h">Follow the handoff</h3>
+      <p data-i18n="collab.p">See the selected task, recent task history, and reported subagent activity. Busy scenes keep up to eight foreground residents while the roster retains every session.</p>
+    </a>
+    <a class="card" href="https://github.com/puritysb/AgentDeck/blob/master/docs/android.md#wireless-app-updates">
+      <div class="ci" data-i18n="usage.ci">Across your devices</div>
+      <h3 data-i18n="usage.h">Keep the essentials close</h3>
+      <p data-i18n="usage.p">Claude, Codex, and z.ai/GLM usage where available, adapted to the display. Android GitHub APKs update wirelessly from Settings; store installs use their store.</p>
+    </a>
+  </div>
 
   <h2 data-i18n="explore.h">Explore AgentDeck</h2>
   <p class="section-lede" data-i18n="explore.p">Five focused views: what runs where, how to put firmware on it, how it looks, how it works, and whether the tests pass.</p>
@@ -467,6 +495,20 @@
   (function () {
     var I18N = {
       ko: {
+        "stat.agents": "공통 세션 모델",
+        "stat.local": "컴퓨터에서 실행하는 허브",
+        "video.download": "수족관 데모 다운로드",
+        "video.caption": "샘플 세션으로 촬영한 실제 Android 수족관입니다. 빈 수면을 탭하면 패널이 사라지며 가까워지고, 다시 탭하면 돌아옵니다. 무음 영상, 18초.",
+        "aquarium.h": "에이전트가 한눈에",
+        "aquarium.p": "화면과 작업 방식에 맞는 대시보드를 선택하세요. 기존 화면 설정은 그대로 유지됩니다.",
+        "view.ci": "네이티브 수족관",
+        "view.h": "작업을 보고, 수족관을 감상하고",
+        "view.p": "Apple과 Android LCD 화면의 실시간 3D 크리처. 모바일 감상 모드는 패널을 숨기고 수족관을 가까이 보여줍니다. 전자책은 차분한 정적 배경을 사용합니다.",
+        "collab.h": "작업 인계를 따라가세요",
+        "collab.p": "선택한 작업, 최근 작업 기록, 보고된 서브에이전트 활동을 확인하세요. 화면에는 최대 8개 크리처를 읽기 쉽게 배치하고 전체 세션은 목록에 유지합니다.",
+        "usage.ci": "여러 기기에서",
+        "usage.h": "필요한 정보를 가까이",
+        "usage.p": "제공 가능한 Claude·Codex·z.ai/GLM 사용량을 화면에 맞게 표시합니다. Android GitHub APK는 설정에서 무선 업데이트하고, 스토어 설치본은 해당 스토어를 사용합니다.",
         'hero.kicker': 'AI 코딩 에이전트를 위한 피지컬 컨트롤 서피스',
         'hero.lede': 'AgentDeck은 코딩 에이전트를 책상 위로 꺼내 놓습니다. 하나의 데몬 허브가 모든 세션을 29개 서피스에 라이브로 렌더링하고 — 키보드를 떠나지 않고 조종하게 해줍니다.',
         'cta.start': '내 환경에 맞게 시작하기',
@@ -491,8 +533,6 @@
         'hardware.streamdeck': 'Elgato 마켓플레이스',
         'hardware.ulanzi': 'Ulanzi 마켓플레이스',
         'stat.surfaces': '디스플레이 서피스',
-        'stat.agents': '코딩 에이전트',
-        'stat.local': '로컬 — 클라우드 없음',
         'hero.caption': '하나의 데몬, 하나의 세션 모델 — 위의 모든 서피스가 동시에 살아 있습니다.',
         'explore.h': 'AgentDeck 둘러보기',
         'explore.p': '다섯 가지 뷰 — 무엇이 어디서 돌아가는지, 펌웨어는 어떻게 넣는지, 어떻게 보이는지, 어떻게 동작하는지, 테스트는 통과하는지.',
@@ -513,6 +553,20 @@
         'policy.canonical': '개인정보 처리방침은 영어 원문이 정본입니다.'
       },
       ja: {
+        "stat.agents": "共通セッションモデル",
+        "stat.local": "コンピューター上のハブ",
+        "video.download": "水槽デモをダウンロード",
+        "video.caption": "サンプルセッションを使った実際のAndroidアプリです。空いている水面をタップするとパネルが消えて近づき、もう一度タップすると戻ります。無音、18秒。",
+        "aquarium.h": "エージェントをひと目で",
+        "aquarium.p": "画面と作業スタイルに合うダッシュボードを選べます。既存の表示設定は保持されます。",
+        "view.ci": "ネイティブ水槽",
+        "view.h": "作業を見守り、水槽を楽しむ",
+        "view.p": "AppleとAndroid LCD画面で動く3Dクリーチャー。モバイルの鑑賞モードはパネルを隠して水槽に近づきます。電子ペーパーには落ち着いた静的背景を使います。",
+        "collab.h": "作業の引き継ぎを追う",
+        "collab.p": "選択したタスク、最近の履歴、報告されたサブエージェントの活動を確認できます。手前のクリーチャーは最大8体に整理し、全セッションは一覧に残します。",
+        "usage.ci": "さまざまなデバイスで",
+        "usage.h": "必要な情報を手元に",
+        "usage.p": "利用可能なClaude・Codex・z.ai/GLM使用量を画面に合わせて表示。Android GitHub APKは設定から無線更新し、ストア版は各ストアで更新します。",
         'hero.kicker': 'AIコーディングエージェントのためのフィジカルコントロールサーフェス',
         'hero.lede': 'AgentDeckはコーディングエージェントを机の上に連れ出します。ひとつのdaemonハブがすべてのセッションを29のサーフェスにライブ描画し — キーボードを離れずに操縦させてくれます。',
         'cta.start': '環境に合わせて始める',
@@ -537,8 +591,6 @@
         'hardware.streamdeck': 'Elgato Marketplace',
         'hardware.ulanzi': 'Ulanzi Marketplace',
         'stat.surfaces': 'ディスプレイサーフェス',
-        'stat.agents': 'コーディングエージェント',
-        'stat.local': 'ローカル — クラウドなし',
         'hero.caption': 'ひとつのdaemon、ひとつのセッションモデル — 上のすべてのサーフェスが同時に生きています。',
         'explore.h': 'AgentDeckを見る',
         'explore.p': '5つのビュー — 何がどこで動くか、ファームウェアをどう書き込むか、どう見えるか、どう動くか、テストは通るか。',

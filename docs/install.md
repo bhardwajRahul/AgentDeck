@@ -71,7 +71,7 @@ Creates a symlink in `~/Library/Application Support/com.elgato.StreamDeck/Plugin
 
 ## 3. Install the Ulanzi Studio Plugin
 
-Install [AgentDeck from the Ulanzi Studio Marketplace](https://ugc.ulanzistudio.com/contentView/1141). The public 1.0.3 build supports D200H; 1.0.4 is under review and adds D200X LCD-key support. D200X encoders are not supported. Ulanzi Studio is a separate host from Elgato Stream Deck, so Stream Deck plugins cannot be installed onto a D200H or D200X.
+Install [AgentDeck from the Ulanzi Studio Marketplace](https://ugc.ulanzistudio.com/contentView/1141). The plugin supports D200H keys and D200X LCD keys. D200X encoders are not supported. Ulanzi Studio is a separate host from Elgato Stream Deck, so Stream Deck plugins cannot be installed onto a D200H or D200X.
 
 For a development checkout or manual package verification, follow
 [plugin-ulanzi/VERIFY.md](../plugin-ulanzi/VERIFY.md) instead of hand-building the
