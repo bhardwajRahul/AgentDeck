@@ -76,6 +76,7 @@ this table live in CLAUDE.md § Key Conventions ("Cross-platform rules are SSOT-
 
 | Canonical source | Generator | Gate / note |
 |---|---|---|
+| `bridge/src/ips10-roster.ts` | `node bridge/generate-ips10-roster.mjs` | `ips10-roster.test.ts`: generated Swift kernel drift and executable Node/Swift parity; bounded attention pinning and fair roster paging. |
 | `shared/src/sample.ts` (`RelationEvent.relationId`) | Existing Node/Swift sample serializers | `shared/collaboration-identity-vectors.json` replayed through both collectors and stores (`apme-collector.test.ts`, `CollaborationIdentityPersistenceTests`); Swift projection checks that closing one of two identically named jobs leaves the other open. |
 | `bridge/src/dashboard-providers.ts` provider vocabulary | `node scripts/generate-dashboard-providers.mjs` | `dashboard-providers-sync.test.ts` checks native validators/order and complete menu coverage; persistence tests keep explicit empty membership across initialization. |
 | `shared/src/protocol.ts` | `pnpm generate-protocol` | vitest drift gate; Swift + Kotlin types |

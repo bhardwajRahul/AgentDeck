@@ -264,6 +264,12 @@ bool SimScenes::apply(const char* name) {
     addSession("codex-cli", "processing", "AgentDeck");
     addSession("claude-code", "awaiting_permission", "Website");
     addSession("openclaw", "idle", "OpenClaw");
+#if defined(BOARD_IPS10)
+    g_state.sessions[0].childrenKnown=true;g_state.sessions[0].childrenActive=2;
+#endif
+    g_state.gatewayConnected=true;
+    setStr(g_state.sessions[0].currentTool,sizeof(g_state.sessions[0].currentTool),"Edit");
+    setStr(g_state.sessions[1].currentTool,sizeof(g_state.sessions[1].currentTool),"Bash");
     setStr(g_state.sessions[0].activity,sizeof(g_state.sessions[0].activity),"Refining dashboard layout");
     setStr(g_state.sessions[1].activity,sizeof(g_state.sessions[1].activity),"Checking mobile build");
     setStr(g_state.sessions[2].question,sizeof(g_state.sessions[2].question),"Run the build command?");

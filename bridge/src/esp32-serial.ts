@@ -1,3 +1,4 @@
+import { ips10RosterIndices } from './ips10-roster.js';
 /**
  * ESP32 Serial Bridge — bidirectional USB serial communication.
  *
@@ -358,23 +359,18 @@ export function roundRobinByAgentType(sessions: any[], cap: number): any[] {
   return result;
 }
 
-/**
- * IPS10 card roster: a STABLE pick, not a rotation. The equal-size cards
- * promise that a state change never moves a session, and the round-robin
- * (which re-ranks by state) broke that promise the moment the machine held
- * more than `cap` sessions — the card set itself changed. Rules, in order:
- * every session waiting on a human is kept (a hidden PERM is a lie on the
- * one surface built to show it), then the most recently started fill the
- * rest, and the result is ordered by id so the firmware's identity sort sees
- * the same set in the same order on every push. Dead rows are dropped first.
- */
-export function stableCardRoster(sessions: any[], cap: number): any[] {
+/** IPS10 keeps a bounded page stable for a minute, pins up to three attention
+ * rows and fairly visits every other alive session. The pure selection policy
+ * is shared with the generated Swift kernel; result ordering follows identity. */
+export function stableCardRoster(sessions: any[], cap: number, nowMs = Date.now()): any[] {
+  if (cap <= 0) return [];
   const alive = sessions.filter((s) => s?.alive !== false);
   if (alive.length <= cap) return alive;
   const awaiting = alive.filter((s) => typeof s?.state === 'string' && s.state.startsWith('awaiting'));
   const rest = alive.filter((s) => !awaiting.includes(s))
     .sort((a, b) => (Date.parse(b?.startedAt ?? '') || 0) - (Date.parse(a?.startedAt ?? '') || 0));
-  const picked = [...awaiting, ...rest].slice(0, cap);
+  const ordered = [...awaiting.sort((a, b) => String(a.id).localeCompare(String(b.id))), ...rest];
+  const picked = ips10RosterIndices(ordered.length, awaiting.length, cap, nowMs).map(i => ordered[i]);
   return picked.sort((a, b) => String(a?.id ?? '').localeCompare(String(b?.id ?? '')));
 }
 
@@ -558,6 +554,7 @@ export function prepareForSerial(event: BridgeEvent, _conn?: Pick<SerialConnecti
       // so counting `raw` would advertise a `+N` for rows nothing can show.
       const aliveCount = raw.filter((s: any) => s?.alive !== false).length;
       if (aliveCount > rows.length) (prepared as any).total = aliveCount;
+      (prepared as any).rosterRotating = aliveCount > rows.length;
       if (Buffer.byteLength(JSON.stringify(prepared), 'utf8') > TIMELINE_HISTORY_BYTE_BUDGET) {
         for (const row of rows) { delete row.subagents; delete row.coordination; }
       }

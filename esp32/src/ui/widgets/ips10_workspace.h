@@ -8,7 +8,9 @@ struct Diagnostics {
     uint32_t updates, lastUpdateUs, maxUpdateUs;
     uint16_t width, height;
     uint8_t sessions, visibleSessions, filter, eventCount, projects;
-    bool connected, history, voiceOpen, overview;
+    bool connected, history, voiceOpen, overview, usageVisible, rosterRotating;
+    uint8_t quotaWindows;
+    uint16_t rosterTotal;
 };
 Diagnostics diagnostics();
 const char* selectedSession();

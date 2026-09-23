@@ -405,6 +405,7 @@ static void handleSessionsList(JsonObject& obj) {
     g_state.sessionClearPendingMs = 0;
     g_state.sessionCount = incomingCount;
 #if defined(BOARD_IPS10)
+    g_state.sessionsRotating = obj["rosterRotating"] | false;
     g_state.sessionsTotal = obj["total"].is<int>() ? (uint16_t)constrain(obj["total"].as<int>(), 0, 65535) : 0;
 #endif
     g_state.octopusCount = 0;
@@ -1471,10 +1472,10 @@ void parseMessage(const char* json, size_t length) {
     } else if (strcmp(type, "workspace_diag") == 0) {
         // Read-only, fixed UI-core snapshot. Never inspect LVGL from netTask.
         const auto d=IPS10Workspace::diagnostics();
-        char reply[256];
-        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"aquarium-v4\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s}",
+        char reply[384];
+        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"aquarium-v5\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s,\"usageVisible\":%s,\"quotaWindows\":%u,\"rosterTotal\":%u,\"rosterRotating\":%s}",
             d.width,d.height,d.sessions,d.visibleSessions,(unsigned long)d.updates,
-            (unsigned long)d.lastUpdateUs,(unsigned long)d.maxUpdateUs,d.connected?"true":"false",d.filter,d.eventCount,d.projects,d.overview?"true":"false");
+            (unsigned long)d.lastUpdateUs,(unsigned long)d.maxUpdateUs,d.connected?"true":"false",d.filter,d.eventCount,d.projects,d.overview?"true":"false",d.usageVisible?"true":"false",d.quotaWindows,d.rosterTotal,d.rosterRotating?"true":"false");
         Net::serialWriteJsonLine(reply);
 #endif
     } else if (strcmp(type, "esp32_ota_begin") == 0) {

@@ -72,6 +72,12 @@ static Text<200> podLatest[10], ambientVoice;
 static Text<120> attentionLine;
 static Text<128> pageLabel;
 static Text<160> agentActivity[10];
+static Text<40> cohortLabel[10], childLabel[10];
+static lv_obj_t* activityIcons[10];
+static lv_obj_t* childLinks[10];
+static const lv_point_precise_t childBranch[]={{8,122},{8,134},{16,134}};
+static bool gatewayReady=false, retainedDetail=false;
+static lv_obj_t* recentCaption;
 static Text<32> quotaWindow[7];
 static lv_obj_t* providerNames[4];
 static lv_obj_t* voiceButton;
@@ -129,12 +135,19 @@ static int category(const char* s) {
 }
 static uint32_t colorFor(int c) { return c==1?Theme::StatusAmber:c==2?Theme::StatusBlue:Theme::HUDDim; }
 static const char* nameFor(int c) { return c==1?"Attention":c==2?"Working":"Idle"; }
+static const char* toolSymbol(const char* tool) {
+    if(strstr(tool,"Edit") || strstr(tool,"Write") || strstr(tool,"edit") || strstr(tool,"write"))return LV_SYMBOL_EDIT;
+    if(strstr(tool,"Read") || strstr(tool,"read"))return LV_SYMBOL_FILE;
+    if(strstr(tool,"Search") || strstr(tool,"Grep") || strstr(tool,"search"))return LV_SYMBOL_EYE_OPEN;
+    if(strstr(tool,"Bash") || strstr(tool,"build") || strstr(tool,"test"))return LV_SYMBOL_KEYBOARD;
+    return LV_SYMBOL_LIST;
+}
 static bool matches(const Row& r) { return !filter || category(r.state)==filter; }
 static void selectCb(lv_event_t* e) {
     const int i=static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
     if(i<0 || i>=count) return;
     snprintf(selectedId,sizeof(selectedId),"%s",rows[i].id);
-    overviewMode=false; history=false; lastUpdate=0; update();
+    overviewMode=false; retainedDetail=false; history=false; lastUpdate=0; update();
 }
 static void filterCb(lv_event_t* e) {
     filter=static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
@@ -155,7 +168,8 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     const int w=g_screenW,h=g_screenH, railW=w>=1100?320:248;
     root=box(parent,0,0,w,h,Theme::DeepSea);lv_obj_set_style_radius(root,0,0);
     auto* ocean=lv_image_create(root);lv_image_set_src(ocean,&IPS10Ocean::image);
-    lv_image_set_pivot(ocean,0,0);lv_image_set_scale(ocean,w*256/640);
+    const int oceanScale=w*400>=h*640?w*256/640:h*256/400;
+    lv_image_set_pivot(ocean,0,0);lv_image_set_scale(ocean,oceanScale);lv_obj_set_x(ocean,-(640*oceanScale/256-w)/2);
     lv_obj_set_style_image_opa(ocean,LV_OPA_70,0);lv_obj_clear_flag(ocean,LV_OBJ_FLAG_CLICKABLE);
     auto* logo=lv_image_create(root);lv_image_set_src(logo,&img_logo_48);lv_obj_set_pos(logo,24,16);lv_obj_set_style_image_recolor_opa(logo,LV_OPA_COVER,0);lv_obj_set_style_image_recolor(logo,lv_color_hex(Theme::StatusCyan),0);
     caption(root,"AgentDeck",84,23,240,Theme::HUDText);
@@ -215,7 +229,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     historyButton=box(detail,detailW-166,324,142,48,Theme::ShallowWater);
     label(historyLabel,historyButton,14,16,120,&font_studio_20,Theme::HUDText);
     lv_obj_add_event_cb(historyButton,historyCb,LV_EVENT_CLICKED,nullptr);
-    caption(detail,"Recent activity",24,340,detailW-212);
+    caption(detail,"Recent activity",24,340,detailW-212);recentCaption=lv_obj_get_child(detail,-1);
     eventBox=box(detail,24,386,detailW-48,h-324-402,Theme::MidWater);
     lv_obj_add_flag(eventBox,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(eventBox,LV_DIR_VER);
     for(int i=0;i<8;++i) {
@@ -250,6 +264,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         lv_obj_set_style_border_width(pods[i],1,0);lv_obj_set_style_border_side(pods[i],LV_BORDER_SIDE_RIGHT,0);lv_obj_set_style_border_color(pods[i],lv_color_hex(Theme::ShallowWater),0);
         label(podName[i],pods[i],16,12,sceneW-32,&font_studio_28,Theme::HUDText);
         label(podStatus[i],pods[i],16,52,sceneW-32,&font_studio_20,Theme::HUDDim);
+        label(cohortLabel[i],pods[i],16,80,sceneW-32,&font_kr_12,Theme::HUDDim);
         label(podLatest[i],pods[i],16,480,sceneW-32,&font_studio_20,Theme::HUDDim);
         lv_label_set_long_mode(podLatest[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(podLatest[i].obj,78);
         seats[i]=box(overview,0,0,100,126,Theme::DeepSea);lv_obj_set_style_bg_opa(seats[i],LV_OPA_TRANSP,0);
@@ -257,6 +272,9 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         creatures[i]=lv_image_create(seats[i]);lv_image_set_pivot(creatures[i],0,0);lv_obj_clear_flag(creatures[i],LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_style_image_recolor_opa(creatures[i],LV_OPA_COVER,0);
         label(seatState[i],seats[i],0,104,100,&font_kr_12,Theme::HUDText);
+        childLinks[i]=lv_line_create(seats[i]);lv_line_set_points(childLinks[i],childBranch,3);lv_obj_set_style_line_width(childLinks[i],2,0);lv_obj_set_style_line_color(childLinks[i],lv_color_hex(Theme::StatusCyan),0);
+        label(childLabel[i],seats[i],20,124,90,&font_kr_12,Theme::StatusCyan);
+        activityIcons[i]=lv_label_create(overview);lv_obj_set_style_text_font(activityIcons[i],&lv_font_montserrat_20,0);lv_obj_set_style_text_color(activityIcons[i],lv_color_hex(Theme::StatusCyan),0);
         label(agentActivity[i],overview,0,0,300,&font_studio_20,Theme::HUDText);
         lv_label_set_long_mode(agentActivity[i].obj,LV_LABEL_LONG_WRAP);lv_obj_set_height(agentActivity[i].obj,68);
     }
@@ -273,7 +291,7 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     lv_obj_add_event_cb(voice,voiceCb,LV_EVENT_CLICKED,nullptr);
     // A separate drawer preserves direct voice controls without consuming the
     // working surface while closed. Width is always the full screen minus 48.
-    voicePane=box(root,24,h-302,w-48,178,Theme::ShallowWater);
+    voicePane=box(root,w-584,h-302,560,178,Theme::ShallowWater);
     lv_obj_set_style_pad_all(voicePane,10,0);lv_obj_set_style_pad_row(voicePane,0,0);
     lv_obj_set_flex_flow(voicePane,LV_FLEX_FLOW_COLUMN);
     visible(voicePane,false);
@@ -286,9 +304,10 @@ void update() {
     if(lastUpdate && now-lastUpdate<250) return;
     lastUpdate=now?now:1;
     const uint32_t started=micros();
-    int totals[4]={}; float p5,p7,c5,c7; bool stale; uint16_t rosterTotal;
+    int totals[4]={}; float p5,p7,c5,c7; bool stale; uint16_t rosterTotal;bool rosterRotating;
     lockState();
     connected=g_state.wsConnected || Net::serialConnected();
+    gatewayReady=connected && g_state.gatewayConnected && !g_state.gatewayHasError;
     count=0;
     for(int i=0;i<g_state.sessionCount && i<10;++i) {
         const auto& s=g_state.sessions[i]; if(!s.alive || !s.id[0]) continue;
@@ -317,14 +336,15 @@ void update() {
         while(j>0 && category(rows[j-1].state)>category(r.state)) {rows[j]=rows[j-1];--j;}
         rows[j]=r;
     }
-    totals[0]=count;rosterTotal=g_state.sessionsTotal;
+    totals[0]=count;rosterTotal=g_state.sessionsTotal;rosterRotating=g_state.sessionsRotating;
     int chosen=-1;
     for(int i=0;i<count;++i) if(matches(rows[i]) && !strcmp(rows[i].id,selectedId)) chosen=i;
-    if(chosen<0) {
+    retainedDetail=chosen<0 && !overviewMode && selectedId[0] && !strcmp(selected.id,selectedId) && rosterTotal>count;
+    if(chosen<0 && !retainedDetail) {
         for(int i=0;i<count;++i) if(matches(rows[i]) && (chosen<0 || category(rows[i].state)<category(rows[chosen].state))) chosen=i;
         snprintf(selectedId,sizeof(selectedId),"%s",chosen>=0?rows[chosen].id:"");history=false;
     }
-    selected={};eventCount=0;
+    if(!retainedDetail)selected={};eventCount=0;
     for(int i=0;i<g_state.sessionCount && i<10;++i) if(selectedId[0] && !strcmp(g_state.sessions[i].id,selectedId)) selected=g_state.sessions[i];
     // No global/unattributed events in a session detail, even when project names
     // happen to match. A stable session ID is the sole join key.
@@ -343,18 +363,18 @@ void update() {
     char text[240];
     const bool hasQuota=quota.percent[0]>=0 || quota.percent[1]>=0 || quota.percent[2]>=0 || quota.percent[3]>=0 || quota.percent[4]>=0 || quota.percent[5]>=0 || quota.percent[6]>=0;
     sceneW=g_screenW-(hasQuota?324:48);
-    visible(overview,overviewMode);visible(resourcePane,overviewMode && hasQuota);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);
+    visible(overview,overviewMode);visible(resourcePane,hasQuota);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);
     const bool needsAttention=totals[1]>0 || !connected;
     visible(attentionPane,overviewMode && needsAttention);visible(summary.obj,!overviewMode);
     lv_obj_set_pos(overview,24,needsAttention?138:90);lv_obj_set_size(overview,sceneW,g_screenH-(needsAttention?216:168)-(g_screenW<1100?54:0));
     for(int i=0;i<4;++i)visible(filters[i],!overviewMode);
     viewLabel.set(overviewMode?"Details":"Aquarium");
     const char* vs=Audio::voiceState();
-    const char* voiceText=!Audio::micReady()?"":!strcmp(vs,"listening")?"Listening...":!strcmp(vs,"sending")?"Sending voice...":!strcmp(vs,"waiting")?"Waiting for reply...":!strcmp(vs,"speaking")?"Speaking...":!strcmp(vs,"error")?"Voice connection error":!strcmp(vs,"muted")?"":"OpenClaw ready";
+    const char* voiceText=!Audio::micReady()?"":!strcmp(vs,"listening")?"Listening...":!strcmp(vs,"sending")?"Sending voice...":!strcmp(vs,"waiting")?"Waiting for reply...":!strcmp(vs,"speaking")?"Speaking...":!strcmp(vs,"error")?"Voice connection error":!strcmp(vs,"muted")?"":gatewayReady?"OpenClaw ready":connected?"Wake ready · Agent offline":"Wake ready · Disconnected";
     ambientVoice.set(voiceText);visible(voiceStatusPane,voiceText[0]);
     if(g_screenW<1100){lv_obj_set_pos(voiceStatusPane,24,g_screenH-112);lv_obj_set_width(voiceStatusPane,g_screenW-48);}
     visible(voiceButton,Audio::micReady());
-    lv_obj_set_y(resourcePane,needsAttention?138:90);lv_obj_set_height(resourcePane,g_screenH-(needsAttention?216:168)-(g_screenW<1100?54:0));
+    lv_obj_set_y(resourcePane,overviewMode && needsAttention?138:90);lv_obj_set_height(resourcePane,g_screenH-(overviewMode && needsAttention?216:168)-(g_screenW<1100?54:0));
     int providerCount=0;for(int i=0;i<4;++i)providerCount+=(quota.percent[2*i]>=0 || (i<3 && quota.percent[2*i+1]>=0));
     const int gaugeSize=providerCount==4?64:providerCount>=3?80:100;
     int quotaY=48;
@@ -402,47 +422,63 @@ void update() {
     for(int i=0;i<count;++i)if(podFor[i]>=0)podFor[i]=remap[podFor[i]];
     memset(podMembers,0,sizeof(podMembers));
     for(int i=0;i<count;++i)if(podFor[i]>=0){++podMembers[podFor[i]];memberSlot[i]=0;for(int j=0;j<count;++j)if(podFor[j]==podFor[i] && strcmp(rows[j].id,rows[i].id)<0)++memberSlot[i];}
-    const int capacity=g_screenW>=1100?3:2;
+    const int capacity=g_screenW>=1100?3:1;
     pageCount=(projectCount+capacity-1)/capacity;if(pageCount<1)pageCount=1;
     if(page>=pageCount)page=0;
-    if(overviewMode && !pageHeld && now-pageSince>=30000){page=(page+1)%pageCount;pageSince=now;}
-    if(rosterTotal>count)snprintf(text,sizeof(text),"%d of %u agents · Priority view · Projects %d/%d · %s",count,rosterTotal,page+1,pageCount,pageHeld?"Paused":"30s");
-    else snprintf(text,sizeof(text),"%d agents · %d projects%s",count,projectCount,pageCount>1?(pageHeld?" · Paused":" · Auto rotate 30s"):"");
+    if(overviewMode && !pageHeld && now-pageSince>=12000){page=(page+1)%pageCount;pageSince=now;}
+    if(rosterTotal>count)snprintf(text,sizeof(text),"%d of %u agents · %s · Projects %d/%d · %s",count,rosterTotal,rosterRotating?"Roster rotates 60s":"Priority view",page+1,pageCount,pageHeld?"Paused":"12s");
+    else snprintf(text,sizeof(text),"%d agents · %d projects%s",count,projectCount,pageCount>1?(pageHeld?" · Paused":" · Auto rotate 12s"):"");
+    if(rosterTotal>count && pageCount==1)snprintf(text,sizeof(text),"%d of %u agents · %s",count,rosterTotal,rosterRotating?"Roster rotates 60s":"Priority view");
     pageLabel.set(text);visible(pageLabel.obj,count>0);
-    const int columns=projectCount<capacity?(projectCount?projectCount:1):capacity;
-    const int pw=sceneW/columns,ph=lv_obj_get_height(overview)-24;
+    int weights=0;for(int g=page*capacity;g<projectCount && g<(page+1)*capacity;++g)weights+=2+(podMembers[g]<3?podMembers[g]:3);
+    int projectX=0;
+    const int ph=lv_obj_get_height(overview)-24;
     for(int i=0;i<10;++i)displayedSlot[i]=-1;
     for(int g=0;g<10;++g) {
         const bool show=g<projectCount && g/capacity==page;visible(pods[g],show);if(!show)continue;
-        lv_obj_set_pos(pods[g],(g%capacity)*pw,24);lv_obj_set_size(pods[g],pw-12,ph);
+        const int weight=2+(podMembers[g]<3?podMembers[g]:3),pw=sceneW*weight/(weights?weights:1);
+        lv_obj_set_pos(pods[g],projectX,24);projectX+=pw;lv_obj_set_size(pods[g],pw-12,ph);
         int first=-1,working=0,attention=0;
         for(int i=0;i<count;++i)if(podFor[i]==g){if(first<0)first=i;working+=category(rows[i].state)==2;attention+=category(rows[i].state)==1;}
         lv_obj_set_width(podName[g].obj,pw-44);lv_label_set_long_mode(podName[g].obj,LV_LABEL_LONG_DOT);lv_obj_set_height(podName[g].obj,font_studio_28.line_height);lv_obj_set_width(podStatus[g].obj,pw-44);
         podName[g].set(rows[first].project[0]?rows[first].project:"Unnamed project");
         snprintf(text,sizeof(text),"%d %s · %d working",podMembers[g],podMembers[g]==1?"agent":"agents",working);podStatus[g].set(text);
-        const int cohort=(now/12000)%((podMembers[g]+2)/3),offset=cohort*3;
-        for(int i=0;i<count;++i)if(podFor[i]==g && memberSlot[i]>=offset && memberSlot[i]<offset+3)displayedSlot[i]=memberSlot[i]-offset;
+        int members[10],nMembers=0;
+        for(int i=0;i<count;++i)if(podFor[i]==g)members[nMembers++]=i;
+        // Attention stays in view; reserve one slot for fair rotation of others.
+        for(int i=1;i<nMembers;++i){int v=members[i],j=i;while(j>0 && (category(rows[members[j-1]].state)>category(rows[v].state) || (category(rows[members[j-1]].state)==category(rows[v].state) && strcmp(rows[members[j-1]].id,rows[v].id)>0))){members[j]=members[j-1];--j;}members[j]=v;}
+        const int pinned=attention<2?attention:2;
+        const int slots=nMembers<3?nMembers:3,rotating=slots-pinned,remaining=nMembers-pinned;
+        for(int j=0;j<pinned;++j)displayedSlot[members[j]]=j;
+        const int offset=remaining?((now/8000)*rotating)%remaining:0;
+        for(int j=0;j<rotating;++j)displayedSlot[members[pinned+(offset+j)%remaining]]=pinned+j;
+        snprintf(text,sizeof(text),"Showing %d of %d · Rotate 8s",slots,nMembers);cohortLabel[g].set(text);visible(cohortLabel[g].obj,nMembers>3);lv_obj_set_width(cohortLabel[g].obj,pw-44);
         int recent=first;for(int i=0;i<count;++i)if(podFor[i]==g && rows[i].latestRank<rows[recent].latestRank)recent=i;
         visible(podLatest[g].obj,rows[recent].latest[0]);
-        lv_obj_set_pos(podLatest[g].obj,16,ph-90);lv_obj_set_width(podLatest[g].obj,pw-44);
+        int activities=0;for(int i=0;i<count;++i)if(podFor[i]==g && displayedSlot[i]>=0 && rows[i].activity[0])++activities;
+        const int latestY=292+activities*64;lv_obj_set_pos(podLatest[g].obj,16,latestY<ph-78?latestY:ph-78);lv_obj_set_width(podLatest[g].obj,pw-44);
         snprintf(text,sizeof(text),"Latest %s\n%s",rows[recent].hm,rows[recent].latest);podLatest[g].set(text);
     }
     for(int i=0;i<10;++i) {
-        const bool show=i<count && displayedSlot[i]>=0;visible(seats[i],show);visible(agentActivity[i].obj,show);if(!show)continue;
+        const bool show=i<count && displayedSlot[i]>=0;visible(seats[i],show);visible(agentActivity[i].obj,show);visible(activityIcons[i],show && rows[i].activity[0]);if(!show)continue;
         if(lv_obj_get_parent(seats[i])!=pods[podFor[i]])lv_obj_set_parent(seats[i],pods[podFor[i]]);
         if(lv_obj_get_parent(agentActivity[i].obj)!=pods[podFor[i]])lv_obj_set_parent(agentActivity[i].obj,pods[podFor[i]]);
+        if(lv_obj_get_parent(activityIcons[i])!=pods[podFor[i]])lv_obj_set_parent(activityIcons[i],pods[podFor[i]]);
+        const int pw=lv_obj_get_width(pods[podFor[i]])+12;
         const int cat=category(rows[i].state),slot=displayedSlot[i],n=podMembers[podFor[i]]>3?3:podMembers[podFor[i]];
         const int step=(pw-40)/n,diam=step<104?step-8:96;
-        lv_obj_set_pos(seats[i],20+slot*step,96);lv_obj_set_size(seats[i],step,132);
+        lv_obj_set_pos(seats[i],20+slot*step,112);lv_obj_set_size(seats[i],step,158);
         const auto* glyph=glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
         if(glyph){lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],diam*256/64);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
         lv_obj_set_y(creatures[i],!strncmp(rows[i].state,"awaiting",8) && overviewMode && connected?((now/300+i)%2?0:4):4);
-        seatState[i].set(cat==1?"! Attention":cat==2?"Working":"Idle");lv_obj_set_y(seatState[i].obj,104);
+        snprintf(text,sizeof(text),"#%d %s",memberSlot[i]+1,cat==1?"! Attention":cat==2?"Working":"Idle");seatState[i].set(text);
+        lv_obj_set_width(childLabel[i].obj,step-20);snprintf(text,sizeof(text),"%u workers",rows[i].children);childLabel[i].set(text);visible(childLabel[i].obj,rows[i].childrenKnown && rows[i].children>0);visible(childLinks[i],rows[i].childrenKnown && rows[i].children>0);lv_obj_set_y(seatState[i].obj,104);
         lv_obj_set_style_text_color(seatState[i].obj,lv_color_hex(cat==1?Theme::StatusAmber:Theme::HUDDim),0);
         int activityRow=0;
         for(int j=0;j<count;++j)if(podFor[j]==podFor[i] && displayedSlot[j]>=0 && displayedSlot[j]<slot && rows[j].activity[0])++activityRow;
-        lv_obj_set_pos(agentActivity[i].obj,16,248+activityRow*76);lv_obj_set_width(agentActivity[i].obj,pw-44);
-        snprintf(text,sizeof(text),"%s · %s",rows[i].agent,rows[i].activity[0]?rows[i].activity:nameFor(cat));agentActivity[i].set(text);visible(agentActivity[i].obj,rows[i].activity[0]);
+        lv_obj_set_pos(activityIcons[i],16,280+activityRow*64);lv_label_set_text_static(activityIcons[i],toolSymbol(rows[i].tool));
+        lv_obj_set_pos(agentActivity[i].obj,44,276+activityRow*64);lv_obj_set_width(agentActivity[i].obj,pw-72);lv_obj_set_height(agentActivity[i].obj,60);
+        snprintf(text,sizeof(text),"#%d · %s",memberSlot[i]+1,rows[i].activity[0]?rows[i].activity:nameFor(cat));agentActivity[i].set(text);visible(agentActivity[i].obj,rows[i].activity[0]);
         lv_obj_set_style_text_color(agentActivity[i].obj,lv_color_hex(cat==1?Theme::StatusAmber:Theme::HUDText),0);
     }
     visible(overviewEmpty.obj,!projectCount);overviewEmpty.set(count?"No sessions match this filter.":"Waiting for agents");
@@ -453,7 +489,7 @@ void update() {
     link.set(connected?"Connected":"Disconnected");
     lv_obj_set_style_text_color(link.obj,lv_color_hex(connected?Theme::HUDDim:Theme::StatusAmber),0);
     if(!connected) snprintf(text,sizeof(text),"Disconnected · Reconnecting");
-    else if(totals[1]) snprintf(text,sizeof(text),"%d sessions need attention",totals[1]);
+    else if(totals[1]) snprintf(text,sizeof(text),"%d %s need attention",totals[1],totals[1]==1?"session":"sessions");
     else if(totals[2]) snprintf(text,sizeof(text),"%d agents working",totals[2]);
     else snprintf(text,sizeof(text),"%s",count?"Ready for the next task":"Waiting for agents");
     summary.set(text);
@@ -481,31 +517,57 @@ void update() {
         if(glyph) {lv_image_set_src(marks[i],glyph);lv_image_set_scale(marks[i],128);lv_obj_set_style_image_recolor(marks[i],lv_color_hex(brandColor(r.agent)),0);}
     }
     visible(empty.obj,!shown);empty.set(count?"No matching sessions":"Waiting for agents");
-    visible(detail,!overviewMode && chosen>=0);
+    // Keep known quotas beside every view. Detail prioritizes actual content.
+    lv_obj_set_x(voicePane,sceneW>584?sceneW-536:24);
+    const bool portrait=g_screenW<1100;
+    const int rw=portrait?sceneW:hasQuota?224:280;
+    detailW=portrait?sceneW:sceneW-rw-24;
+    lv_obj_set_size(rail,rw,portrait?112:g_screenH-310);lv_obj_set_scroll_dir(rail,portrait?LV_DIR_HOR:LV_DIR_VER);lv_obj_set_width(rosterTitle.obj,rw);
+    lv_obj_set_pos(detail,portrait?24:48+rw,portrait?370:204);lv_obj_set_size(detail,detailW,portrait?g_screenH-530:g_screenH-282);
+    for(int i=0;i<4;++i){const int fw=(sceneW-36)/4;lv_obj_set_x(filters[i],24+i*(fw+12));lv_obj_set_width(filters[i],fw);lv_obj_set_width(filterText[i].obj,portrait?fw-16:fw-70);lv_obj_set_pos(filterText[i].obj,portrait?8:16,portrait?5:24);lv_obj_set_style_text_font(filterText[i].obj,portrait?&font_kr_12:&font_studio_20,0);lv_obj_set_pos(filterNumber[i].obj,fw-52,portrait?22:12);}
+    for(int i=0;i<10;++i){const int cardW=portrait?224:rw;lv_obj_set_width(cards[i],cardW);if(portrait)lv_obj_set_pos(cards[i],i*236,0);else lv_obj_set_x(cards[i],0);lv_obj_set_width(rowTitle[i].obj,cardW-80);lv_obj_set_height(rowTitle[i].obj,font_studio_20.line_height);lv_obj_set_width(rowState[i].obj,cardW-32);lv_obj_set_x(rowState[i].obj,16);lv_obj_set_y(rowState[i].obj,48);lv_obj_set_width(rowTool[i].obj,cardW-32);}
+    lv_obj_set_width(heading.obj,detailW-112);lv_obj_set_width(identity.obj,detailW-48);lv_obj_set_x(focusGlyph,detailW-80);
+    visible(detail,!overviewMode && (chosen>=0 || retainedDetail));
     if(strcmp(presentedId,selectedId)) {
         snprintf(presentedId,sizeof(presentedId),"%s",selectedId);
         lv_obj_scroll_to_y(eventBox,0,LV_ANIM_OFF);
         lv_obj_scroll_to_y(activityScroll,0,LV_ANIM_OFF);
     }
-    if(chosen>=0) {
+    if(chosen>=0 || retainedDetail) {
         heading.set(selected.projectName[0]?selected.projectName:selected.agentType);
         snprintf(text,sizeof(text),"%s  /  %s  /  %lus",selected.agentType,selected.modelName[0]?selected.modelName:"Model unavailable",static_cast<unsigned long>(selected.elapsedSec));identity.set(text);
         const int cat=category(selected.state);
         const auto* fg=glyphFor?glyphFor(selected.agentType):nullptr;visible(focusGlyph,fg);
         if(fg){lv_image_set_src(focusGlyph,fg);lv_obj_set_style_image_recolor(focusGlyph,lv_color_hex(brandColor(selected.agentType)),0);}
+        int knownNodes=0;
+        for(int i=0;i<3;++i)knownNodes+=(i<2?selected.childrenKnown:selected.coordinationKnown);
+        int shownNodes=0;
         for(int i=0;i<3;++i) {
-            const bool known=i==2?selected.coordinationKnown:selected.childrenKnown;
+            const bool known=i<2?selected.childrenKnown:selected.coordinationKnown;
+            visible(stateNodes[i],known);
+            if(!known)continue;
+            const int nw=(detailW-48-(knownNodes-1)*8)/knownNodes;
+            lv_obj_set_pos(stateNodes[i],24+shownNodes++*(nw+8),82);lv_obj_set_width(stateNodes[i],nw);
             const unsigned value=i==0?selected.childrenActive:i==1?selected.childrenCompleted:selected.backgroundJobs;
-            if(known)snprintf(text,sizeof(text),"%u",value);else snprintf(text,sizeof(text),"-");
-            censusValue[i].set(text);
+            snprintf(text,sizeof(text),"%u",value);censusValue[i].set(text);
         }
-        snprintf(text,sizeof(text),"%s  ·  %s",nameFor(cat),selected.currentTool[0]?selected.currentTool:"No active tool");stateText.set(text);
-        activity.set(cat==1 && selected.question[0]?selected.question:selected.activity[0]?selected.activity:selected.lastEventText[0]?selected.lastEventText:"No activity received");
-        if(selected.lastEventTask[0]) snprintf(text,sizeof(text),"%s / %s",selected.lastEventHm,selected.lastEventTask);
-        else snprintf(text,sizeof(text),"%s",selected.childrenKnown?"Reported collaboration":"Unavailable collaboration counts show -");
-        census.set(text);
-        instruction.set(cat==1?"Review this request in the agent terminal.":cat==2?"Received activity and recent results":"Idle does not mean completed.");
-        historyLabel.set(history?"Summary":"History");
+        const int y=knownNodes?154:82;
+        snprintf(text,sizeof(text),"%s%s%s",nameFor(cat),selected.currentTool[0]?" · ":"",selected.currentTool);stateText.set(text);lv_obj_set_y(stateText.obj,y);lv_obj_set_width(stateText.obj,detailW-48);
+        activity.set(cat==1 && selected.question[0]?selected.question:selected.activity[0]?selected.activity:selected.lastEventText);
+        lv_obj_set_pos(activityScroll,24,y+32);lv_obj_set_width(activityScroll,detailW-48);lv_obj_set_width(activity.obj,detailW-56);lv_obj_set_height(activity.obj,LV_SIZE_CONTENT);lv_obj_update_layout(activity.obj);
+        const int maxActivity=history?54:96,measured=lv_obj_get_height(activity.obj);
+        const int activityH=activity.value[0]?(measured>maxActivity?maxActivity:measured<28?28:measured):0;
+        lv_obj_set_height(activityScroll,activityH);visible(activityScroll,activityH>0);
+        visible(census.obj,false);
+        instruction.set(retainedDetail?"Saved detail · Agent is on another roster page":cat==1?"Review this request in the agent terminal.":"");visible(instruction.obj,retainedDetail || cat==1);
+        const int after=y+activityH+40;
+        lv_obj_set_y(instruction.obj,after);lv_obj_set_width(instruction.obj,detailW-48);
+        const int eventStart=after+((retainedDetail || cat==1)?52:8);
+        lv_obj_set_pos(historyButton,detailW-150,eventStart);lv_obj_set_size(historyButton,126,36);lv_obj_set_pos(historyLabel.obj,10,7);
+        historyLabel.set(history?"Summary":"History");visible(historyButton,eventCount>0);
+        lv_obj_set_pos(recentCaption,24,eventStart+6);lv_obj_set_width(recentCaption,detailW-190);visible(recentCaption,eventCount>0);
+        lv_obj_set_pos(eventBox,24,eventStart+48);lv_obj_set_size(eventBox,detailW-48,lv_obj_get_height(detail)-eventStart-60);
+        for(int i=0;i<8;++i){lv_obj_set_width(eventCards[i],detailW-48);lv_obj_set_width(eventText[i].obj,detailW-76);lv_obj_set_width(eventMeta[i].obj,detailW-76);}
         int eventY=0;
         for(int i=0;i<8;++i) {
             const bool show=i<(history?8:2) && i<eventCount;visible(eventCards[i],show);if(!show)continue;
@@ -531,6 +593,7 @@ void update() {
     if(elapsed>diag.maxUpdateUs)diag.maxUpdateUs=elapsed;
     diag.width=g_screenW;diag.height=g_screenH;diag.sessions=count;diag.visibleSessions=shown;
     diag.filter=filter;diag.eventCount=eventCount;diag.connected=connected;
+    diag.usageVisible=hasQuota;diag.quotaWindows=0;for(int i=0;i<7;++i)diag.quotaWindows+=quota.percent[i]>=0;diag.rosterTotal=rosterTotal;diag.rosterRotating=rosterRotating;
     diag.history=history;diag.voiceOpen=voiceOpen;diag.overview=overviewMode;diag.projects=projectCount;
     portEXIT_CRITICAL(&diagMux);
 }

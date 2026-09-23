@@ -1323,7 +1323,7 @@ static void voiceTick() {
 // on top of a live card, which the host simulator caught before any hardware did.
 static void voiceCreate(lv_obj_t* pane) {
     lv_obj_t* wakeRow = lv_obj_create(pane);
-    lv_obj_set_size(wakeRow, ips10SidebarW - 28, 52);
+    lv_obj_set_size(wakeRow, LV_PCT(100), 52);
     lv_obj_set_style_pad_all(wakeRow, 4, 0);
     lv_obj_set_style_bg_opa(wakeRow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(wakeRow, 0, 0);
@@ -1356,7 +1356,7 @@ static void voiceCreate(lv_obj_t* pane) {
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* row = lv_obj_create(pane);
-    lv_obj_set_size(row, ips10SidebarW - 28, 96);
+    lv_obj_set_size(row, LV_PCT(100), 96);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);

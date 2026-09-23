@@ -222,8 +222,11 @@ bool verifyIpsInteractions(const char* outdir) {
   if(!IPS10Workspace::diagnostics().overview || IPS10Workspace::diagnostics().projects!=3)return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Bash 명령 실행") || !ipsLabel(lv_screen_active(),"권한 요청:"))return ipsFailure(__LINE__);
   const char* voiceStates[]={"listening","sending","waiting","speaking","error","muted","wake"};
-  const char* voiceLabels[]={"Listening...","Sending voice...","Waiting for reply...","Speaking...","Voice connection error","MUTED-HIDDEN","OpenClaw ready"};
+  const char* voiceLabels[]={"Listening...","Sending voice...","Waiting for reply...","Speaking...","Voice connection error","MUTED-HIDDEN","Wake ready"};
   for(int i=0;i<7;++i){g_simVoiceState=voiceStates[i];advance();if((i==5?ipsLabel(lv_screen_active(),"OpenClaw ready")!=nullptr:!ipsLabel(lv_screen_active(),voiceLabels[i])) || IPS10Workspace::diagnostics().voiceOpen)return ipsFailure(__LINE__);}
+  g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
+  g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
+  g_state.gatewayHasError=false;g_state.gatewayConnected=false;advance();
   if(g_state.zaiPrimaryPercent!=-1 || g_state.zaiSecondaryPercent!=-1)return ipsFailure(__LINE__);
   auto* projectName=ipsLabel(lv_screen_active(),"5 agents - 3 working");
   lv_area_t before;lv_obj_get_coords(lv_obj_get_parent(projectName),&before);
@@ -232,7 +235,6 @@ bool verifyIpsInteractions(const char* outdir) {
   lv_area_t after;lv_obj_get_coords(lv_obj_get_parent(changedProject),&after);
   if(before.x1!=after.x1 || before.y1!=after.y1)return false;
   g_state.sessions[0]=saved;advance();
-  SimDisplay::tick(12000);treeUpdate(12);SimDisplay::refresh();
   // Clicking an actual creature seat opens its exact session, not just its project.
   static lv_point_t point{};static bool pressed=false;
   auto* pointer=lv_indev_create();lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
@@ -251,6 +253,14 @@ bool verifyIpsInteractions(const char* outdir) {
   if(std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"Fixed the treemap")) return ipsFailure(__LINE__);
   if(ipsLabel(lv_screen_active(),"권한 요청:")) return ipsFailure(__LINE__);
+  if(!IPS10Workspace::diagnostics().usageVisible || !ipsLabel(lv_screen_active(),"Usage quota") || ipsLabel(lv_screen_active(),"Subagents"))return ipsFailure(__LINE__);
+  int selectedIndex=-1;for(int i=0;i<g_state.sessionCount;++i)if(!std::strcmp(g_state.sessions[i].id,IPS10Workspace::selectedSession()))selectedIndex=i;
+  if(selectedIndex<0)return ipsFailure(__LINE__);
+  const auto retainedSession=g_state.sessions[selectedIndex];
+  g_state.sessionsTotal=20;g_state.sessionsRotating=true;
+  std::snprintf(g_state.sessions[selectedIndex].id,sizeof(g_state.sessions[selectedIndex].id),"next-page-session");advance();
+  if(std::strcmp(IPS10Workspace::selectedSession(),retainedSession.id) || !ipsLabel(lv_screen_active(),"Saved detail"))return ipsFailure(__LINE__);
+  g_state.sessions[selectedIndex]=retainedSession;g_state.sessionsTotal=0;advance();
   if(!save("ips10-selected")) return ipsFailure(__LINE__);
   // Reordering the daemon roster must not retarget detail or voice.
   std::swap(g_state.sessions[0],g_state.sessions[2]);advance();
@@ -306,7 +316,7 @@ bool verifyIpsInteractions(const char* outdir) {
   if(ipsLabel(lv_screen_active(),"Usage quota"))return ipsFailure(__LINE__);
   // Ten distinct projects must remain ten pods; similarly named worktrees are
   // not evidence of a shared project or an actual delegation relationship.
-  g_state.sessionCount=10;g_state.sessionsTotal=1000;
+  g_state.sessionCount=10;g_state.sessionsTotal=1000;g_state.sessionsRotating=true;
   for(int i=0;i<10;++i) {
     auto& session=g_state.sessions[i];session={};session.alive=true;
     std::snprintf(session.id,sizeof(session.id),"stress-%d",i);
@@ -317,16 +327,16 @@ bool verifyIpsInteractions(const char* outdir) {
   advance();if(!ipsLabel(lv_screen_active(),"10 of 1000 agents"))return ipsFailure(__LINE__);
   if(IPS10Workspace::diagnostics().projects!=10)return ipsFailure(__LINE__);
   if(!save("ips10-ten-projects"))return ipsFailure(__LINE__);
-  SimDisplay::tick(31000);treeUpdate(31);SimDisplay::refresh();
-  if(!ipsLabel(lv_screen_active(),g_screenW>=1100?"shared-prefix-project-4":"shared-prefix-project-2") || ipsLabel(lv_screen_active(),"shared-prefix-project-0"))return ipsFailure(__LINE__);
+  SimDisplay::tick(13000);treeUpdate(13);SimDisplay::refresh();
+  if(!ipsLabel(lv_screen_active(),g_screenW>=1100?"shared-prefix-project-4":"shared-prefix-project-1") || ipsLabel(lv_screen_active(),"shared-prefix-project-0"))return ipsFailure(__LINE__);
   // Attention is visible even when its project is on another page.
   std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"awaiting_permission");
   std::snprintf(g_state.sessions[0].question,sizeof(g_state.sessions[0].question),"OFF-PAGE-ATTENTION");advance();
   if(!ipsLabel(lv_screen_active(),"OFF-PAGE-ATTENTION"))return ipsFailure(__LINE__);
-  auto* pager=ipsLabel(lv_screen_active(),"30s");if(!pager)return ipsFailure(__LINE__);
+  auto* pager=ipsLabel(lv_screen_active(),"12s");if(!pager)return ipsFailure(__LINE__);
   lv_obj_send_event(pager,LV_EVENT_CLICKED,nullptr);advance();
-  SimDisplay::tick(31000);treeUpdate(31);SimDisplay::refresh();
-  if(!ipsLabel(lv_screen_active(),g_screenW>=1100?"shared-prefix-project-4":"shared-prefix-project-2"))return ipsFailure(__LINE__);
+  SimDisplay::tick(13000);treeUpdate(13);SimDisplay::refresh();
+  if(!ipsLabel(lv_screen_active(),g_screenW>=1100?"shared-prefix-project-4":"shared-prefix-project-1"))return ipsFailure(__LINE__);
   lv_obj_send_event(pager,LV_EVENT_CLICKED,nullptr);advance();
   std::snprintf(g_state.sessions[0].state,sizeof(g_state.sessions[0].state),"processing");
   g_state.usageStale=false;g_state.fiveHourPercent=42;g_state.sevenDayPercent=68;g_state.codexPrimaryPercent=23;g_state.codexSecondaryPercent=44;
@@ -337,15 +347,19 @@ bool verifyIpsInteractions(const char* outdir) {
   for(int i=0;i<10;++i) std::snprintf(g_state.sessions[i].projectName,sizeof(g_state.sessions[i].projectName),"Shared project");
   advance();if(IPS10Workspace::diagnostics().projects!=1)return ipsFailure(__LINE__);
   if(!ipsLabel(lv_screen_active(),"10 agents - 10 working"))return ipsFailure(__LINE__);
+  if(!ipsLabel(lv_screen_active(),"Showing 3 of 10"))return ipsFailure(__LINE__);
   if(!save("ips10-ten-peers"))return ipsFailure(__LINE__);
   // All received peers have a readable activity slot over one bounded cycle.
   for(int i=0;i<10;++i)std::snprintf(g_state.sessions[i].activity,sizeof(g_state.sessions[i].activity),"PEER-%d-ACTIVITY",i);
   bool seen[10]={};
-  for(int frame=0;frame<4;++frame){SimDisplay::tick(12000);treeUpdate(12);SimDisplay::refresh();for(int i=0;i<10;++i){char key[32];std::snprintf(key,sizeof(key),"PEER-%d-ACTIVITY",i);seen[i]|=ipsLabel(lv_screen_active(),key)!=nullptr;}}
+  for(int frame=0;frame<4;++frame){SimDisplay::tick(8000);treeUpdate(8);SimDisplay::refresh();for(int i=0;i<10;++i){char key[32];std::snprintf(key,sizeof(key),"PEER-%d-ACTIVITY",i);seen[i]|=ipsLabel(lv_screen_active(),key)!=nullptr;}}
   for(bool value:seen)if(!value)return ipsFailure(__LINE__);
   for(int i=0;i<10;++i) g_state.sessions[i].projectName[0]=0;
   advance();if(IPS10Workspace::diagnostics().projects!=10)return ipsFailure(__LINE__);
   g_state.markBridgeDisconnected();
+  g_state.gatewayConnected=true;advance();if(!ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
+  g_state.gatewayHasError=true;advance();if(ipsLabel(lv_screen_active(),"OpenClaw ready"))return ipsFailure(__LINE__);
+  g_state.gatewayHasError=false;g_state.gatewayConnected=false;advance();
   if(g_state.zaiPrimaryPercent!=-1 || g_state.zaiSecondaryPercent!=-1 || g_state.zaiSecondaryIsMcp)return false;
   std::fprintf(stderr,"[sim] IPS10 observation, voice states, stable placement, pages, quotas, selection, attribution, drawer, offline: ok\n");
   return true;

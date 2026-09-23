@@ -221,6 +221,7 @@ struct DashboardState {
 #if defined(BOARD_IPS10)
     // Roster size on the daemon when it exceeds the cards (0 = not sent).
     uint16_t sessionsTotal;
+    bool sessionsRotating = false;
 #endif
     // Session explicitly selected by a steering surface. The daemon includes
     // it on state_update so companion devices can behave as one desk set.
@@ -367,6 +368,10 @@ struct DashboardState {
         sessionClearPending = false;
         sessionClearPendingMs = 0;
         sessionCount = 0;
+#if defined(BOARD_IPS10)
+        sessionsTotal = 0;
+        sessionsRotating = false;
+#endif
         focusedSessionId[0] = '\0';
         octopusCount = 0;
         cloudCount = 0;

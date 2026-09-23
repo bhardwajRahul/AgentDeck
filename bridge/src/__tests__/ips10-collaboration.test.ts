@@ -38,7 +38,7 @@ describe('IPS10 additive collaboration census', () => {
     const out = prepareForSerial(input, { deviceInfo: { board: 'ips_10' } }) as any;
     const baseline = prepareForSerial(input) as any;
     expect(Buffer.byteLength(JSON.stringify(baseline))).toBeLessThanOrEqual(TIMELINE_HISTORY_BYTE_BUDGET);
-    expect(out).toEqual(baseline);
+    expect(out).toEqual({ ...baseline, rosterRotating: false });
     expect(out.sessions.every((s: any) => s.subagents === undefined)).toBe(true);
     expect(out.sessions).toHaveLength(10);
   });
@@ -56,11 +56,11 @@ describe('IPS10 stable card roster', () => {
       session('z', 'idle', '2026-09-06T04:00:00Z'),
       session('dead', 'processing', '2026-09-06T09:00:00Z', false),
     ];
-    expect(stableCardRoster(rows, 3).map((s) => s.id)).toEqual(['a', 'b', 'z']);
+    expect(stableCardRoster(rows, 3, 0).map((s) => s.id)).toEqual(['a', 'b', 'z']);
     // A state change never changes the set: the same three come back.
     rows[0].state = 'processing';
-    expect(stableCardRoster(rows, 3).map((s) => s.id)).toEqual(['a', 'b', 'z']);
-    expect(stableCardRoster(rows.slice(0, 2), 3).map((s) => s.id)).toEqual(['k', 'b']);
+    expect(stableCardRoster(rows, 3, 0).map((s) => s.id)).toEqual(['a', 'b', 'z']);
+    expect(stableCardRoster(rows.slice(0, 2), 3, 0).map((s) => s.id)).toEqual(['k', 'b']);
   });
 
   it('adds the coordination census and the roster total for IPS10 only', () => {
