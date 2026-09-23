@@ -112,6 +112,10 @@ int main(int argc, char** argv) {
 #endif
 #endif
 
+#if defined(BOARD_IPS10)
+#include "../../src/audio/wake_word.h"
+#endif
+
 #if defined(BOARD_T_EMBED) || defined(BOARD_T_DISPLAY_PRO)
 #include "companion_checks.h"
 #endif
@@ -184,6 +188,42 @@ bool renderScene(const char* scene, const char* path, int frames, const char* pa
                ok ? "ok" : "FAILED");
   return ok;
 }
+#if defined(BOARD_IPS10)
+lv_obj_t* ipsLabel(lv_obj_t* obj, const char* text) {
+  if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return nullptr;
+  if (lv_obj_check_type(obj, &lv_label_class) && strstr(lv_label_get_text(obj), text)) return obj;
+  for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i)
+    if(auto* found=ipsLabel(lv_obj_get_child(obj,i),text)) return found;
+  return nullptr;
+}
+bool verifyIpsInteractions(const char* outdir) {
+  const std::string overview=std::string(outdir)+"/ips10-overview.png";
+  if(!renderScene("crowd",overview.c_str(),90,"focus")) return false;
+  auto* project=ipsLabel(lv_screen_active(),"AgentDeck");
+  if(!project) return false;
+  auto* card=lv_obj_get_parent(project);
+  lv_obj_send_event(card,LV_EVENT_SHORT_CLICKED,nullptr);
+  SimDisplay::refresh();
+  auto* close=ipsLabel(lv_layer_top(),LV_SYMBOL_CLOSE);
+  if(!close) return false; // a normal tap must open details, without a hold
+  auto* panel=lv_obj_get_parent(lv_obj_get_parent(close));
+  lv_area_t bounds;lv_obj_get_coords(panel,&bounds);
+  if(bounds.x1<0 || bounds.x2>=g_screenW || bounds.y1<0 || bounds.y2>=g_screenH) return false;
+  const std::string detail=std::string(outdir)+"/ips10-detail.png";
+  if(!SimPng::writeRgb565(detail.c_str(),SimDisplay::framebuffer(),SimDisplay::width(),SimDisplay::height())) return false;
+  lv_obj_send_event(lv_obj_get_parent(close),LV_EVENT_CLICKED,nullptr);
+  if(ipsLabel(lv_layer_top(),LV_SYMBOL_CLOSE)) return false;
+  lv_obj_send_event(card,LV_EVENT_LONG_PRESSED,nullptr);
+  SimDisplay::tick(400);treeUpdate(.4f);SimDisplay::refresh();
+  if(ipsLabel(lv_layer_top(),LV_SYMBOL_CLOSE)) return false; // long hold selects voice, not details
+  auto* wake=ipsLabel(lv_screen_active(),"OpenClaw ON");
+  if(!wake) return false;
+  lv_obj_send_event(lv_obj_get_parent(wake),LV_EVENT_CLICKED,nullptr);
+  if(WakeWord::enabled()) return false;
+  std::fprintf(stderr,"[sim] IPS10 tap details, bounds, close, hold target, wake toggle: ok\n");
+  return true;
+}
+#endif
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -224,10 +264,16 @@ int main(int argc, char** argv) {
   }
   if (std::strcmp(page, "terrarium") == 0) TTGO::Usage::toggle();
   SimDisplay::init(g_screenW, g_screenH);
+#elif defined(BOARD_IPS10)
+  if(flag(argc,argv,"--portrait")){g_screenW=800;g_screenH=1280;}
+  SimDisplay::init(g_screenW,g_screenH);
 #else
   SimDisplay::init(SCREEN_W, SCREEN_H);
 #endif
   treeCreate();
+#if defined(BOARD_IPS10)
+  if(flag(argc,argv,"--verify-interactions")) return verifyIpsInteractions(arg(argc,argv,"--outdir","sim-out")) ? 0 : 1;
+#endif
 #if defined(BOARD_T_EMBED) || defined(BOARD_T_DISPLAY_PRO)
   if (flag(argc, argv, "--verify-interactions")) return verifyCompanionInteractions(arg(argc, argv, "--outdir", "sim-out")) ? 0 : 1;
 #endif

@@ -9,6 +9,9 @@
 // every shutter press reported "no link".
 #include "../../boards/board_config.h"
 #include "../state/agent_state.h"
+#if defined(BOARD_IPS10)
+#include "../audio/mic_capture.h"
+#endif
 #if defined(BOARD_HAS_SPEAKER)
 #include "../audio/speaker_playback.h"
 #endif
@@ -56,10 +59,12 @@ static SemaphoreHandle_t outboxMutex = nullptr;
 // Board-guarded: 12 KB of DRAM is a rounding error on a PSRAM S3 and fatal on
 // the TTGO, whose 46 KB canvas already crowds dram0_0_seg — allocating it there
 // overflowed the segment by 13 KB and broke that board's build outright. Only a
-// board with a microphone can ever fill this ring, so only such a board pays
+// board using streaming microphone transport can fill this ring. HTTP-only
+// IPS10 uses its PSRAM utterance buffer instead, saving 12 KB of internal RAM.
+// Only streaming boards pay
 // for it. Nothing gates ESP32 builds in CI, which is why the break stayed
 // invisible until a full-fleet compile.
-#if defined(BOARD_HAS_VOICE_CAPTURE)
+#if defined(BOARD_HAS_VOICE_CAPTURE) && !defined(BOARD_VOICE_HTTP_UPLOAD)
 static constexpr int AUDIO_SLOTS = 6;
 static constexpr size_t AUDIO_SLOT_BYTES = 2048;
 static uint8_t audioRing[AUDIO_SLOTS][AUDIO_SLOT_BYTES];
@@ -115,6 +120,14 @@ static volatile bool replyFeeding = false;
 // How much of replyBuf the download loop already fed into the playback ring —
 // the feed task resumes from here rather than restarting the utterance.
 static size_t replyFedOffset = 0;
+#if defined(BOARD_IPS10)
+static uint32_t replyGeneration = 0;
+static bool replyCancelled() {
+    return !Audio::micReplyAllowed() || replyGeneration != Audio::micReplyGeneration();
+}
+#else
+static bool replyCancelled() { return false; }
+#endif
 
 // Feed the remaining downloaded PCM into the playback ring at the ring's own
 // pace. Dedicated task: the network core must not block for the length of an
@@ -123,7 +136,7 @@ static size_t replyFedOffset = 0;
 // only continues the feed.
 static void replyFeedTask(void*) {
     size_t off = replyFedOffset;
-    while (off < replyLen) {
+    while (off < replyLen && !replyCancelled()) {
         size_t chunk = replyLen - off;
         if (chunk > 2048) chunk = 2048;
         if (Audio::playbackFeed(replyBuf + off, chunk)) {
@@ -134,7 +147,8 @@ static void replyFeedTask(void*) {
             vTaskDelay(pdMS_TO_TICKS(15));
         }
     }
-    Audio::playbackEnd();
+    if (replyCancelled()) Audio::playbackStop();
+    else Audio::playbackEnd();
     Serial.printf("[VoiceReply] fed %u/%u bytes to playback\n",
                   (unsigned)off, (unsigned)replyLen);
     replyFeeding = false;
@@ -250,7 +264,7 @@ namespace Net {
 
 void wsInit() {
     if (!outboxMutex) outboxMutex = xSemaphoreCreateMutex();
-#if defined(BOARD_HAS_VOICE_CAPTURE)
+#if defined(BOARD_HAS_VOICE_CAPTURE) && !defined(BOARD_VOICE_HTTP_UPLOAD)
     if (!audioMutex) audioMutex = xSemaphoreCreateMutex();
 #endif
 #if defined(BOARD_HAS_DVP_CAMERA)
@@ -531,7 +545,7 @@ static void pumpPhoto() {
 }
 #endif  // BOARD_HAS_DVP_CAMERA
 
-#if !defined(BOARD_HAS_VOICE_CAPTURE)
+#if !defined(BOARD_HAS_VOICE_CAPTURE) || defined(BOARD_VOICE_HTTP_UPLOAD)
 // Boards without a microphone keep the API but never carry the buffer.
 bool queueAudioChunk(const uint8_t*, size_t) { return false; }
 bool audioBacklogged() { return false; }
@@ -587,6 +601,10 @@ bool queueVoiceReplyDownload(uint32_t expectedBytes, uint32_t sampleRate) {
             return false;
         }
     }
+#if defined(BOARD_IPS10)
+    if (!Audio::micReplyAllowed()) return false;
+    replyGeneration = Audio::micReplyGeneration();
+#endif
     replyExpectedBytes = expectedBytes;
     replyRate = (sampleRate >= 8000 && sampleRate <= 48000) ? sampleRate : 16000;
     replyDownloadPending = true;
@@ -648,7 +666,7 @@ static void pumpVoiceReplyDownload() {
             size_t fed = 0;
             bool playbackStarted = false;
             uint32_t lastDataMs = millis();
-            while (off < replyExpectedBytes &&
+            while (off < replyExpectedBytes && !replyCancelled() &&
                    (uint32_t)(millis() - lastDataMs) < 8000) {
                 size_t want = replyExpectedBytes - off;
                 if (want > 2048) want = 2048;
@@ -678,7 +696,7 @@ static void pumpVoiceReplyDownload() {
             }
             replyLen = off;
             replyFedOffset = fed;
-            ok = (off == replyExpectedBytes);
+            ok = (off == replyExpectedBytes) && !replyCancelled();
             if (ok && !playbackStarted) {
                 // Short reply — never crossed the streaming threshold.
                 Audio::playbackBegin(replyRate);
@@ -704,7 +722,7 @@ static void pumpVoiceReplyDownload() {
         // than let it starve out over 8 s.
         Audio::playbackStop();
 #if defined(BOARD_IPS10)
-        HUD::notify("Reply download failed");
+        HUD::notify(replyCancelled() ? "Reply stopped" : "Reply download failed");
         HUD::clearSpeaking();
 #endif
     }
@@ -802,6 +820,9 @@ static void pumpVoiceHttp() {
     if ((uint32_t)(now - voiceHttpFirstTryMs) > VOICE_HTTP_DEADLINE_MS) {
         Serial.println("[Voice] upload deadline exceeded — giving up");
         HUD::notify("Voice upload failed - network wedged");
+#if defined(BOARD_IPS10)
+        Audio::micVoiceResult(false);
+#endif
         char diag[120];
         snprintf(diag, sizeof(diag),
                  "{\"type\":\"voice_abort\",\"reason\":\"deadline_%u_tries\",\"total\":%u}",
@@ -823,6 +844,7 @@ static void pumpVoiceHttp() {
     Serial.printf("[Voice] HTTP upload attempt %u: %u bytes, internal heap %u KB\n",
                   (unsigned)(voiceHttpAttempts + 1), (unsigned)len,
                   (unsigned)(freeInternal / 1024));
+    Serial.printf("[Voice] upload peer=%s:%u\n", ip, unsigned(port));
     int code = -1;
     if (freeInternal < 60 * 1024) {
         Serial.println("[Voice] internal heap too low for WiFi TX — refusing upload");
@@ -864,6 +886,7 @@ static void pumpVoiceHttp() {
                     code = atoi(status + 9);
                 }
             } else {
+                Serial.printf("[Voice] upload stopped at %u/%u bytes connected=%d\n", unsigned(off), unsigned(len), int(client.connected()));
                 code = -2;   // body send stalled/aborted
             }
             client.stop();
@@ -887,6 +910,9 @@ static void pumpVoiceHttp() {
     Serial.printf("[Voice] HTTP upload %u bytes -> %d (attempt %u)\n",
                   (unsigned)len, code, (unsigned)(voiceHttpAttempts + 1));
     if (code != 200) {
+#if defined(BOARD_IPS10)
+        Audio::micVoiceResult(false);
+#endif
         // The daemon never got the utterance, so no voice_result is coming —
         // report locally AND on the transport the daemon does read.
         char note[64];
@@ -937,7 +963,7 @@ void pumpOutbound() {
         else Net::serialWriteJsonLine(line);  // serial bridge consumes line-delimited JSON
     }
 
-#if defined(BOARD_HAS_VOICE_CAPTURE)
+#if defined(BOARD_HAS_VOICE_CAPTURE) && !defined(BOARD_VOICE_HTTP_UPLOAD)
     // Binary audio frames — WS only. Dropped (not buffered) when the socket is
     // down: a voice utterance is worthless late, and holding it would stall
     // the capture task behind a dead link.
@@ -954,7 +980,7 @@ void pumpOutbound() {
         if (len == 0) continue;
         if (connected) {
             ws.sendBIN(frame, len);
-#if defined(BOARD_HAS_VOICE_CAPTURE)
+#if defined(BOARD_HAS_VOICE_CAPTURE) && !defined(BOARD_VOICE_HTTP_UPLOAD)
         } else if (Net::serialConnected()) {
             // USB-attached: the board's WiFi WS is parked, but the mic must not
             // go dead just because the user plugged in to charge. Serial is

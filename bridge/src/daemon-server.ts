@@ -1,4 +1,5 @@
 import { startPersonalVoiceTurn } from './personal-voice-turn.js';
+import { transcribeDeviceAudio, type VoiceTranscriptionSettings } from './device-transcription.js';
 /**
  * AgentDeck Daemon — lightweight monitoring server.
  *
@@ -73,7 +74,7 @@ import { parsePeripheralMappings, resolvePeripheralAction, commandForAction } fr
 import { DeviceVoiceCollector } from './device-voice.js';
 import { DevicePhotoCollector } from './device-photo.js';
 import {
-  transcribeWithHelper, synthesizeWavWithHelper,
+  synthesizeWavWithHelper,
   recordWithHelper, stopHelperRecording, speakWithHelper,
 } from './foundation-models-helper.js';
 import { enqueueOpenCodeCommand, pollOpenCodeCommands } from './opencode-steering.js';
@@ -2352,7 +2353,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         });
         // The HTTP response only confirms receipt of the bytes; the
         // transcript/outcome goes to the board as a voice_result frame.
-        await finishVoiceCapture(saved, boardResultSinkFor(board));
+        void finishVoiceCapture(saved, boardResultSinkFor(board));
         return { ok: true, bytes: total };
       })().then((result) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -6492,13 +6493,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           if (captured.integrityError) {
             throw new Error(captured.integrityError);
           }
-          // Locale matters: the recognizer falls back to the system locale,
-          // which mangles speech in another language. settings.json
-          // `voice.locale` (BCP-47, e.g. "en-US") overrides it.
-          const voiceCfg = loadDaemonSettings().voice as { locale?: unknown } | undefined;
-          const locale = typeof voiceCfg?.locale === 'string' && voiceCfg.locale
-            ? voiceCfg.locale : undefined;
-          const text = await transcribeWithHelper(captured.wavPath, locale);
+          const text = await transcribeDeviceAudio(captured.wavPath, loadDaemonSettings().voice as VoiceTranscriptionSettings | undefined);
           if (captured.sessionId === 'openclaw-personal') {
             if (!gatewayAdapter?.isAlive()) throw new Error('openclaw_unavailable');
             const settings = loadDaemonSettings().voice as { openclawSessionKey?: unknown } | undefined;

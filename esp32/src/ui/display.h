@@ -61,6 +61,8 @@ void setTouchTrace(bool on);
  * consumer of this header — and so there is exactly one bus on those pads.
  */
 bool hwI2cReadReg8(uint8_t addr, uint8_t reg, uint8_t* out);
+/** Read OV02C10 identity over the existing touch/SCCB bus; never start streaming. */
+void hwCameraProbe();
 bool hwI2cWriteReg8(uint8_t addr, uint8_t reg, uint8_t val);
 #endif
 

@@ -663,7 +663,8 @@ static void detailEnsure() {
     // Floating modal card: wide-but-short on the 1280×800 panel so there are clear
     // margins on every side (≈300px L/R, ≈120px T/B). The old 560×720 was 90% of the
     // screen height → read as a full-screen cover rather than a modal layer.
-    lv_obj_set_size(detailPanel, 680, 560);
+    const int detailWidth = g_screenW - IPS10_TERRARIUM_W - 40;
+    lv_obj_set_size(detailPanel, detailWidth < 680 ? detailWidth : 680, 560);
     lv_obj_center(detailPanel);
     // Soft drop shadow lifts the card off the dimmed backdrop (modal depth cue).
     lv_obj_set_style_shadow_width(detailPanel, 48, 0);
@@ -713,7 +714,7 @@ static void detailEnsure() {
 
     detailAction = lv_label_create(detailPanel);
     lv_obj_set_style_text_color(detailAction, lv_color_hex(Theme::HUDText), 0);
-    lv_obj_set_style_text_font(detailAction, &font_kr_12, 0);
+    lv_obj_set_style_text_font(detailAction, &font_kr_16, 0);
     lv_label_set_long_mode(detailAction, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(detailAction, LV_PCT(100));
 
@@ -730,7 +731,7 @@ static void detailEnsure() {
 
     detailLog = lv_label_create(logScroll);
     lv_obj_set_style_text_color(detailLog, lv_color_hex(Theme::HUDDim), 0);
-    lv_obj_set_style_text_font(detailLog, &font_kr_12, 0);
+    lv_obj_set_style_text_font(detailLog, &font_kr_16, 0);
     lv_label_set_recolor(detailLog, true);
     lv_label_set_long_mode(detailLog, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(detailLog, LV_PCT(100));
@@ -1639,7 +1640,9 @@ void init(lv_obj_t* parent) {
     lv_obj_t* workspaceHint = lv_label_create(panelLeft);
     lv_obj_set_style_text_font(workspaceHint, &font_kr_12, 0);
     lv_obj_set_style_text_color(workspaceHint, lv_color_hex(Theme::HUDDim), 0);
-    lv_label_set_text(workspaceHint, "WORKSPACE  /  Tap: details  /  Hold: voice target");
+    lv_label_set_text(workspaceHint, ips10SidebarW < 500
+        ? "Tap: details / Hold: voice target"
+        : "WORKSPACE  /  Tap: details  /  Hold: voice target");
 
     // === Agent work cards — stable positions, current task first ===
     cellsBox = lv_obj_create(panelLeft);

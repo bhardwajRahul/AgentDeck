@@ -17,7 +17,7 @@ export async function startPersonalVoiceTurn(
   timeoutMs = 10 * 60_000,
 ): Promise<{ runId: string; completion: Promise<string> }> {
   if (!/^agent:[^:]+:main$/.test(sessionKey)) throw new Error('invalid_personal_session');
-  const message = text.replace(/^\s*(?:오픈\s*클로|open\s*claw)[\s,.!?:，-]*/i, '').trim();
+  const message = text.replace(/^\s*(?:오픈\s*클(?:로(?:우)?|록)|open\s*claw)[\s,.!?:，-]*/i, '').trim();
   if (!message) throw new Error('no_command');
   let expected: string | undefined;
   const early = new Map<string, VoiceChat>();

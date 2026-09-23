@@ -30,11 +30,18 @@ visible below the work area.
   another recording cannot overwrite it while the HTTP worker owns it.
 - Only a triggered utterance is sent over the existing paired Wi-Fi voice
   endpoint. Wake-word processing requires no cloud audio stream.
-- The Node daemon transcribes the utterance and calls `chat.send` on
+- The Node daemon acknowledges receipt before transcription, then calls `chat.send` on
   `agent:main:main` (override: `voice.openclawSessionKey`, restricted to an
   agent's main session). It matches both the acknowledged run ID and session
   key before speaking. Cron and unrelated chat completions cannot provide
   the response. Existing `voice.locale` and `voice.speakReplies` apply.
+- `voice.transcriber` defaults to `apple`. `whisper-cpp` selects an explicitly
+  configured local `voice.whisperCli` and `voice.whisperModel` (absolute paths).
+  It has a 60-second timeout, uses argument-based process execution, and never
+  downloads a model or sends audio to a cloud ASR service. This Mac Studio uses
+  its existing native ARM64 Whisper and large-v3-turbo model because Apple
+  Speech authorization stalled in the launchd helper. TTS still uses the
+  existing native speech helper.
 - This personal-session route currently requires the Node daemon on the Mac
   Studio. The Swift daemon has not gained the new personal voice route.
 - Firmware diagnostics expose `wakeReady`, `wakeEnabled`, detection/inference
@@ -49,6 +56,9 @@ The embedded 63,520-byte model uses 40-channel frontend features at 16 kHz,
 pinned to `esphome-libs/esp-micro-speech-features` commit
 `351c4c69530f5a802da5433581c4863afadf0a00` (Apache-2.0).
 Detection requires three consecutive outputs at least 128/256 after warm-up.
+The frontend uses its ESP32 PSRAM allocator; IPS10 omits the unused 12 KB
+streaming ring. Hardware upload headroom increased from 56 KB to 80 KB.
+
 A 12-sample training-audio smoke test reached detection on all samples; this
 is not a held-out accuracy or far-field false-trigger result.
 

@@ -24,7 +24,8 @@ constexpr uint32_t MAX_MS = 30000, SILENCE_MS = 1200, NO_SPEECH_MS = 6000;
 std::atomic<bool> ready{false}, capturing{false};
 std::atomic<uint16_t> level{0};
 std::atomic<uint32_t> started{0}, resultAt{0};
-std::atomic<bool> deliveredResult{false};
+std::atomic<bool> deliveredResult{false}, replyAllowed{true};
+std::atomic<uint32_t> replyGeneration{0};
 enum class Phase { Idle, Listening, Sending, Waiting, Speaking, Error };
 std::atomic<Phase> phase{Phase::Idle};
 TaskHandle_t task = nullptr;
@@ -62,6 +63,7 @@ void beginCapture(const char* target, bool wake) {
         capturing=false; phase=Phase::Error; HUD::notify("Voice needs WiFi - try again"); return;
     }
     snprintf(session,sizeof(session),"%s",target);
+    ++replyGeneration; replyAllowed=true;
     automatic=wake; speech=false; closing=false; used=0;
     if (wake) {
         // Keep the end of the wake word + immediate command onset. The host
@@ -74,6 +76,7 @@ void beginCapture(const char* target, bool wake) {
     Serial.printf("[WakeVoice] capture %s target=%s\n",wake?"wake":"PTT",session);
 }
 void finish(bool cancel) {
+    if(cancel) {replyAllowed=false;++replyGeneration;}
     active=false; capturing=false; closing=false; automatic=false; cooldownUntil=millis()+1000;
     WakeWord::reset(); preCount=0;
     if(cancel || !used) {phase=Phase::Idle;HUD::notify(cancel?"Voice cancelled":"Heard nothing");return;}
@@ -161,7 +164,10 @@ void micStart(const char* target){
     snprintf(requestedSession,sizeof(requestedSession),"%s",target);command=Command::Start;
     portEXIT_CRITICAL(&commandMux);
 }
+bool micReplyAllowed(){return replyAllowed;}
+uint32_t micReplyGeneration(){return replyGeneration;}
 void micStop(bool cancel){
+    if(cancel){replyAllowed=false;++replyGeneration;}
     portENTER_CRITICAL(&commandMux);pendingStop=cancel?Command::Cancel:Command::Stop;portEXIT_CRITICAL(&commandMux);
 }
 void micPump(){} // single lifetime task owns I2S, including manual PTT

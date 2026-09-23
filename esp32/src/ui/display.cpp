@@ -1037,6 +1037,31 @@ bool hwI2cReadReg8(uint8_t addr, uint8_t reg, uint8_t* out) {
     return i2cReadReg(i2c_handle, addr, reg, out);
 }
 
+void hwCameraProbe() {
+    // Board-specific OV02C10 reference: sullb/esphome-p4-csi-camera.
+    // Reuse the existing SDA7/SCL8 bus; another controller on the same pins
+    // would take touch and the codec down. No sensor setup or video capture.
+    if (!i2c_handle) { Serial.println("[CameraProbe] bus unavailable"); return; }
+    i2c_device_config_t config{};
+    config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    config.device_address = 0x36;
+    config.scl_speed_hz = 100000;
+    i2c_master_dev_handle_t sensor = nullptr;
+    if (i2c_master_bus_add_device(i2c_handle, &config, &sensor) != ESP_OK) {
+        Serial.println("[CameraProbe] cannot access SCCB"); return;
+    }
+    uint8_t id[2]{};
+    bool readable = true;
+    for (uint8_t i = 0; i < 2; ++i) {
+        const uint8_t reg[2] = {0x30, uint8_t(0x0A + i)};
+        if (i2c_master_transmit_receive(sensor, reg, 2, &id[i], 1, 50) != ESP_OK) readable = false;
+    }
+    i2c_master_bus_rm_device(sensor);
+    const uint16_t value = (uint16_t(id[0]) << 8) | id[1];
+    Serial.printf("[CameraProbe] readable=%d id=0x%04X sensor=%s capture=not-initialized\n",
+                  int(readable), value, readable && value == 0x5602 ? "OV02C10" : "unknown");
+}
+
 bool hwI2cWriteReg8(uint8_t addr, uint8_t reg, uint8_t val) {
     if (!i2c_handle) return false;
     i2c_device_config_t dc;

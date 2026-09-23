@@ -1690,6 +1690,8 @@ void parseMessage(const char* json, size_t length) {
         HUD::notify("Reply: nothing to read aloud");
 #endif
 #if defined(BOARD_IPS10)
+    } else if (strcmp(type, "camera_probe") == 0) {
+        UI::hwCameraProbe();
     } else if (strcmp(type, "wake_word_config") == 0) {
         if (obj["enabled"].is<bool>()) WakeWord::setEnabled(obj["enabled"].as<bool>());
         Protocol::announceDeviceInfo();

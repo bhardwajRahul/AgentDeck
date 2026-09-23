@@ -37,6 +37,8 @@ uint32_t micElapsedMs(uint32_t nowMs);
 const char* voiceState();
 uint16_t micLevel();
 void micVoiceResult(bool delivered);
+bool micReplyAllowed();
+uint32_t micReplyGeneration();
 #endif
 
 }  // namespace Audio
