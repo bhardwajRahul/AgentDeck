@@ -18,9 +18,7 @@ Detailed reference for the AgentDeck Android app — build, device support, and 
 
 ---
 
-<p align="center">
-  <img src="media/aquarium-dashboard.jpg" width="880" alt="AgentDeck native 3D aquarium on an Android tablet with sample agent sessions">
-</p>
+![AgentDeck native 3D aquarium on an Android tablet with sample agent sessions](https://puritysb.github.io/AgentDeck/media/aquarium-dashboard.jpg)
 
 ## Quick Start (Google Play or GitHub APK)
 
