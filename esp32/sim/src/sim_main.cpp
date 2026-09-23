@@ -212,6 +212,22 @@ bool verifyIpsInteractions(const char* outdir) {
   const std::string overview=std::string(outdir)+"/ips10-overview.png";
   if(!renderScene("crowd",overview.c_str(),90,"focus")) return false;
   if(std::strcmp(IPS10Workspace::selectedSession(),"s4-AgentDeck")) return false;
+  if(!ipsLabel(lv_screen_active(),"5명  -  작업 3  -  확인 1"))return false;
+  if(!ipsLabel(lv_screen_active(),"IN 128000 / OUT 41000"))return false;
+  if(!IPS10Workspace::diagnostics().overview || IPS10Workspace::diagnostics().projects!=3)return false;
+  // Clicking an actual creature seat opens its exact session, not just its project.
+  static lv_point_t point{};static bool pressed=false;
+  auto* pointer=lv_indev_create();lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(pointer,[](lv_indev_t*,lv_indev_data_t* data) {data->point=point;data->state=pressed?LV_INDEV_STATE_PRESSED:LV_INDEV_STATE_RELEASED;});
+  auto* attention=ipsLabel(lv_screen_active(),"! 확인 필요");if(!attention)return false;
+  lv_area_t key;lv_obj_get_coords(lv_obj_get_parent(attention),&key);
+  point.x=(key.x1+key.x2)/2;point.y=key.y1+30;
+  pressed=true;lv_indev_read(pointer);SimDisplay::refresh();
+  if(!lv_obj_has_state(lv_obj_get_parent(attention),LV_STATE_PRESSED))return false;
+  if(!save("ips10-key-pressed"))return false;
+  pressed=false;lv_indev_read(pointer);advance();
+  lv_indev_delete(pointer);
+  if(IPS10Workspace::diagnostics().overview)return false;
   if(!ipsLabel(lv_screen_active(),"권한 요청:")) return false; // ring head is oldest
   if(!click("ips10 카드 개선")) return false;
   if(std::strcmp(IPS10Workspace::selectedSession(),"s2-AgentDeck")) return false;
@@ -262,6 +278,30 @@ bool verifyIpsInteractions(const char* outdir) {
   if(IPS10Workspace::selectedSession()[0] || !ipsLabel(lv_screen_active(),"에이전트가 연결되면"))return false;
   if(!save("ips10-empty"))return false;
   g_simSerialConnected=true;
+  if(!click("프로젝트 모임"))return false;
+  g_state.usageStale=false;g_state.fiveHourPercent=0;g_state.codexPrimaryPercent=23;advance();
+  if(!ipsLabel(lv_screen_active(),"0% 사용"))return false;
+  g_state.usageStale=true;advance();
+  if(ipsLabel(lv_screen_active(),"0% 사용") || !ipsLabel(lv_screen_active(),"23% 사용"))return false;
+  if(!save("ips10-stale-usage"))return false;
+  // Ten distinct projects must remain ten pods; similarly named worktrees are
+  // not evidence of a shared project or an actual delegation relationship.
+  g_state.sessionCount=10;
+  for(int i=0;i<10;++i) {
+    auto& session=g_state.sessions[i];session={};session.alive=true;
+    std::snprintf(session.id,sizeof(session.id),"stress-%d",i);
+    std::snprintf(session.projectName,sizeof(session.projectName),"shared-prefix-project-%d",i);
+    std::snprintf(session.agentType,sizeof(session.agentType),"codex-cli");
+    std::snprintf(session.state,sizeof(session.state),"processing");
+  }
+  advance();if(IPS10Workspace::diagnostics().projects!=10)return false;
+  if(!save("ips10-ten-projects"))return false;
+  for(int i=0;i<10;++i) std::snprintf(g_state.sessions[i].projectName,sizeof(g_state.sessions[i].projectName),"Shared project");
+  advance();if(IPS10Workspace::diagnostics().projects!=1)return false;
+  if(!ipsLabel(lv_screen_active(),"10명  -  작업 10"))return false;
+  if(!save("ips10-ten-peers"))return false;
+  for(int i=0;i<10;++i) g_state.sessions[i].projectName[0]=0;
+  advance();if(IPS10Workspace::diagnostics().projects!=10)return false;
   std::fprintf(stderr,"[sim] IPS10 selection, priority, ring wrap, attribution, removal, filters, drawer bounds, offline and empty: ok\n");
   return true;
 }

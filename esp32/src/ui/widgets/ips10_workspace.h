@@ -7,8 +7,8 @@ void update();
 struct Diagnostics {
     uint32_t updates, lastUpdateUs, maxUpdateUs;
     uint16_t width, height;
-    uint8_t sessions, visibleSessions, filter, eventCount;
-    bool connected, history, voiceOpen;
+    uint8_t sessions, visibleSessions, filter, eventCount, projects;
+    bool connected, history, voiceOpen, overview;
 };
 Diagnostics diagnostics();
 const char* selectedSession();

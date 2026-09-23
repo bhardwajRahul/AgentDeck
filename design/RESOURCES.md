@@ -7,8 +7,8 @@ locale: en
 canonical: true
 status: stable
 owner: Design system maintainers
-reviewed: 2026-08-15
-revision: 2026-08-15
+reviewed: 2026-09-23
+revision: 2026-09-23
 source_of_truth: design/RESOURCES.md
 validators: [node scripts/build-design-system-viewer.mjs --check, python3 design/verify-tokens-sync.py]
 ---
@@ -30,6 +30,7 @@ index. If a location or gate changes, update this file in the same commit.
 | Brand marks (agents) | `design/brand/*.svg` | `pnpm generate-creature-glyphs` / `generate-micro-glyphs` regression tests |
 | Brand type (Latin) | `bridge/assets/fonts/` (IBM Plex Sans, JetBrains Mono) | first consumer: bridge renderers |
 | Brand type (CJK) | `design/fonts/` (IBM Plex Sans KR/JP, OFL) | `design/fonts/README.md` records origin |
+| IPS10 tactile keycap | `design/ips10/keycap.py` (Blender 5.2, token-based materials) → `keycap.png` | `python3 design/ips10/encode.py --check` verifies the flash-resident LVGL consumer; native IPS10 previews verify layout |
 | Real photography / captures | `assets/` (sources: `assets/hardware-photos/`) | `scripts/crop-hardware-images.mjs` crop table |
 | Published image crops | `docs/media/` | regenerated from `assets/`, never hand-edited |
 | Doc-to-viewer binding | `agentdeck-design-system/catalog.json` | `pnpm design-system:check` |

@@ -1,6 +1,7 @@
 #include "config.h"
 #if defined(BOARD_IPS10)
 #include "ips10_workspace.h"
+#include "ips10_keycap_generated.h"
 #include "../theme.h"
 #include "../display.h"
 #include "../../state/agent_state.h"
@@ -32,7 +33,7 @@ template<size_t N> struct Text {
     }
 };
 struct Row {
-    char id[32], name[40], agent[16], state[20], tool[40];
+    char id[32], name[40], agent[16], state[20], tool[40], project[40];
     uint32_t elapsed;
 };
 static Row rows[10];
@@ -41,7 +42,7 @@ static TimelineEntry events[8];
 static int count, eventCount, filter;
 static char selectedId[32] = "";
 static char presentedId[32] = "";
-static bool history, voiceOpen, connected;
+static bool history, voiceOpen, connected, overviewMode=true;
 static uint32_t lastUpdate;
 static lv_obj_t *root, *rail, *detail, *voicePane, *filters[4], *cards[10], *marks[10], *eventBox, *activityScroll;
 static lv_obj_t *stateNodes[3], *eventCards[8], *historyButton, *focusGlyph;
@@ -54,7 +55,25 @@ static Text<240> eventText[8];
 static Text<64> eventMeta[8];
 static Text<32> filterText[4], filterNumber[4], historyLabel;
 static const lv_image_dsc_t* (*glyphFor)(const char*);
-static int detailW;
+static int detailW, sceneW;
+// Bounded, device-lifetime widget pools: ten projects / ten creatures total.
+// No canvases or per-frame heap allocations are needed for the living overview.
+static lv_obj_t *overview, *viewButton, *quotaCards[4], *quotaBars[4], *pods[10], *seats[10], *creatures[10];
+static Text<40> viewLabel, quotaValue[4], quotaReset[4], podName[10], seatState[10];
+static Text<160> tokenLine;
+static Text<100> podStatus[10], overviewEmpty;
+static Text<48> seatTool[10];
+struct UsageSnapshot { float percent[4]; char reset[4][20]; uint32_t input, output, calls; float cost; };
+static UsageSnapshot quota;
+static int podFor[10], memberSlot[10], podMembers[10], projectCount;
+static uint32_t brandColor(const char* agent) {
+    if(!strcmp(agent,"claude-code") || !strcmp(agent,"claude")) return Theme::ClaudeBody;
+    if(!strcmp(agent,"codex") || !strcmp(agent,"codex-cli")) return Theme::CloudBody;
+    if(!strcmp(agent,"openclaw")) return Theme::CrayfishShell;
+    if(!strcmp(agent,"kiro")) return Theme::KiroMark;
+    if(!strcmp(agent,"antigravity")) return Theme::AntigravityMark;
+    return Theme::OpenCodeOuter;
+}
 static portMUX_TYPE diagMux=portMUX_INITIALIZER_UNLOCKED;
 static Diagnostics diag{};
 
@@ -97,7 +116,7 @@ static void selectCb(lv_event_t* e) {
     const int i=static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
     if(i<0 || i>=count) return;
     snprintf(selectedId,sizeof(selectedId),"%s",rows[i].id);
-    history=false; lastUpdate=0; update();
+    overviewMode=false; history=false; lastUpdate=0; update();
 }
 static void filterCb(lv_event_t* e) {
     filter=static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(e)));
@@ -105,18 +124,24 @@ static void filterCb(lv_event_t* e) {
     lv_obj_scroll_to_y(rail,0,LV_ANIM_OFF);
 }
 static void historyCb(lv_event_t*) { history=!history;lastUpdate=0;update();lv_obj_scroll_to_y(eventBox,0,LV_ANIM_OFF); }
+static void viewCb(lv_event_t*) { overviewMode=!overviewMode;lastUpdate=0;update(); }
 static void voiceCb(lv_event_t*) { voiceOpen=!voiceOpen;visible(voicePane,voiceOpen); }
 }
 
 lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
     presentedId[0]=0;
     glyphFor=glyph; count=0; filter=0; history=false; voiceOpen=false;lastUpdate=0;
+    overviewMode=true;
     const int w=g_screenW,h=g_screenH, railW=w>=1100?320:248;
     root=box(parent,0,0,w,h,Theme::DeepSea);lv_obj_set_style_radius(root,0,0);
-    caption(root,"AgentDeck  /  WORKSPACE",24,22,380,Theme::HUDText);
+    caption(root,"AgentDeck  /  PROJECT DECK",24,22,380,Theme::HUDText);
+    viewButton=box(root,420,12,174,48,Theme::ShallowWater);
+    label(viewLabel,viewButton,16,14,148,&font_workspace_20,Theme::HUDText);
+    lv_obj_add_event_cb(viewButton,viewCb,LV_EVENT_CLICKED,nullptr);
     label(link,root,w-370,24,346,&font_workspace_20,Theme::HUDDim);
     lv_obj_set_style_text_align(link.obj,LV_TEXT_ALIGN_RIGHT,0);
-    label(summary,root,24,76,w-48,&font_workspace_20,Theme::HUDText);
+    if(w<1100) lv_obj_set_pos(viewButton,w-198,62);
+    label(summary,root,24,76,w-248,&font_workspace_20,Theme::HUDText);
     const int gap=12, fw=(w-48-gap*3)/4;
     for(int i=0;i<4;++i) {
         filters[i]=box(root,24+i*(fw+gap),118,fw,64,Theme::MidWater);
@@ -175,9 +200,45 @@ lv_obj_t* init(lv_obj_t* parent,const lv_image_dsc_t* (*glyph)(const char*)) {
         lv_label_set_long_mode(eventText[i].obj,LV_LABEL_LONG_WRAP);
         lv_obj_set_height(eventText[i].obj,62);
     }
+    sceneW=w-48;
+    overview=box(root,24,204,sceneW,h-284,Theme::DeepSea);
+    lv_obj_add_flag(overview,LV_OBJ_FLAG_SCROLLABLE);lv_obj_set_scroll_dir(overview,LV_DIR_VER);
+    lv_obj_set_style_pad_bottom(overview,12,0);
+    const int qw=(sceneW-24)/4;
+    const char* quotaNames[]={"Claude 5h","Claude 7d","Codex 기본","Codex 보조"};
+    for(int i=0;i<4;++i) {
+        quotaCards[i]=box(overview,i*(qw+8),0,qw,110,Theme::MidWater);
+        caption(quotaCards[i],quotaNames[i],12,10,qw-24);
+        label(quotaValue[i],quotaCards[i],12,36,qw-24,&font_workspace_20,Theme::HUDText);
+        quotaBars[i]=lv_bar_create(quotaCards[i]);lv_obj_set_pos(quotaBars[i],12,66);lv_obj_set_size(quotaBars[i],qw-24,8);
+        lv_obj_set_style_bg_color(quotaBars[i],lv_color_hex(Theme::ShallowWater),LV_PART_MAIN);
+        label(quotaReset[i],quotaCards[i],12,82,qw-24,&font_kr_12,Theme::HUDDim);
+    }
+    label(tokenLine,root,24,h-54,w-238,&font_workspace_20,Theme::HUDText);
+    caption(overview,"프로젝트 데크  /  에이전트 키를 눌러 살펴보기",12,124,sceneW-24);
+    for(int i=0;i<10;++i) {
+        pods[i]=box(overview,0,160,sceneW,168,Theme::MidWater);
+        label(podName[i],pods[i],16,12,detailW-32,&font_workspace_20,Theme::HUDText);
+        label(podStatus[i],pods[i],16,40,detailW-32,&font_kr_12,Theme::HUDDim);
+        seats[i]=box(overview,0,0,108,108,Theme::ShallowWater);
+        lv_obj_set_style_bg_opa(seats[i],LV_OPA_TRANSP,0);
+        // Baked Blender relief + LVGL press state: depth without a 3D render loop.
+        auto* keycap=lv_image_create(seats[i]);lv_image_set_src(keycap,&IPS10Keycap::image);
+        lv_image_set_scale(keycap,208);lv_obj_set_pos(keycap,-10,-8);
+        lv_obj_clear_flag(keycap,LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_translate_y(seats[i],3,LV_STATE_PRESSED);
+        lv_obj_add_event_cb(seats[i],selectCb,LV_EVENT_CLICKED,reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+        creatures[i]=lv_image_create(seats[i]);lv_obj_set_pos(creatures[i],16,0);
+        lv_obj_clear_flag(creatures[i],LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_image_recolor_opa(creatures[i],LV_OPA_COVER,0);
+        label(seatState[i],seats[i],8,74,92,&font_kr_12,Theme::HUDText);
+        label(seatTool[i],seats[i],8,92,92,&font_kr_12,Theme::HUDDim);
+        lv_obj_set_height(seatTool[i].obj,16);
+    }
+    label(overviewEmpty,overview,16,174,sceneW-32,&font_workspace_20,Theme::HUDDim);
     label(empty,rail,12,12,railW-24,&font_workspace_20,Theme::HUDDim);
     lv_label_set_long_mode(empty.obj,LV_LABEL_LONG_WRAP);
-    label(usage,root,24,h-50,w-230,&font_kr_12,Theme::HUDDim);
+    label(usage,root,24,h-26,w-230,&font_kr_12,Theme::HUDDim);
     auto* voice=box(root,w-186,h-64,162,48,Theme::ShallowWater);
     caption(voice,"음성 / 스피커",18,15,138,Theme::HUDText);
     lv_obj_add_event_cb(voice,voiceCb,LV_EVENT_CLICKED,nullptr);
@@ -204,6 +265,7 @@ void update() {
         const auto& s=g_state.sessions[i]; if(!s.alive || !s.id[0]) continue;
         auto& r=rows[count++];
         snprintf(r.id,sizeof(r.id),"%s",s.id);snprintf(r.name,sizeof(r.name),"%s",s.lastEventTask[0]?s.lastEventTask:s.projectName[0]?s.projectName:s.agentType);
+        snprintf(r.project,sizeof(r.project),"%s",s.projectName);
         snprintf(r.agent,sizeof(r.agent),"%s",s.agentType);snprintf(r.state,sizeof(r.state),"%s",s.state);
         snprintf(r.tool,sizeof(r.tool),"%s",s.currentTool[0]?s.currentTool:s.activity[0]?s.activity:s.lastEventText);r.elapsed=s.elapsedSec;
         ++totals[category(r.state)];
@@ -231,8 +293,62 @@ void update() {
         if(!strcmp(e.sessionId,selectedId)) events[eventCount++]=e;
     }
     p5=g_state.fiveHourPercent;p7=g_state.sevenDayPercent;c5=g_state.codexPrimaryPercent;c7=g_state.codexSecondaryPercent;stale=g_state.usageStale;
+    quota.percent[0]=stale?-1:p5;quota.percent[1]=stale?-1:p7;quota.percent[2]=c5;quota.percent[3]=c7;
+    const char* resets[]={g_state.fiveHourReset,g_state.sevenDayReset,g_state.codexPrimaryReset,g_state.codexSecondaryReset};
+    for(int i=0;i<4;++i) snprintf(quota.reset[i],20,"%s",resets[i]);
+    quota.input=g_state.inputTokens;quota.output=g_state.outputTokens;quota.calls=g_state.toolCalls;quota.cost=g_state.estimatedCostUsd;
     unlockState();
     char text[240];
+    visible(overview,overviewMode);visible(rail,!overviewMode);visible(rosterTitle.obj,!overviewMode);viewLabel.set(overviewMode?"작업 상세":"프로젝트 모임");
+    for(int i=0;i<4;++i) {
+        const float p=quota.percent[i];const bool known=p>=0;
+        if(known) snprintf(text,sizeof(text),"%.0f%% 사용",p);else snprintf(text,sizeof(text),"정보 없음");
+        quotaValue[i].set(text);visible(quotaBars[i],known);
+        lv_bar_set_value(quotaBars[i],known?(p>100?100:static_cast<int>(p)):0,LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(quotaBars[i],lv_color_hex(p>=90?Theme::StatusAmber:Theme::StatusCyan),LV_PART_INDICATOR);
+        if(known && quota.reset[i][0])snprintf(text,sizeof(text),"리셋 %s",quota.reset[i]);else snprintf(text,sizeof(text),"%s",known?"리셋 정보 없음":"다음 수신 대기");
+        quotaReset[i].set(text);
+    }
+    // These are the daemon's usage snapshot, not selected-session or project totals.
+    if(quota.input || quota.output || quota.calls) snprintf(text,sizeof(text),"수신 토큰  IN %lu / OUT %lu   ·   도구 %lu",static_cast<unsigned long>(quota.input),static_cast<unsigned long>(quota.output),static_cast<unsigned long>(quota.calls));
+    else snprintf(text,sizeof(text),"토큰 집계 대기  ·  계정 한도와 별도로 수신됩니다");
+    tokenLine.set(text);
+    projectCount=0;memset(podMembers,0,sizeof(podMembers));
+    for(int i=0;i<count;++i) {
+        podFor[i]=-1;if(!matches(rows[i]))continue;
+        int group=-1;
+        // Exact reported project identity only. Unnamed sessions remain separate.
+        for(int j=0;j<i;++j) if(podFor[j]>=0 && rows[i].project[0] && !strcmp(rows[i].project,rows[j].project)) {group=podFor[j];break;}
+        if(group<0) group=projectCount++;
+        podFor[i]=group;memberSlot[i]=podMembers[group]++;
+    }
+    const int columns=sceneW>=700?2:1, pw=(sceneW-(columns-1)*12)/columns;
+    const int seatsPerRow=(pw-24)/112;
+    int columnY[2]={160,160};
+    for(int g=0;g<10;++g) {
+        visible(pods[g],g<projectCount);if(g>=projectCount)continue;
+        const int col=g%columns, ph=60+((podMembers[g]+seatsPerRow-1)/seatsPerRow)*112;
+        lv_obj_set_pos(pods[g],col*(pw+12),columnY[col]);lv_obj_set_size(pods[g],pw,ph);columnY[col]+=ph+12;
+        int first=-1,working=0,attention=0;
+        for(int i=0;i<count;++i)if(podFor[i]==g) {if(first<0)first=i;working+=category(rows[i].state)==2;attention+=category(rows[i].state)==1;}
+        lv_obj_set_width(podName[g].obj,pw-32);lv_obj_set_width(podStatus[g].obj,pw-32);
+        podName[g].set(rows[first].project[0]?rows[first].project:"프로젝트 미지정");
+        snprintf(text,sizeof(text),"%d명  ·  작업 %d  ·  확인 %d",podMembers[g],working,attention);podStatus[g].set(text);
+    }
+    for(int i=0;i<10;++i) {
+        const bool show=i<count && podFor[i]>=0;visible(seats[i],show);if(!show)continue;
+        if(lv_obj_get_parent(seats[i])!=pods[podFor[i]]) lv_obj_set_parent(seats[i],pods[podFor[i]]);
+        const int slot=memberSlot[i],cat=category(rows[i].state);
+        lv_obj_set_pos(seats[i],12+(slot%seatsPerRow)*112,56+(slot/seatsPerRow)*112);
+        const auto* glyph=glyphFor?glyphFor(rows[i].agent):nullptr;visible(creatures[i],glyph);
+        if(glyph) {lv_image_set_src(creatures[i],glyph);lv_image_set_scale(creatures[i],192);lv_obj_set_style_image_opa(creatures[i],cat==3?LV_OPA_60:LV_OPA_COVER,0);lv_obj_set_style_image_recolor(creatures[i],lv_color_hex(brandColor(rows[i].agent)),0);}
+        // Only awaiting animates. Brand identity stays intact; status is a separate badge.
+        lv_obj_set_y(creatures[i],cat==1 && overviewMode && connected?((now/300+i)%2?0:4):4);
+        snprintf(text,sizeof(text),"%s %s",cat==1?"!":cat==2?">":"z",nameFor(cat));seatState[i].set(text);
+        lv_obj_set_style_text_color(seatState[i].obj,lv_color_hex(colorFor(cat)),0);
+        seatTool[i].set(rows[i].tool[0]?rows[i].tool:rows[i].agent);
+    }
+    visible(overviewEmpty.obj,!projectCount);overviewEmpty.set(count?"이 상태의 작업이 없습니다. 다른 상태를 선택하세요.":"에이전트가 연결되면 프로젝트 모임이 나타납니다.");
     link.set(connected?"연결됨  ·  실시간 작업 현황":"연결 끊김  ·  마지막 수신 내용");
     lv_obj_set_style_text_color(link.obj,lv_color_hex(connected?Theme::HUDDim:Theme::StatusAmber),0);
     if(!connected) snprintf(text,sizeof(text),"연결을 복구하고 있습니다. 아래는 마지막 수신 상태입니다.");
@@ -261,10 +377,10 @@ void update() {
         lv_obj_set_style_text_color(rowState[i].obj,lv_color_hex(colorFor(cat)),0);
         rowTool[i].set(r.tool[0]?r.tool:"현재 도구 없음");
         const auto* glyph=glyphFor?glyphFor(r.agent):nullptr;visible(marks[i],glyph);
-        if(glyph) {lv_image_set_src(marks[i],glyph);lv_image_set_scale(marks[i],128);lv_obj_set_style_image_recolor(marks[i],lv_color_hex(colorFor(cat)),0);}
+        if(glyph) {lv_image_set_src(marks[i],glyph);lv_image_set_scale(marks[i],128);lv_obj_set_style_image_recolor(marks[i],lv_color_hex(brandColor(r.agent)),0);}
     }
     visible(empty.obj,!shown);empty.set(count?"이 상태의 작업이 없습니다.\n다른 상태를 선택하세요.":"에이전트가 연결되면\n작업이 여기에 나타납니다.");
-    visible(detail,chosen>=0);
+    visible(detail,!overviewMode && chosen>=0);
     if(strcmp(presentedId,selectedId)) {
         snprintf(presentedId,sizeof(presentedId),"%s",selectedId);
         lv_obj_scroll_to_y(eventBox,0,LV_ANIM_OFF);
@@ -275,7 +391,7 @@ void update() {
         snprintf(text,sizeof(text),"%s  /  %s  /  %lus",selected.agentType,selected.modelName[0]?selected.modelName:"모델 정보 없음",static_cast<unsigned long>(selected.elapsedSec));identity.set(text);
         const int cat=category(selected.state);
         const auto* fg=glyphFor?glyphFor(selected.agentType):nullptr;visible(focusGlyph,fg);
-        if(fg){lv_image_set_src(focusGlyph,fg);lv_obj_set_style_image_recolor(focusGlyph,lv_color_hex(colorFor(cat)),0);}
+        if(fg){lv_image_set_src(focusGlyph,fg);lv_obj_set_style_image_recolor(focusGlyph,lv_color_hex(brandColor(selected.agentType)),0);}
         for(int i=0;i<3;++i) {
             const bool known=i==2?selected.coordinationKnown:selected.childrenKnown;
             const unsigned value=i==0?selected.childrenActive:i==1?selected.childrenCompleted:selected.backgroundJobs;
@@ -305,17 +421,16 @@ void update() {
             visible(eventCards[0],true);eventMeta[0].set("최근 기록");eventText[0].set("이 작업에서 수신된 기록이 없습니다.");
         }
     }
-    char a[12],b[12],c[12],d[12];
-    auto pct=[](char* out,float v){if(v<0)snprintf(out,12,"—");else snprintf(out,12,"%.0f%%",v);};
-    pct(a,p5);pct(b,p7);pct(c,c5);pct(d,c7);
-    snprintf(text,sizeof(text),"사용량%s   Claude  5h %s / 7d %s     Codex  주 %s / 보조 %s",stale?" (이전 정보)":"",a,b,c,d);usage.set(text);
+    if(quota.cost>=0) snprintf(text,sizeof(text),"데몬 수신 집계 · 추정 비용 $%.2f · 선택 작업의 개별 합계가 아닙니다",quota.cost);
+    else snprintf(text,sizeof(text),"데몬 수신 집계 · 선택 작업의 개별 합계가 아닙니다");
+    usage.set(text);
     const uint32_t elapsed=micros()-started;
     portENTER_CRITICAL(&diagMux);
     ++diag.updates;diag.lastUpdateUs=elapsed;
     if(elapsed>diag.maxUpdateUs)diag.maxUpdateUs=elapsed;
     diag.width=g_screenW;diag.height=g_screenH;diag.sessions=count;diag.visibleSessions=shown;
     diag.filter=filter;diag.eventCount=eventCount;diag.connected=connected;
-    diag.history=history;diag.voiceOpen=voiceOpen;
+    diag.history=history;diag.voiceOpen=voiceOpen;diag.overview=overviewMode;diag.projects=projectCount;
     portEXIT_CRITICAL(&diagMux);
 }
 Diagnostics diagnostics() {

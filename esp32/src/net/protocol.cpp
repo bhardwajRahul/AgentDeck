@@ -1471,10 +1471,10 @@ void parseMessage(const char* json, size_t length) {
     } else if (strcmp(type, "workspace_diag") == 0) {
         // Read-only, fixed UI-core snapshot. Never inspect LVGL from netTask.
         const auto d=IPS10Workspace::diagnostics();
-        char reply[240];
-        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"workspace-v1\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u}",
+        char reply[256];
+        snprintf(reply,sizeof(reply),"{\"type\":\"workspace_diag\",\"ui\":\"project-deck-v2\",\"width\":%u,\"height\":%u,\"sessions\":%u,\"visible\":%u,\"updates\":%lu,\"lastUs\":%lu,\"maxUs\":%lu,\"connected\":%s,\"filter\":%u,\"events\":%u,\"projects\":%u,\"overview\":%s}",
             d.width,d.height,d.sessions,d.visibleSessions,(unsigned long)d.updates,
-            (unsigned long)d.lastUpdateUs,(unsigned long)d.maxUpdateUs,d.connected?"true":"false",d.filter,d.eventCount);
+            (unsigned long)d.lastUpdateUs,(unsigned long)d.maxUpdateUs,d.connected?"true":"false",d.filter,d.eventCount,d.projects,d.overview?"true":"false");
         Net::serialWriteJsonLine(reply);
 #endif
     } else if (strcmp(type, "esp32_ota_begin") == 0) {
