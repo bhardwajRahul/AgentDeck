@@ -71,6 +71,37 @@ catalog checks passed. `design/lint.sh` reports 91 pre-existing violations in
 unchanged design HTML and the built Ulanzi bundle. No installed app or daemon
 was replaced for this refinement.
 
+## Release review — 2026-09-23
+
+The lens helps answer three questions: does an idle parent still have active work,
+which observed peer needs attention now, and what result was exchanged? It is an
+inspection/navigation view, not an orchestrator or a verified dependency graph.
+
+The macOS rail now offers session shortcuts before selection and puts confirmed
+related sessions near the selected parent, ordered with input requests first.
+These shortcuts use explicit peer IDs from the task's relation records and current
+roster status; they never infer a team from a matching project. Repeated relations
+to one peer yield one shortcut. Missing peers and unlinked launch observations do
+not invent live sessions. Failed or unavailable history does not expose a stale
+related-session summary. Peer navigation retains the existing back action.
+
+Task headings prefer the task title over a result summary. Live worker counts and
+historical child observations remain separate; a completed observation is not
+proof that a parent integrated the result. The task picker now offers the latest eight tasks in the selected session; polling
+keeps a historical selection pinned. A missing selected task offers recovery to
+the latest task instead of silently substituting another. Task summaries are
+visible separately. The four large census cards were replaced by collapsed live
+activity details, and repeated per-row result-integration disclaimers were
+consolidated. Remaining opportunities are deeper paginated history and a
+dedicated bounded history API.
+Do not advertise those remaining opportunities as shipped or imply that every harness reports relations.
+
+A synthetic native recording shows an idle parent with a live worker, the current
+task, and selection of an earlier task with its summary. It is included in the 28.7-second macOS 1.5.0
+preview alongside the aquarium and dashboard-type setting. Runtime navigation to
+a peer and back was verified. This does not resolve the separate crowded-aquarium
+release follow-up.
+
 ## IPS10 scope
 
 Only `BOARD_IPS10` changes. Work cards are identity-ordered and equal-sized, with

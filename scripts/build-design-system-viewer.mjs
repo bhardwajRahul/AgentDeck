@@ -542,6 +542,18 @@ async function loadProductMarks() {
       destination: 'assets/product/macos-dashboard.png',
       note: 'macOS dashboard capture — the reference for how the tokens resolve in the shipped app.',
     }),
+    imageAsset({
+      source: 'docs/media/aquarium-dashboard.jpg',
+      destination: 'assets/product/aquarium-dashboard.jpg',
+      name: 'Native aquarium — Android',
+      note: 'Real native app with sample sessions. See docs/pages-site.md for capture provenance and the motion demo.',
+    }),
+    imageAsset({
+      source: 'docs/media/aquarium-ipad.jpg',
+      destination: 'assets/product/aquarium-ipad.jpg',
+      name: 'Native aquarium — iPad',
+      note: 'Real native app with sample sessions, showing the shared habitat and information panels.',
+    }),
   ]);
 }
 

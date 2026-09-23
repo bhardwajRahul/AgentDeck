@@ -7,8 +7,8 @@ locale: en
 canonical: true
 status: stable
 owner: Android maintainers
-reviewed: 2026-08-14
-revision: 2026-08-14
+reviewed: 2026-09-23
+revision: 2026-09-23
 source_of_truth: docs/android.md
 validators: [pnpm test:android]
 ---
@@ -18,9 +18,7 @@ Detailed reference for the AgentDeck Android app — build, device support, and 
 
 ---
 
-<p align="center">
-  <img src="media/android-tablet-ui.png" width="880" alt="AgentDeck on a 10-inch Android tablet — session roster, habitat, provider rail with Claude and Codex usage, timeline and chat pane">
-</p>
+![AgentDeck native 3D aquarium on an Android tablet with sample agent sessions](https://puritysb.github.io/AgentDeck/media/aquarium-dashboard.jpg)
 
 ## Quick Start (Google Play or GitHub APK)
 
@@ -49,9 +47,32 @@ the app's **Manual URL** or **USB Connect** fallback described in
 
 ---
 
+## Choose a view for your screen
+
+On LCD devices, **Settings → Display → Dashboard type** offers **Default** and
+**3D aquarium · Preview**. Existing preferences are preserved. The native aquarium
+keeps the roster, provider information, and timeline over a dimensional habitat.
+Tap empty water to hide the panels and move closer; tap again to return. Up to
+eight foreground residents keep busy scenes readable while the roster retains
+all sessions. Fish are decorative and respond to nearby creatures.
+
+E-ink readers use a separate view: a static Blender-rendered background with
+restrained creature motion and panel-specific refresh handling. They do not run
+the continuous native 3D renderer. Color and monochrome readers share the same
+app, with contrast and refresh behavior adapted to the detected panel.
+
+[Watch the real-app demo](https://puritysb.github.io/AgentDeck/#aquarium).
+
 ## Supported Devices
 
-e-ink 리더(Crema S, Onyx Boox, MOAAN Pantone 6, Bigme, Kobo), 컬러 태블릿(Lenovo 등), 그리고 폰까지 **하나의 APK**가 커버한다. product flavor·build variant·리소스 qualifier 디렉터리는 없고, 분기는 전부 런타임 분류다. **벤더별 EPD API · 칩셋 · 디스플레이 타입 · 리프레시 모드 · App Store tier 의 전체 디바이스 매트릭스는 [hardware-compatibility.md § Software platforms](hardware-compatibility.md#software-platforms) 가 SSOT** 다. 이 문서는 빌드/서명/크리처 렌더링 등 Android 앱 고유 내용을 다룬다.
+One app supports e-ink readers (Crema S, Onyx Boox, MOAAN Pantone 6,
+Bigme, and supported Android-based readers), LCD tablets, and phones. Device
+classification happens at runtime. Play and GitHub APK builds use different
+update channels, not different device layouts. The complete support and panel
+capability matrix lives in [Hardware compatibility](hardware-compatibility.md#software-platforms).
+
+The engineering reference below covers classification, signing, and rendering;
+implementation notes retain their original language where no translation exists.
 
 ---
 
@@ -126,6 +147,20 @@ bash scripts/build-android-release.sh    # → dist/agentdeck-v{VERSION}.apk
 # Or download from GitHub Releases
 # git tag android-v{VERSION} && git push origin android-v{VERSION}  → CI builds APK
 ```
+
+### Wireless app updates
+
+The signed APK from GitHub Releases includes **Settings → App updates**
+on both e-ink readers and tablets. Check for a release, download it over Wi-Fi, then tap
+**Install update**. Android may first ask to allow installs from AgentDeck; return to
+Settings and tap Install update again. Android still asks for installation confirmation.
+The app verifies the published SHA-256, package name, newer version code and matching
+installed signing certificate. Failed or interrupted downloads are discarded.
+
+Install this version once by USB or the device's browser to enable future wireless
+updates. Google Play builds open Play instead and do not request APK installation
+permission. `assembleSideload` builds the GitHub APK; `bundleRelease` builds the Play AAB.
+No device-specific build or ADB connection is needed after that initial installation.
 
 ### WiFi adb deploy (cable-free updates)
 

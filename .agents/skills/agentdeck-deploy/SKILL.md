@@ -39,7 +39,7 @@ Parse the argument string to determine target(s). Multiple targets can be combin
 | Device | Serial | Type | Quirks |
 |--------|--------|------|--------|
 | **Pantone 6** | `AA007422R24C1300039` | Color e-ink (Kaleido 3, RK3566) | Rotation reset on reinstall → must restore landscape. WRITE_SETTINGS permission lost on reinstall |
-| **Crema S** | `CREMAA21W09235` | B&W e-ink (RK3566) | Standard |
+| **Crema S** | `CREMAA21W09235` | B&W e-ink (IWG / Qualcomm sdm660, native Onyx View API) | Standard |
 | **Lenovo Tab** | `HVA095B4` | LCD tablet (J606F) | Standard |
 
 ### Apple Devices

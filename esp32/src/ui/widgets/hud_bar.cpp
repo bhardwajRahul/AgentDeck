@@ -84,6 +84,7 @@ static lv_obj_t* tb5hPct   = nullptr;    // "62% 2h13m"
 static lv_obj_t* tb7dPct   = nullptr;
 // Codex (ChatGPT) usage gauges — mirror the Claude 5h/7d pair, blue-tinted.
 // The whole group hides when no Codex limits are present (common case).
+static lv_obj_t *tbClaudeBlock, *tbZaiBlock, *tbZa5hFill, *tbZa5hPct;
 static lv_obj_t* tbCodexBlock = nullptr; // whole Codex block (hide when no data at all)
 static lv_obj_t* tbCx5hGrp = nullptr;    // per-window ROW (hide when that window is absent)
 static lv_obj_t* tbCx7dGrp = nullptr;
@@ -143,6 +144,7 @@ static lv_image_dsc_t glyphCrayfish;   // OpenClaw
 static lv_image_dsc_t glyphOpencode;   // OpenCode
 static lv_image_dsc_t glyphAntigravityColor; // Antigravity full-color mark
 static lv_image_dsc_t glyphCodex;      // Codex (cloud + >_ mark)
+static lv_image_dsc_t glyphZai;
 static lv_image_dsc_t glyphKiro;       // Kiro (ghost mark, design/brand/kiro.svg)
 static uint8_t glyphAntigravityColorData[64 * 64 * 3]; // RGB565 plane + A8 plane, IPS10-only static reuse.
 static bool glyphsReady = false;
@@ -204,6 +206,7 @@ static void ips10InitGlyphs() {
     ips10BuildGlyph(glyphOpencode, OPENCODE_A8,      OPENCODE_W,      OPENCODE_H);
     ips10BuildAntigravityColorGlyph();
     ips10BuildGlyph(glyphCodex,    CODEX_A8,         CODEX_W,         CODEX_H);
+    ips10BuildGlyph(glyphZai, ZAI_A8, ZAI_W, ZAI_H);
     ips10BuildGlyph(glyphKiro,     KIRO_A8,          KIRO_W,          KIRO_H);
     glyphsReady = true;
 }
@@ -450,12 +453,13 @@ static constexpr int PANEL_TOP_Y = 28;
 #if defined(BOARD_TTGO)
 static constexpr int GAUGE_SIZE = 40;
 #elif IS_ROUND
-static constexpr int GAUGE_SIZE = 44;
+static constexpr int GAUGE_SIZE = 72;
 #else
-static constexpr int GAUGE_SIZE = 58;
+static constexpr int GAUGE_SIZE = 94;
 #endif
 static constexpr int GAUGE_BORDER = 1;
 static constexpr int GAUGE_INNER = GAUGE_SIZE - GAUGE_BORDER * 2;
+static constexpr int GAUGE_HEIGHT = 28;
 static constexpr int GAUGE_GAP = 8;
 static constexpr int GAUGE_RADIUS = 6;
 
@@ -506,7 +510,7 @@ static lv_obj_t* createGauge(lv_obj_t* parent,
 
     // Gauge box (glass background)
     box = lv_obj_create(col);
-    lv_obj_set_size(box, GAUGE_SIZE, GAUGE_SIZE);
+    lv_obj_set_size(box, GAUGE_SIZE, GAUGE_HEIGHT);
     lv_obj_set_style_bg_color(box, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_bg_opa(box, (lv_opa_t)32, 0);  // 12.5% white glass
     lv_obj_set_style_border_width(box, GAUGE_BORDER, 0);
@@ -519,8 +523,8 @@ static lv_obj_t* createGauge(lv_obj_t* parent,
 
     // Water fill bar (bottom-aligned, inside border)
     fill = lv_obj_create(box);
-    lv_obj_set_size(fill, GAUGE_INNER, 0);
-    lv_obj_align(fill, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_size(fill, 0, GAUGE_HEIGHT - 2 * GAUGE_BORDER);
+    lv_obj_align(fill, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_set_style_bg_color(fill, lv_color_hex(Theme::StatusGreen), 0);
     lv_obj_set_style_bg_opa(fill, LV_OPA_50, 0);
     lv_obj_set_style_border_width(fill, 0, 0);
@@ -532,14 +536,19 @@ static lv_obj_t* createGauge(lv_obj_t* parent,
     periodLabel = lv_label_create(box);
     lv_obj_set_style_text_color(periodLabel, lv_color_hex(Theme::HUDDim), 0);
     lv_obj_set_style_text_font(periodLabel, &lv_font_montserrat_10, 0);
-    lv_obj_align(periodLabel, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(periodLabel, LV_ALIGN_LEFT_MID, 4, 0);
     lv_label_set_text(periodLabel, period);
 
     // Percentage text (centered in gauge)
     pctLabel = lv_label_create(box);
     lv_obj_set_style_text_color(pctLabel, lv_color_hex(Theme::HUDText), 0);
-    lv_obj_set_style_text_font(pctLabel, &lv_font_montserrat_16, 0);
-    lv_obj_align(pctLabel, LV_ALIGN_CENTER, 0, 2);
+    lv_obj_set_style_text_font(pctLabel, &lv_font_montserrat_14, 0);
+    lv_obj_align(pctLabel, LV_ALIGN_RIGHT_MID, -4, 0);
+#if defined(BOARD_TTGO)
+    lv_obj_set_style_text_font(pctLabel, &lv_font_montserrat_10, 0);
+    lv_obj_align(periodLabel, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_align(pctLabel, LV_ALIGN_RIGHT_MID, -2, 0);
+#endif
     lv_label_set_text(pctLabel, "0%");
 
     // Reset time BELOW gauge box (e.g. "1h 55m")
@@ -585,7 +594,7 @@ static lv_obj_t* makeTankGroup(lv_obj_t* parent, const char* name, uint32_t bran
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_set_style_pad_column(row, GAUGE_GAP, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     createGauge(row, b5, f5, p5, pe5, r5, "5h");
     createGauge(row, b7, f7, p7, pe7, r7, "7d");
@@ -1438,7 +1447,7 @@ void init(lv_obj_t* parent) {
         lv_obj_set_style_radius(tb, 0, 0);
         lv_obj_set_style_pad_left(tb, 22, 0); lv_obj_set_style_pad_right(tb, 26, 0);
         lv_obj_set_style_pad_top(tb, 0, 0); lv_obj_set_style_pad_bottom(tb, 0, 0);
-        lv_obj_set_style_pad_column(tb, 20, 0);   // generous gaps between brand · daemon · usage
+        lv_obj_set_style_pad_column(tb, g_screenW < 1000 ? 6 : 20, 0);   // generous gaps between brand · daemon · usage
         lv_obj_clear_flag(tb, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(tb, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_flex_flow(tb, LV_FLEX_FLOW_ROW);
@@ -1473,6 +1482,10 @@ void init(lv_obj_t* parent) {
         lv_label_set_recolor(tbDaemon, true);
         lv_obj_set_style_text_color(tbDaemon, lv_color_hex(0x8FA6A2), 0);
         lv_label_set_text(tbDaemon, "");
+        if (g_screenW < 1000) {
+            lv_obj_add_flag(tbDaemon, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(lblLogo, LV_OBJ_FLAG_HIDDEN);
+        }
 
 #if defined(IPS10_PERF_HUD)
         tbPerf = lv_label_create(tb);
@@ -1492,7 +1505,7 @@ void init(lv_obj_t* parent) {
         // icon beside a 2-row column (5H over 7D). The Codex block hides when no
         // Codex limits are present. Glyphs must be built first.
         ips10InitGlyphs();
-        makeUsageBlock(tb, &glyphOctopus, Theme::ClaudeBody, 0x5D7470, D1_OK,
+        tbClaudeBlock = makeUsageBlock(tb, &glyphOctopus, Theme::ClaudeBody, 0x5D7470, D1_OK,
                        nullptr, &tb5hFill, &tb5hPct, &tb7dFill, &tb7dPct);
         // The block hides as a whole when Codex reports nothing; each usage ROW
         // also hides individually so a post-5h-reset 7D-only state renders one
@@ -1501,6 +1514,12 @@ void init(lv_obj_t* parent) {
                                    &tbCodexIcon, &tbCx5hFill, &tbCx5hPct, &tbCx7dFill, &tbCx7dPct,
                                    &tbCx5hGrp, &tbCx7dGrp);
         lv_obj_add_flag(tbCodexBlock, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t *unusedFill, *unusedPct, *unusedRow;
+        tbZaiBlock = makeUsageBlock(tb, &glyphZai, Theme::ZaiBlue, Theme::HUDDim, Theme::ZaiBlue,
+            nullptr, &tbZa5hFill, &tbZa5hPct, &unusedFill, &unusedPct, nullptr, &unusedRow);
+        lv_obj_add_flag(unusedRow, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(tbZaiBlock, LV_OBJ_FLAG_HIDDEN);
+
 
         // Antigravity chip — brand mark + plan name (no credit count: it's a raw
         // backend metering number). Hidden until usage_update carries a status.
@@ -1953,25 +1972,41 @@ void init(lv_obj_t* parent) {
 #endif
 
 #if !defined(BOARD_IPS10)
-    // Provider tank groups stack vertically in panelRight: Claude first, then Codex
-    // (hidden until Codex data arrives), then the account chip. Each group is a
-    // brand-labelled header over its 5h/7d water tanks, so multiple providers read
-    // as one cohesive panel instead of tanks + loose text. Width is unchanged
-    // (2 tanks wide); the panel just grows a block when a second provider is live.
+    // Provider blocks share a horizontal rail, with compact windows beneath
+    // each header. Missing windows take no space; the account chip stays below.
     // IPS10 renders usage in its D1 topbar, so it builds none of this.
-    claudeGroup = makeTankGroup(panelRight, "CLAUDE", Theme::ClaudeBody,
+    // Providers share one bounded horizontal rail; windows stack inside each
+    // provider, so a single GLM window never reserves an entire empty row.
+    lv_obj_t* providerRail = lv_obj_create(panelRight);
+    lv_obj_remove_style_all(providerRail);
+    lv_obj_set_size(providerRail, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_column(providerRail, 8, 0);
+    lv_obj_set_flex_flow(providerRail, LV_FLEX_FLOW_ROW);
+#if defined(BOARD_TTGO)
+    // The secondary terrarium view still fits its narrow portrait display.
+    lv_obj_set_width(providerRail, g_screenW - 32);
+    lv_obj_set_flex_flow(providerRail, LV_FLEX_FLOW_ROW_WRAP);
+#endif
+    lv_obj_set_flex_align(providerRail, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_clear_flag(providerRail, LV_OBJ_FLAG_SCROLLABLE);
+#if IS_ROUND
+    lv_obj_align(panelRight, LV_ALIGN_BOTTOM_MID, 0, -52);
+#else
+    lv_obj_align(panelRight, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+#endif
+    claudeGroup = makeTankGroup(providerRail, "CLAUDE", Theme::ClaudeBody,
         gauge5hBox, gauge5hFill, gauge5hPct, gauge5hPeriod, gauge5hReset,
         gauge7dBox, gauge7dFill, gauge7dPct, gauge7dPeriod, gauge7dReset);
-    codexGroup = makeTankGroup(panelRight, "CODEX", Theme::CloudBodyLight,
+    codexGroup = makeTankGroup(providerRail, "CODEX", Theme::CloudBodyLight,
         gaugeCx5hBox, gaugeCx5hFill, gaugeCx5hPct, gaugeCx5hPeriod, gaugeCx5hReset,
         gaugeCx7dBox, gaugeCx7dFill, gaugeCx7dPct, gaugeCx7dPeriod, gaugeCx7dReset);
     lv_obj_add_flag(codexGroup, LV_OBJ_FLAG_HIDDEN);
     // z.ai single tank (#348/#350) — the 5h credits window rides the same
-    // tank widget grammar as Claude/Codex, sharing the Codex group's row so
+    // tank widget grammar as Claude/Codex, sharing the provider rail so
     // the panel doesn't grow past the screen bottom. MCP is deliberately
     // hidden on ESP32: small displays, and the tool-call quota is secondary
     // to the token window at glance distance.
-    zaiGroup = lv_obj_create(panelRight);
+    zaiGroup = lv_obj_create(providerRail);
     lv_obj_set_size(zaiGroup, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(zaiGroup, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(zaiGroup, 0, 0);
@@ -1983,9 +2018,10 @@ void init(lv_obj_t* parent) {
     {
         lv_obj_t* hdr = lv_label_create(zaiGroup);
         lv_obj_set_style_text_font(hdr, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(hdr, lv_color_hex(Theme::HUDText), 0);
         lv_label_set_recolor(hdr, true);
         char h[32];
-        snprintf(h, sizeof(h), "#%06lX " LV_SYMBOL_BULLET "# Z.AI#",
+        snprintf(h, sizeof(h), "#%06lX " LV_SYMBOL_BULLET "# Z.AI",
                  (unsigned long)Theme::ZaiBlue);
         lv_label_set_text(hdr, h);
         lv_obj_t* row = lv_obj_create(zaiGroup);
@@ -2062,20 +2098,20 @@ static void updateGauge(lv_obj_t* fill, lv_obj_t* pctLabel, lv_obj_t* resetLabel
                         float pct, const char* resetStr, bool stale) {
     if (pct < 0.0f) {
         // No data — empty gauge, "--" text
-        lv_obj_set_height(fill, 0);
-        lv_obj_align(fill, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_width(fill, 0);
+        lv_obj_align(fill, LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_set_style_bg_color(fill, lv_color_hex(Theme::HUDDim), 0);
         lv_label_set_text(pctLabel, "--");
         lv_label_set_text(resetLabel, "");
         return;
     }
 
-    // Fill height proportional to percentage (inside border)
+    // Horizontal fill proportional to percentage (inside border)
     int fillH = (int)(GAUGE_INNER * pct / 100.0f);
     if (fillH < 0) fillH = 0;
     if (fillH > GAUGE_INNER) fillH = GAUGE_INNER;
-    lv_obj_set_height(fill, fillH);
-    lv_obj_align(fill, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_width(fill, fillH);
+    lv_obj_align(fill, LV_ALIGN_LEFT_MID, 0, 0);
 
     // Fill color
     uint32_t color = gaugeColor(pct);
@@ -2603,6 +2639,17 @@ void update() {
             lv_label_set_text(tbPerf, pb);
         }
 #endif
+        if (tbClaudeBlock) {
+            if (p5h >= 0 || p7d >= 0) lv_obj_clear_flag(tbClaudeBlock, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(tbClaudeBlock, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (tbZaiBlock) {
+            if (g_state.zaiPrimaryPercent >= 0) {
+                lv_obj_clear_flag(tbZaiBlock, LV_OBJ_FLAG_HIDDEN);
+                setTopbarGauge(tbZa5hFill, tbZa5hPct, g_state.zaiPrimaryPercent,
+                    g_state.zaiPrimaryReset, false, Theme::ZaiBlue);
+            } else lv_obj_add_flag(tbZaiBlock, LV_OBJ_FLAG_HIDDEN);
+        }
         // Top-bar usage gauges. Claude 5h/7d (cyan) always shown; Codex CX 5h/7d
         // (blue) appear only when limits exist; Antigravity credits as a text chip.
         // Percent + reset countdown + stale "!" mirror the plugin water-tank gauge.
@@ -2617,6 +2664,7 @@ void update() {
         if (tbCodexBlock) {
             if (hasCodex) lv_obj_clear_flag(tbCodexBlock, LV_OBJ_FLAG_HIDDEN);
             else          lv_obj_add_flag(tbCodexBlock, LV_OBJ_FLAG_HIDDEN);
+
         }
         if (tbCx5hGrp) {
             if (pcx5h >= 0.0f) lv_obj_clear_flag(tbCx5hGrp, LV_OBJ_FLAG_HIDDEN);
@@ -2962,7 +3010,7 @@ void update() {
 #if !defined(BOARD_IPS10)
         // A Codex-only user (or the Swift daemon, which has no Claude quota) still
         // gets the panel so its Codex tanks / account chip are visible.
-        || cxP5h >= 0.0f || cxP7d >= 0.0f || chipBuf[0]
+        || cxP5h >= 0.0f || cxP7d >= 0.0f || zaP5h >= 0.0f || chipBuf[0]
 #endif
     );
     if (firstUpdate || showTankStatus != lastShowTankStatus) {

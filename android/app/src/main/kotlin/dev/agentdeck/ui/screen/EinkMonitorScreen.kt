@@ -67,7 +67,6 @@ import dev.agentdeck.ui.eink.EinkAgentPanel
 import dev.agentdeck.ui.eink.EinkAttentionPanel
 import dev.agentdeck.ui.eink.EinkAquariumFrame
 import dev.agentdeck.ui.eink.EinkSettingsOverlay
-import dev.agentdeck.ui.eink.einkLimitRowText
 import dev.agentdeck.ui.eink.EinkTimelinePanel
 import dev.agentdeck.ui.eink.rememberEinkLayoutScale
 import dev.agentdeck.ui.eink.buildEinkAttentionFeatured
@@ -126,7 +125,9 @@ fun EinkMonitorScreen(
     val reconnectAttempt by connection.reconnectAttempt.collectAsState()
     val showSessionList by displayPrefs.showSessionListFlow.collectAsState(initial = true)
     val showTimeline by displayPrefs.showTimelineFlow.collectAsState(initial = true)
-    val showSettingsButton by displayPrefs.showSettingsButtonFlow.collectAsState(initial = true)
+    val storedSettingsButton by displayPrefs.showSettingsButtonFlow.collectAsState(initial = true)
+    val dashboardType by displayPrefs.dashboardTypeFlow.collectAsState(initial = dev.agentdeck.data.DashboardType.Default)
+    val showSettingsButton = storedSettingsButton || dashboardType == dev.agentdeck.data.DashboardType.Paper
     val displaySyncEnabled by displayPrefs.displaySyncEnabledFlow.collectAsState(initial = true)
     val featuredAttention = remember(state) { buildEinkAttentionFeatured(state) }
     val sleepSnapshotMode = displaySyncEnabled && !state.hostDisplayOn && state.hostDim?.enabled != false
@@ -341,6 +342,11 @@ private fun buildEinkTerrariumRefreshKey(
         sessionProjection,
         state.usage.fiveHourPercent,
         state.usage.sevenDayPercent,
+        state.usage.usageStale,
+        state.usage.scopedLimits,
+        state.codexRateLimits,
+        state.zaiRateLimits,
+        state.subscriptions,
         state.antigravityStatus?.planName,
         state.antigravityStatus?.availableCredits,
         state.antigravityStatus?.minimumCreditAmountForUsage,
@@ -447,7 +453,11 @@ private fun buildEinkLimitRows(state: DashboardState, now: Instant = Instant.now
     // "!" instead of disappearing. The leading brand mark identifies the provider,
     // so labels stay plain 5h/7d.
     providerLimitRows(state.codexRateLimits, state.zaiRateLimits).forEach {
-        rows.add(EinkLimitLine(label = it.label, percent = it.percent, agentType = it.agentType, stale = it.stale))
+        // The small monochrome mark alone is easy to miss on e-ink. Keep
+        // GLM identifiable in text alongside the adaptive gauge.
+        val label = if (it.agentType != "zai") it.label
+            else if (it.label.equals("mcp", ignoreCase = true)) "MCP" else "GLM${it.label}"
+        rows.add(EinkLimitLine(label = label, percent = it.percent, agentType = it.agentType, stale = it.stale))
     }
     // Subscription expiry rows — show "<provider> → M D" when the plan carries an
     // expiry (Antigravity has its own chip below, so skip it here). When the
@@ -479,6 +489,7 @@ private fun einkLimitsSourceTag(rows: List<EinkLimitLine>, state: DashboardState
         when (row.agentType) {
             "claude-code" -> providers.add("claude")
             "codex" -> providers.add("codex")
+            "zai" -> providers.add("glm")
         }
     }
     if (state.antigravityStatus != null) providers.add("agy")
@@ -536,7 +547,9 @@ private fun buildAntigravityLimitValue(state: DashboardState): String? {
 @Composable
 private fun EinkLimitGaugeRow(label: String, percent: Double, agentType: String? = null, stale: Boolean = false) {
     val pct = percent.coerceIn(0.0, 100.0).toInt()
+    val ink = MaterialTheme.colorScheme.onSurface
     Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -544,16 +557,25 @@ private fun EinkLimitGaugeRow(label: String, percent: Double, agentType: String?
             BrandIcon(agentType = agentType, isEink = true, size = 11.dp)
         }
         Text(
-            // Constant-width row — see einkLimitRowText. Ellipsis rather than the
-            // default Clip so that if the budget is ever exceeded the row says so
-            // instead of quietly serving a truncated number.
-            text = einkLimitRowText(label = label, percent = pct, stale = stale),
+            text = label.take(8),
             fontSize = 11.sp,
             lineHeight = 13.sp,
             fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = ink,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        )
+        // Only the gauge shrinks; the measured percentage keeps its space.
+        androidx.compose.foundation.Canvas(Modifier.weight(1f).height(9.dp)) {
+            drawRect(ink, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+            drawRect(ink, size = androidx.compose.ui.geometry.Size(size.width * pct / 100f, size.height))
+        }
+        Text(
+            text = "$pct%${if (stale) "!" else ""}",
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            color = ink,
+            maxLines = 1,
         )
     }
 }

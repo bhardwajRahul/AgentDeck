@@ -10,7 +10,7 @@ inline Rect cardRect(int width, int height, int count, int index) {
     const int cols = width > height && count > 1 ? 2 : 1;
     const int rows = (count + cols - 1) / cols;
     const int w = (width - 12 - (cols - 1) * 4) / cols;
-    const int h = (height - 42 - (rows - 1) * 4) / rows;
-    return {6 + (index % cols) * (w + 4), 22 + (index / cols) * (h + 4), w, h};
+    const int h = (height - 34 - (rows - 1) * 4) / rows;
+    return {6 + (index % cols) * (w + 4), 18 + (index / cols) * (h + 4), w, h};
 }
 } }

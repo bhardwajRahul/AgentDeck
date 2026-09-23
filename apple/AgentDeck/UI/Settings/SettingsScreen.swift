@@ -922,6 +922,18 @@ struct SettingsScreen: View {
 
     private var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Picker("Dashboard type", selection: Binding(
+                get: { preferences.effectiveDashboardType },
+                set: { preferences.dashboardType = $0 }
+            )) {
+                ForEach(AppPreferences.DashboardType.available) { type in
+                    Text(type.title).tag(type)
+                }
+            }
+            Text(preferences.effectiveDashboardType.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Divider()
             // App-launch + menu-bar prefs are macOS-only — iOS has no
             // separate dashboard window to auto-open and no menu bar.
             // `openDashboardOnLaunch` is read in AgentDeckApp.swift's macOS

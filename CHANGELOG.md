@@ -45,6 +45,36 @@ file's own rule forbids reconstructing its notes. The commit above is the
 record. `npm 1.0.16` (`37c674b8`) is a different case and needs nothing — it was
 bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
+## Unreleased
+
+- ESP32: compact horizontal usage gauges on 86 Box, IPS 3.5 and round AMOLED; visible GLM usage on IPS 10 and NM-EPD-420; proportional card fills on TTGO; five-window layouts without clipping or array overflow on T-Display Pro.
+- iDotMatrix: display the fresh GLM credit quota in both Node and native macOS renderers.
+
+## 2026-09-23 — Android 1.5.0
+
+- The optional 3D aquarium now uses the approved original agent models, including closed backs and animated limbs, instead of showing only a decorative habitat. Working sessions disturb nearby fish; the small snail travels behind the planted islands.
+- Keep the foreground readable with up to eight residents, prioritizing the selected session and requests for input. The complete session list remains accessible; unrelated sessions are not merged merely because their project names match.
+- Reduce tablet GPU load with bounded render resolution and shadow quality, keeping labels at display resolution and adapting animation cadence to thermal and power conditions.
+- Refresh the planted habitat and solid fish fins. Reserve space for the timeline, hide it during aquarium viewing, and retain the standard dashboard if native model loading fails.
+- Existing dashboard choices and the e-ink rendering/refresh path are preserved. Includes the previously prepared GLM display and wireless APK update improvements; Play installations continue to update through Play.
+
+## 2026-09-23 — Apple 1.5.0
+
+- macOS/iOS: choose the familiar dashboard or an optional 3D aquarium from Dashboard settings; preserve the selected layout across launches.
+- Show live agent sessions as their original characters in a planted 3D habitat, with clearer working and attention states and readable information panels.
+- Add reactive schooling fish with solid hinged fins and a smaller ground-roaming snail that passes behind rocks and plants.
+- Preserve session selection, accessibility through the session roster, Reduce Motion and inactive-scene pausing, with a standard-dashboard fallback when 3D content cannot load.
+- Improve fresh GLM credit-quota display on connected iDotMatrix devices.
+- Make Collaboration easier to enter and navigate: surface confirmed related sessions with their current state and input requests first, while keeping task history separate from live activity. Revisit the latest eight tasks, retain a historical selection during refresh, and inspect task summaries with compact live-activity details.
+- Bound the native foreground to eight residents, preserve the full session roster, and reserve scene space for attention and timeline panels on macOS and iOS.
+
+## 2026-09-21 — Android 1.4.1
+
+- E-ink usage rows explicitly identify GLM and include it in the provider summary.
+- Direct-install APKs offer wireless update checks, verified downloads and Android's installation confirmation in tablet and e-ink settings. Google Play builds continue to update through Play.
+- Update downloads verify the release checksum, package identity, newer version code and installed signing certificate before opening the installer.
+
+
 ## 2026-09-21 — npm 1.4.0 · Stream Deck 1.4.0 · Android 1.4.0 · ESP32 1.4.0 · Ulanzi 1.4.0
 
 - Add optional z.ai Coding Plan usage across the Node daemon, Stream Deck keys and dials, Ulanzi keys, Android dashboards and ESP32 displays, including reset countdowns and MCP tool-call usage where space permits.

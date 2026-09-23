@@ -348,6 +348,7 @@ actor IDotMatrixModule: DeviceModule {
     private var cached5hResetsAt: String?
     private var cached7dResetsAt: String?
     private var cachedCodexRateLimits: CodexRateLimits?
+    private var cachedZaiRateLimits: ZaiRateLimits?
     private var cachedGatewayAvailable = false
     private var cachedGatewayConnected = false
     private var cachedGatewayHasError = false
@@ -380,6 +381,10 @@ actor IDotMatrixModule: DeviceModule {
             cached5hResetsAt = event["fiveHourResetsAt"] as? String
             cached7dResetsAt = event["sevenDayResetsAt"] as? String
             cachedCodexRateLimits = dotMatrixCodexRateLimits(from: event["codexRateLimits"])
+            if let raw = event["zaiRateLimits"], JSONSerialization.isValidJSONObject(raw),
+               let data = try? JSONSerialization.data(withJSONObject: raw) {
+                cachedZaiRateLimits = try? JSONDecoder().decode(ZaiRateLimits.self, from: data)
+            }
         case "sessions_list":
             cachedSessions = event["sessions"] as? [[String: Any]] ?? []
         case "display_state":
@@ -433,6 +438,7 @@ actor IDotMatrixModule: DeviceModule {
         state.fiveHourResetsAt = cached5hResetsAt
         state.sevenDayResetsAt = cached7dResetsAt
         state.codexRateLimits = cachedCodexRateLimits
+        state.zaiRateLimits = cachedZaiRateLimits
         state.gatewayAvailable = cachedGatewayAvailable
         state.gatewayConnected = cachedGatewayConnected
         state.gatewayHasError = cachedGatewayHasError

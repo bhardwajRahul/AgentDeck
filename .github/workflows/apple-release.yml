@@ -11,6 +11,15 @@ on:
         required: true
         default: '1.0.5'
         type: string
+      platform:
+        description: 'Platform to build for a manual delivery; tags still build both'
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - macos
+          - ios
       upload:
         description: 'Upload the exported artifacts to App Store Connect'
         required: true
@@ -37,6 +46,7 @@ jobs:
         run: bash apple/scripts/validate-appstore-submission.sh
 
   build-ios:
+    if: github.event_name == 'push' || inputs.platform != 'macos'
     needs: validate-submission
     runs-on: macos-15
     timeout-minutes: 30
@@ -161,6 +171,7 @@ jobs:
           rm -rf ~/private_keys
 
   build-macos:
+    if: github.event_name == 'push' || inputs.platform != 'ios'
     needs: validate-submission
     runs-on: macos-15
     timeout-minutes: 30

@@ -132,6 +132,9 @@ fun MonitorScreen(
     connection: BridgeConnection,
     displayPrefs: DisplayPreferences,
 ) {
+    val dashboardType by displayPrefs.dashboardTypeFlow.collectAsState(initial = dev.agentdeck.data.DashboardType.Default)
+    var aquariumUnavailable by remember(dashboardType) { mutableStateOf(false) }
+    val nativeAquarium = dashboardType == dev.agentdeck.data.DashboardType.Aquarium3D && !aquariumUnavailable
     val dashState by stateHolder.state.collectAsState()
     val timelineEntries by TimelineStore.instance.entries.collectAsState()
     // Child activity for the creature decoration, wire census first.
@@ -243,7 +246,7 @@ fun MonitorScreen(
     val mainCrayfish = remember(monitorScale.isTablet) {
         CrayfishCreature(crayfishCenterX, crayfishCenterY)
     }
-    val drawCrayfishForeground = monitorScale.isTablet &&
+    val drawCrayfishForeground = !nativeAquarium && monitorScale.isTablet &&
         !showDisconnected &&
         showTimeline &&
         terrariumState.crayfish != CrayfishVisualState.DORMANT
@@ -268,7 +271,12 @@ fun MonitorScreen(
             .background(TerrariumColors.DeepSea),
     ) {
         // Layer 1: Terrarium background (always renders)
-        ColorTerrariumBackground(
+        if (nativeAquarium) {
+            dev.agentdeck.AquariumBackground(
+                Modifier.fillMaxSize(),
+                terrariumState, dashState.focusedSessionId, viewingMode = hudHidden, onUnavailable = { aquariumUnavailable = true })
+
+        } else ColorTerrariumBackground(
             state = terrariumState,
             mainCrayfish = mainCrayfish,
             mainCrayfishCenterXFraction = crayfishCenterX,
@@ -310,7 +318,7 @@ fun MonitorScreen(
             )
         } else {
             // Layer 2: Timeline over sand area
-            if (showTimeline) {
+            if (showTimeline && (!nativeAquarium || !hudHidden)) {
                 TimelineStrip(
                     entries = timelineEntries,
                     filter = timelineFilter,
@@ -371,7 +379,7 @@ fun MonitorScreen(
                     tint = Color.White.copy(alpha = 0.45f),
                 )
             }
-            if (showSettingsButton) {
+            if (showSettingsButton || nativeAquarium) {
                 IconButton(
                     onClick = { showSettingsDialog = true },
                 ) {

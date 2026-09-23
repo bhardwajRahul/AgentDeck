@@ -15,4 +15,21 @@ Runbook for the published site surfaces and the CI report generator. Moved out o
 - **The flasher is inside `design/lint.sh` scope.** `lint.sh` prunes `./tools/creature-simulator` but **not** `./tools/web-flasher`, so the app must stay token-clean — no raw hex, no `#fff`/`#000`, IBM Plex and JetBrains Mono only. Written clean rather than added to the prune list. Its `THIRD-PARTY.txt` is generated at build time by `scripts/generate-flash-third-party.mjs` from the installed packages' own LICENSE/NOTICE files: esptool-js is Apache-2.0 and a bundled `.js` is a redistribution, so the notice has to travel with it. Reading `node_modules` rather than checking a copy in keeps it honest about what actually shipped. The bridge npm package has no such obligation — it *declares* esptool-js as a dependency and bundles nothing.
 - **Device photography pipeline**: `scripts/crop-hardware-images.mjs` crops the hardware photos into the catalog card frames (STANDARD 1.75:1 = the 349x200 card, WIDE 3.73:1, HERO 3:2). **Sources are committed** in `assets/hardware-photos/` — the captures actually used, with the EXIF rotation baked in (so the crop table's coordinates are plain display-space pixels) and re-encoded at quality 78, halving 36 MB to 15 MB. The script defaults to that directory, so the repo regenerates its own published crops with no external files; pass a path to crop from raw camera originals instead. **`.rotate()` must be called with no argument** — that applies the EXIF orientation tag; passing an explicit angle skips it and crops from an unrotated buffer (many iPhone captures are orientation 6: stored 4032x3024, actually 3024x4032). Frame the device body with margin, not just its screen, and verify each crop in a browser before shipping.
 
+## Public aquarium media
+
+The README uses `docs/media/aquarium-preview.gif` as a linked motion preview;
+the overview plays `docs/media/aquarium-demo.mp4` with native controls and
+`preload="none"`. It does not autoplay. The poster is `aquarium-dashboard.jpg`;
+`aquarium-ipad.jpg` illustrates the Apple guide. The Pages assembly copies these
+assets explicitly (JPEGs use the existing photo copy step).
+
+These captures were made on 2026-09-23 with the native apps from `ce3a7127`, using
+six synthetic sessions and no private project or timeline data. The 18-second
+Android recording shows normal view, viewing mode, and return. System bars were cropped and the recorder’s aspect ratio was corrected to
+match the device; no app graphics were composited or retouched. The GIF is a six-second
+excerpt at 10 fps; the MP4 is encoded as H.264 at 30 fps without motion interpolation. Keep the public
+copy in English, with optional Korean/Japanese landing-page translations. Store
+links should stay evergreen; preserve measured submission receipts in release
+records rather than repeating temporary review states in installation copy.
+
 See [testing.md](testing.md) for the full testing reference.

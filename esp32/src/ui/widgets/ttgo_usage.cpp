@@ -77,7 +77,8 @@ void create(lv_obj_t* parent) {
         lv_bar_set_range(c.bar, 0, 100);
         lv_obj_set_style_bg_color(c.bar, lv_color_hex(Theme::ShallowWater), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(c.bar, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(c.bar, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(c.bar, LV_OPA_30, LV_PART_INDICATOR);
+        lv_obj_move_to_index(c.bar, 0);
         lv_obj_add_flag(c.panel, LV_OBJ_FLAG_HIDDEN);
     }
     if (!selected) lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
@@ -119,9 +120,9 @@ void update() {
             lv_obj_align(c.title, LV_ALIGN_TOP_LEFT, 5, 3);
             lv_obj_align(c.value, compact ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_CENTER, compact ? -5 : 0, compact ? 3 : -2);
             lv_obj_set_width(c.reset, r.w - 10);
-            lv_obj_align(c.reset, LV_ALIGN_BOTTOM_LEFT, 5, -10);
-            lv_obj_set_size(c.bar, r.w - 10, 3);
-            lv_obj_align(c.bar, LV_ALIGN_BOTTOM_MID, 0, -4);
+            lv_obj_align(c.reset, LV_ALIGN_BOTTOM_LEFT, 5, -3);
+            lv_obj_set_size(c.bar, r.w, r.h);
+            lv_obj_align(c.bar, LV_ALIGN_CENTER, 0, 0);
             lv_obj_clear_flag(c.panel, LV_OBJ_FLAG_HIDDEN);
         }
         char buf[28]; text(c.title, c.titleText, names[i]);

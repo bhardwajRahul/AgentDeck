@@ -39,6 +39,17 @@ export function emitSwift(rules) {
 /// Cross-platform terrarium rules. See shared/src/terrarium-rules.ts for
 /// what each value means and the clearance invariant they encode.
 enum TerrariumRules {
+    static let nativeResidentLimit: Int = ${rules.nativeResidentLimit}
+    static let nativeCameraFov: Float = ${f(rules.nativeCameraFov)}
+    static let nativeCameraWideFov: Float = ${f(rules.nativeCameraWideFov)}
+    static let nativeViewingDistance: Float = ${f(rules.nativeViewingDistance)}
+    static let nativeViewingResponseSeconds: Float = ${f(rules.nativeViewingResponseSeconds)}
+    static let nativeWaterTint: Float = ${f(rules.nativeWaterTint)}
+    static let nativeDepthFadeStart: Float = ${f(rules.nativeDepthFadeStart)}
+    static let nativeDepthFadeShoulder: Float = ${f(rules.nativeDepthFadeShoulder)}
+    static let nativeDepthFadeShoulderOpacity: Float = ${f(rules.nativeDepthFadeShoulderOpacity)}
+    static let nativeDepthFadeEndOpacity: Float = ${f(rules.nativeDepthFadeEndOpacity)}
+    static let nativeCameraWideAspect: Float = ${f(rules.nativeCameraWideAspect)}
     static let crayfishHomeX: Float = ${f(c.homeX)}
     static let crayfishSittingY: Float = ${f(c.sittingY)}
     static let crayfishWidthFraction: Float = ${f(c.widthFrac)}
@@ -62,6 +73,17 @@ package dev.agentdeck.terrarium
  * what each value means and the clearance invariant they encode.
  */
 object TerrariumRules {
+    const val NATIVE_RESIDENT_LIMIT = ${rules.nativeResidentLimit}
+    const val NATIVE_CAMERA_FOV = ${f(rules.nativeCameraFov)}f
+    const val NATIVE_CAMERA_WIDE_FOV = ${f(rules.nativeCameraWideFov)}f
+    const val NATIVE_VIEWING_DISTANCE = ${f(rules.nativeViewingDistance)}f
+    const val NATIVE_VIEWING_RESPONSE_SECONDS = ${f(rules.nativeViewingResponseSeconds)}f
+    const val NATIVE_WATER_TINT = ${f(rules.nativeWaterTint)}f
+    const val NATIVE_DEPTH_FADE_START = ${f(rules.nativeDepthFadeStart)}f
+    const val NATIVE_DEPTH_FADE_SHOULDER = ${f(rules.nativeDepthFadeShoulder)}f
+    const val NATIVE_DEPTH_FADE_SHOULDER_OPACITY = ${f(rules.nativeDepthFadeShoulderOpacity)}f
+    const val NATIVE_DEPTH_FADE_END_OPACITY = ${f(rules.nativeDepthFadeEndOpacity)}f
+    const val NATIVE_CAMERA_WIDE_ASPECT = ${f(rules.nativeCameraWideAspect)}f
     const val CRAYFISH_HOME_X = ${f(c.homeX)}f
     const val CRAYFISH_SITTING_Y = ${f(c.sittingY)}f
     const val CRAYFISH_WIDTH_FRACTION = ${f(c.widthFrac)}f
