@@ -30,6 +30,14 @@ Final USB verification: firmware SHA256 `5359b949ea7e6d0c0bcf63d1440113b0573731c
 
 The installed CLI now links to the stable main checkout and launchd serves daemon build `29863c937935`, reporting `whisper-cpp`, `ko-KR`, and the personal route. The initial restart command encountered Node 26's `setTypeOfService EINVAL`; supported `daemon start` recovered the unit, and the new build and gateway connection were verified. macOS/Android changes were built, not deployed as part of this IPS10 deployment. Final JavaScript gates passed 308 files / 4,665 tests with two skips; the firmware-only buffer adjustment was rebuilt and verified on the device.
 
+## 2026-09-24 — Preserve IPS10 speech onset
+
+The user heard a clipped beginning of the first syllable of a spoken reply. A fresh host-generated 16 kHz WAV for the test phrase has samples exceeding amplitude 100 at 1.4375 ms and strong signal in the first 10 ms: it has effectively no startup silence. Firmware restarted ES8311 for every utterance; `paSetup()` disabled the amplifier, full ADC/DAC configuration ran, and the amplifier was enabled immediately before feeding speech. This is a plausible device-side onset-loss mechanism, not an acoustically measured proof of the analogue ramp time.
+
+IPS10 playback now calls `Es8311::ensure(rate)`, retaining the already-running shared capture/playback codec unless stopped or the rate changes. Before reading the first speech bytes from the ring it clocks 80 ms of zero PCM, using the existing 1 KiB task buffer. This protects the original onset without fading or trimming speech and gives the output path time to stabilize. Other boards retain per-utterance codec initialization. A PCM write helper also preserves partial I2S writes, counts actual accepted bytes and stops on zero progress instead of silently counting dropped audio as played. The silence prefix is reported separately from speech byte accounting.
+
+Validation: deterministic short-write, zero-progress and abort tests pass; IPS10 firmware builds. JavaScript build/typecheck pass; the full suite passed 4,673 tests with one protocol-generation race while its generator was running. After generation completed, all 12 tests in that failed protocol suite passed; no generated files drifted. Token mirrors pass; design lint retains 171 pre-existing built-checkout findings. Hardware and listening evidence follows below; byte accounting alone cannot establish audible onset quality.
+
 ## 2026-09-24 — IPS10 listening feedback and acoustic endpointing
 
 IPS10 capture now starts with a 120 ms, 1,047 Hz cue at 0.28 amplitude instead of the quiet 35 ms wake tick. The audio owner plays the same cue after capture becomes ready for wake and manual capture; the old manual UI tick is suppressed on IPS10 to avoid a competing playback. Existing device volume and speaker configuration are retained.
