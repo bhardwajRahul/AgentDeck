@@ -2,11 +2,43 @@
 
 > **Live since 2026-07-28.** The product page is at
 > <https://marketplace.elgato.com/product/agentdeck-dce3806b-176e-40f2-be7d-e029bec0f464>,
-> and the current public version is `1.3` (verified 2026-09-15 at 12:43 KST,
+> and the last independently verified public version is `1.3` (verified 2026-09-15 at 12:43 KST,
 > 748.66 KB), following `1.2` (2026-09-02) and `1.0.6`
 > (2026-08-18), `1.0.5` (2026-08-10), `1.0.4` (2026-08-05), `1.0.3` (2026-07-31)
 > and `1.0.2` (2026-07-28).
 > This file stays the source of the listing copy and asset inventory for future revisions.
+
+## 1.4.0 ready to publish — processed-package check (2026-09-24)
+
+Signed-in Maker Console shows **1.4 Ready to publish** and **1.3 Published**.
+The official processed package was downloaded (774,880 bytes; SHA-256
+`3f85af9d7619c8dcaa32af25c4f213f5fec8bc4c48a127ce7f138f80a1c9824f`)
+and installed through Stream Deck, which launched version `1.4.0.0`.
+The Stream Deck+ editor renders four encoder regions and z.ai 5h/MCP labels
+with the Node development daemon.
+
+With the delivered macOS 1.3.2 Swift daemon, E2 and E3 both rendered Codex 7d
+usage. The `streamdeck-v1.4.0` source explicitly permits this when only one
+usage provider is available; it is not evidence of a duplicate-selection bug.
+Multi-provider selection/cycling and physical rotation/press/touch remain to
+be verified. Keep publication held for
+[#349](https://github.com/puritysb/AgentDeck/issues/349); installation and visual
+rendering alone do not pass the four-encoder gate. No new upload or public
+release was performed.
+
+## 1.4.0 submitted for review (2026-09-21)
+
+Uploaded the official [Stream Deck release](https://github.com/puritysb/AgentDeck/releases/tag/streamdeck-v1.4.0)
+from CI run `35548111974`, SHA-256
+`6f00b544cb4a25a3388ae7b6f7287b8d435228cf53469fd752e13c93478d33ce`.
+Maker Console parsed `1.4.0.0`, SDK 3, DRM enabled, macOS 26+ and Windows 10+.
+After submission, the version row reads **Pending review · 1.4**.
+Automatic publication is off for the processed-package encoder verification.
+The 1.3-specific waiver below is historical and is not a 1.4 verification receipt.
+
+Submitted release notes:
+
+> Adds optional z.ai Coding Plan usage to keys and usage dials, with reset countdowns and MCP tool-call usage where space permits. Improves provider selection and compact layouts. Fixes connection recovery when a daemon handshake stalls or a pending socket is replaced. Existing actions and profiles remain compatible. Requires the free AgentDeck daemon or macOS app; configure z.ai on the daemon that supplies usage.
 
 ## 1.3.0 publication (2026-09-15)
 

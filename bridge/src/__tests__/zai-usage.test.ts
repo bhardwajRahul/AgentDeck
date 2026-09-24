@@ -130,6 +130,41 @@ describe('fetchZaiQuota', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not reuse another account cache or backoff when the key changes', async () => {
+    process.env.AGENTDECK_ZAI_API_KEY = 'account-a';
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(MAX_PLAN_BODY))
+      .mockResolvedValueOnce(jsonResponse({}, 401)).mockResolvedValueOnce(jsonResponse(MAX_PLAN_BODY));
+    vi.stubGlobal('fetch', fetchMock);
+    const { fetchZaiQuota } = await loadModule();
+    await fetchZaiQuota();
+    process.env.AGENTDECK_ZAI_API_KEY = 'account-b';
+    expect(await fetchZaiQuota()).toEqual({ data: {}, fresh: false });
+    process.env.AGENTDECK_ZAI_API_KEY = 'account-c';
+    expect((await fetchZaiQuota()).fresh).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    delete process.env.AGENTDECK_ZAI_API_KEY;
+    expect(await fetchZaiQuota()).toEqual({ data: null, fresh: false });
+  });
+
+  it('retires cached plan windows immediately for a pay-as-you-go replacement', async () => {
+    process.env.AGENTDECK_ZAI_API_KEY = 'account-a';
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(MAX_PLAN_BODY)));
+    const { fetchZaiQuota } = await loadModule();
+    await fetchZaiQuota();
+    process.env.AGENTDECK_ZAI_API_KEY = 'sk-pay-replacement';
+    expect((await fetchZaiQuota()).data).toEqual({ limitId: 'payg' });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('discards a response whose credential was replaced in flight', async () => {
+    process.env.AGENTDECK_ZAI_API_KEY = 'account-a';
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      process.env.AGENTDECK_ZAI_API_KEY = 'account-b';
+      return jsonResponse(MAX_PLAN_BODY);
+    }));
+    expect(await (await loadModule()).fetchZaiQuota()).toEqual({ data: {}, fresh: false });
+  });
+
   it('discovers the key from the Claude Code settings hint only when the base URL is z.ai', async () => {
     mkdirSync(claudeDir, { recursive: true });
     writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({
@@ -162,7 +197,7 @@ describe('fetchZaiQuota', () => {
     process.env.AGENTDECK_ZAI_API_KEY = 'secret-key-material';
     const logTagged = vi.fn();
     vi.doMock('../logger.js', () => ({ logTagged, debug: vi.fn() }));
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ code: 500, msg: 'nope', success: false })));
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ code: 500, msg: 'secret-key-material', success: false })));
     const { fetchZaiQuota } = await import('../zai-usage.js');
     await fetchZaiQuota();
     expect(logTagged).toHaveBeenCalled();

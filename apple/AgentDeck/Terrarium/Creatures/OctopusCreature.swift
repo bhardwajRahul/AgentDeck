@@ -272,7 +272,14 @@ final class OctopusCreature: Creature {
 
         if let transformed = Self.robotPath.copy(using: &t) {
             context.fill(Path(transformed),
-                         with: .color(bodyColor.opacity(Double(alpha))),
+                         with: .linearGradient(
+                            Gradient(colors: [
+                                TerrariumColors.lerpColor(bodyColor, TerrariumColors.hudText, 0.18).opacity(Double(alpha)),
+                                bodyColor.opacity(Double(alpha)),
+                                TerrariumColors.lerpColor(bodyColor, TerrariumColors.deepSea, 0.30).opacity(Double(alpha)),
+                            ]),
+                            startPoint: CGPoint(x: offsetX, y: offsetY),
+                            endPoint: CGPoint(x: offsetX + 24 * s, y: offsetY + 24 * s)),
                          style: FillStyle(eoFill: true))
         }
 

@@ -27,6 +27,26 @@ function formatClaudeSubscription(
   return undefined;
 }
 
+const ZAI_SUBSCRIPTION_NAME = 'GLM Coding Plan';
+
+function buildZaiSubscription(quota?: ZaiRateLimits | null): SubscriptionInfo | undefined {
+  if (!quota?.primary && !quota?.secondary) return undefined;
+  const plan = formatZaiPlanName(quota.planType);
+  return { name: plan ? `${ZAI_SUBSCRIPTION_NAME} · ${plan}` : ZAI_SUBSCRIPTION_NAME };
+}
+
+/** Session bridges cannot author the daemon-owned z.ai account. Keep its row
+ * and quota together even when their replacement subscription list is empty. */
+export function mergeZaiSubscription(
+  subscriptions: SubscriptionInfo[], quota: ZaiRateLimits,
+): SubscriptionInfo[] {
+  const rows = subscriptions.filter(({ name }) =>
+    name !== ZAI_SUBSCRIPTION_NAME && !name.startsWith(`${ZAI_SUBSCRIPTION_NAME} · `));
+  const zai = buildZaiSubscription(quota);
+  if (zai) rows.push(zai);
+  return rows;
+}
+
 export function buildSubscriptions(
   codexAuth?: CodexAuthStatus | null,
   apiUsage?: ApiUsageData | null,
@@ -52,10 +72,8 @@ export function buildSubscriptions(
   // A subscription row needs live windows — a plan level alone (or a windowless
   // retirement block) is quota-status metadata, not proof of an active plan.
   // Same polarity as the Claude row above.
-  if (zaiQuota?.primary || zaiQuota?.secondary) {
-    const plan = formatZaiPlanName(zaiQuota.planType);
-    items.push({ name: plan ? `GLM Coding Plan · ${plan}` : 'GLM Coding Plan' });
-  }
+  const zai = buildZaiSubscription(zaiQuota);
+  if (zai) items.push(zai);
 
   if (antigravityStatus?.planName) {
     items.push({
@@ -138,13 +156,13 @@ function normalizeCodexRateLimits(
       shortWindow = { usedPercent: 100, windowMinutes: 0 };
     }
   }
-  return {
-    ...rl,
-    primary: normalizeCodexWindow(shortWindow),
-    secondary: normalizeCodexWindow(longWindow),
-    // Native devices also receive this snapshot over WiFi, bypassing serial compaction.
-    lunaReserve: rl.lunaReserve?.resetsAt && Date.parse(rl.lunaReserve.resetsAt) <= Date.now() ? undefined : rl.lunaReserve,
-  };
+  const primary = normalizeCodexWindow(shortWindow);
+  const secondary = normalizeCodexWindow(longWindow);
+  // Reserve metadata can survive in cached/relayed readings after a reset.
+  // It may replace the ordinary gauges only while a live ordinary window is
+  // exhausted. Send the full Codex block so clients retire the old reserve.
+  const exhausted = [primary, secondary].some((w) => w && !w.stale && w.usedPercent >= 100);
+  return { ...rl, primary, secondary, lunaReserve: exhausted && !(rl.lunaReserve?.resetsAt && Date.parse(rl.lunaReserve.resetsAt) <= Date.now()) ? rl.lunaReserve : undefined };
 }
 
 /**
@@ -154,7 +172,7 @@ function normalizeCodexRateLimits(
  * and flags `stale` — so every consumer shares one staleness grammar across
  * providers.
  */
-function normalizeZaiRateLimits(zai?: ZaiRateLimits | null): ZaiRateLimits | undefined {
+export function normalizeZaiRateLimits(zai?: ZaiRateLimits | null): ZaiRateLimits | undefined {
   if (!zai) return undefined;
   return {
     ...zai,

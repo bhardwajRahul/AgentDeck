@@ -274,6 +274,15 @@ describe('ConnectionManager', () => {
       expect(cm.retryNow().daemonPort).toBe(9130);
     });
 
+    it('falls through after an initial handshake failure without a prior connection', () => {
+      daemonFiles.set(cliFile, JSON.stringify({ port: 9120, pid: 1234 }));
+      daemonFiles.set(swiftFile, JSON.stringify({ port: 9130, pid: 5678 }));
+      cm.start();
+      cm.bridge.emit('connection-attempt-failed', 9120);
+      expect(cm.isConnected()).toBe(false);
+      expect(cm.retryNow().daemonPort).toBe(9130);
+    });
+
     it('reports the daemon as found even when every candidate has failed', () => {
       daemonFiles.set(cliFile, JSON.stringify({ port: 9120, pid: 1234 }));
       daemonFiles.set(swiftFile, JSON.stringify({ port: 9130, pid: 5678 }));

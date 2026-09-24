@@ -8,6 +8,17 @@ package dev.agentdeck.terrarium
  * what each value means and the clearance invariant they encode.
  */
 object TerrariumRules {
+    const val NATIVE_RESIDENT_LIMIT = 8
+    const val NATIVE_CAMERA_FOV = 38.0f
+    const val NATIVE_CAMERA_WIDE_FOV = 32.0f
+    const val NATIVE_VIEWING_DISTANCE = 0.82f
+    const val NATIVE_VIEWING_RESPONSE_SECONDS = 0.18f
+    const val NATIVE_WATER_TINT = 0.12f
+    const val NATIVE_DEPTH_FADE_START = 0.4f
+    const val NATIVE_DEPTH_FADE_SHOULDER = 0.72f
+    const val NATIVE_DEPTH_FADE_SHOULDER_OPACITY = 0.85f
+    const val NATIVE_DEPTH_FADE_END_OPACITY = 0.95f
+    const val NATIVE_CAMERA_WIDE_ASPECT = 2.0f
     const val CRAYFISH_HOME_X = 0.78f
     const val CRAYFISH_SITTING_Y = 0.64f
     const val CRAYFISH_WIDTH_FRACTION = 0.11f

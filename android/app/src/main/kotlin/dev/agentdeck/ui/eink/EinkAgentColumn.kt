@@ -1,6 +1,8 @@
 package dev.agentdeck.ui.eink
 
 import android.content.res.Configuration
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,6 +67,7 @@ fun EinkAgentPanel(
 ) {
     val layoutScale = rememberEinkLayoutScale()
     val scope = rememberCoroutineScope()
+    val sessionScroll = rememberScrollState()
     val isCurrentlyLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val currentOrientation = displayPrefs?.orientationFlow?.collectAsState(
@@ -166,7 +169,6 @@ fun EinkAgentPanel(
     data class NameKey(val projectName: String, val agentType: String?)
     val nameCounts = entries.groupBy { NameKey(it.projectName, it.agentType) }
         .mapValues { it.value.size }
-    val nameCounters = mutableMapOf<NameKey, Int>()
 
     Column(
         modifier = modifier
@@ -214,37 +216,51 @@ fun EinkAgentPanel(
         // Apple SessionListPanel.swift:194 follows the same rule.
         val focusedId = state.focusedSessionId
 
-        displayEntries.forEach { entry ->
-            val key = NameKey(entry.projectName, entry.agentType)
-            val needsSuffix = (nameCounts[key] ?: 1) > 1
-            val suffix = if (needsSuffix) {
-                val idx = (nameCounters[key] ?: 0) + 1
-                nameCounters[key] = idx
-                " #$idx"
-            } else {
-                ""
-            }
-            val displayName = "${entry.projectName}$suffix"
-            val sessionId = entry.sessionId
-            val isFocused = focusedId != null && sessionId != null && sessionId == focusedId
-            val isAwaiting = entry.agentState.isAwaitingInput()
-
-            EinkAgentBlock(
-                agentType = entry.agentType,
-                displayName = displayName,
-                projectName = entry.projectName,
-                modelName = entry.modelName,
-                effortLevel = entry.effortLevel,
-                agentState = entry.agentState,
-                activity = entry.activity,
-                isFocused = isFocused,
-                isAwaiting = isAwaiting,
-                layoutScale = layoutScale,
-                modifier = if (sessionId != null) {
-                    Modifier.clickable { onFocusSession(sessionId) }
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(sessionScroll),
+            verticalArrangement = Arrangement.spacedBy(layoutScale.rowSpacing),
+        ) {
+            displayEntries.forEachIndexed { index, entry ->
+                val key = NameKey(entry.projectName, entry.agentType)
+                val needsSuffix = (nameCounts[key] ?: 1) > 1
+                val suffix = if (needsSuffix) {
+                    val idx = displayEntries.subList(0, index + 1).count {
+                        it.projectName == entry.projectName && it.agentType == entry.agentType
+                    }
+                    " #$idx"
                 } else {
-                    Modifier
-                },
+                    ""
+                }
+                val displayName = "${entry.projectName}$suffix"
+                val sessionId = entry.sessionId
+                val isFocused = focusedId != null && sessionId != null && sessionId == focusedId
+                val isAwaiting = entry.agentState.isAwaitingInput()
+
+                EinkAgentBlock(
+                    agentType = entry.agentType,
+                    displayName = displayName,
+                    projectName = entry.projectName,
+                    modelName = entry.modelName,
+                    effortLevel = entry.effortLevel,
+                    agentState = entry.agentState,
+                    activity = entry.activity,
+                    isFocused = isFocused,
+                    isAwaiting = isAwaiting,
+                    layoutScale = layoutScale,
+                    modifier = if (sessionId != null) {
+                        Modifier.clickable { onFocusSession(sessionId) }
+                    } else {
+                        Modifier
+                    },
+                )
+            }
+        }
+        if (sessionScroll.canScrollForward || sessionScroll.canScrollBackward) {
+            Text(
+                text = if (sessionScroll.canScrollForward) "↓ More sessions · swipe" else "↑ Earlier sessions · swipe",
+                fontSize = layoutScale.sessionMetaFont,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
@@ -259,8 +275,6 @@ fun EinkAgentPanel(
             )
         }
 
-
-        Spacer(modifier = Modifier.weight(1f))
 
         if (showFooterControls && (showSettingsButton || displayPrefs != null)) {
             // Settings gear + rotation toggle. Rotation stays available even

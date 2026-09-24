@@ -241,13 +241,13 @@ static void updateKeyHints(uint32_t now) {
 
 // One full-fill gauge row: label | bar (fill = pct) | % numeral | reset.
 static void renderGaugeRow(lv_obj_t* parent, int y, const char* label,
-                           float pct, const char* reset) {
-    lv_obj_t* name = makeLabel(parent, &lv_font_montserrat_16, Theme::HUDText, label);
-    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 10, y + 8);
+                           float pct, const char* reset, int rowHeight) {
+    lv_obj_t* name = makeLabel(parent, (rowHeight >= 34 ? &lv_font_montserrat_16 : &lv_font_montserrat_12), Theme::HUDText, label);
+    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 10, y + (rowHeight - 14) / 2);
 
     lv_obj_t* track = lv_obj_create(parent);
     lv_obj_remove_style_all(track);
-    lv_obj_set_size(track, 250, 34);
+    lv_obj_set_size(track, 250, rowHeight);
     lv_obj_set_style_bg_color(track, lv_color_hex(Theme::MidWater), 0);
     lv_obj_set_style_bg_opa(track, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(track, 4, 0);
@@ -260,7 +260,7 @@ static void renderGaugeRow(lv_obj_t* parent, int y, const char* label,
         if (w > 0) {
             lv_obj_t* fill = lv_obj_create(track);
             lv_obj_remove_style_all(fill);
-            lv_obj_set_size(fill, w < 4 ? 4 : w, 34);
+            lv_obj_set_size(fill, w < 4 ? 4 : w, rowHeight);
             lv_obj_set_style_bg_color(fill, lv_color_hex(gaugeColor(clamped)), 0);
             lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
             lv_obj_set_style_radius(fill, 4, 0);
@@ -270,29 +270,29 @@ static void renderGaugeRow(lv_obj_t* parent, int y, const char* label,
         // colors, white numerals).
         char pctText[8];
         snprintf(pctText, sizeof(pctText), "%d%%", (int)clamped);
-        lv_obj_t* p = makeLabel(track, &lv_font_montserrat_18, 0xFFFFFF, pctText);
+        lv_obj_t* p = makeLabel(track, (rowHeight >= 34 ? &lv_font_montserrat_18 : &lv_font_montserrat_14), 0xFFFFFF, pctText);
         lv_obj_align(p, LV_ALIGN_LEFT_MID, 8, 0);
     } else {
-        lv_obj_t* p = makeLabel(track, &lv_font_montserrat_18, Theme::HUDFaint, "--");
+        lv_obj_t* p = makeLabel(track, (rowHeight >= 34 ? &lv_font_montserrat_18 : &lv_font_montserrat_14), Theme::HUDFaint, "--");
         lv_obj_align(p, LV_ALIGN_LEFT_MID, 8, 0);
     }
 
-    lv_obj_t* r = makeLabel(parent, &lv_font_montserrat_14, Theme::HUDDim,
+    lv_obj_t* r = makeLabel(parent, (rowHeight >= 34 ? &lv_font_montserrat_14 : &lv_font_montserrat_12), Theme::HUDDim,
                             (haveData && reset[0]) ? reset : "");
-    lv_obj_align(r, LV_ALIGN_TOP_LEFT, 378, y + 9);
+    lv_obj_align(r, LV_ALIGN_TOP_LEFT, 378, y + (rowHeight - 14) / 2);
 }
 
 static void renderUsagePage() {
     // Only windows that exist render — a retired window (e.g. Codex 5h on
     // current plans) disappears instead of showing a fabricated "--" row.
     struct GaugeData { const char* label; float pct; char reset[20]; };
-    GaugeData rows[4];
+    GaugeData rows[5];
     uint8_t n = 0;
     char subsLine[96] = {0};
 
     lockState();
     auto take = [&](const char* label, float pct, const char* reset) {
-        if (pct < 0.0f) return;
+        if (pct < 0.0f || n >= sizeof(rows) / sizeof(rows[0])) return;
         rows[n].label = label;
         rows[n].pct = pct;
         strncpy(rows[n].reset, reset, sizeof(rows[n].reset) - 1);
@@ -330,7 +330,7 @@ static void renderUsagePage() {
     int pitch = n > 0 ? areaH / (n > 0 ? n : 1) : 0;
     if (pitch > 48) pitch = 48;
     for (uint8_t i = 0; i < n; i++) {
-        renderGaugeRow(s_body, 2 + i * pitch, rows[i].label, rows[i].pct, rows[i].reset);
+        renderGaugeRow(s_body, 2 + i * pitch, rows[i].label, rows[i].pct, rows[i].reset, (pitch > 37 ? 34 : pitch - 3));
     }
 
     if (haveSubs) {

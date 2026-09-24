@@ -1133,6 +1133,8 @@ function renderCompact32Frame(
   rail(usageEvent?.sevenDayPercent, [54, 154, 255]);
   rail(primary, [185, 86, 255]);
   rail(secondary, [104, 116, 255]);
+  rail(usageEvent?.zaiRateLimits?.primary?.stale === true
+    ? undefined : usageEvent?.zaiRateLimits?.primary?.usedPercent, [31, 99, 236]);
   const firstRailY = 32 - telemetry.length;
   telemetry.forEach(([raw, brand], row) => {
     const y = firstRailY + row;

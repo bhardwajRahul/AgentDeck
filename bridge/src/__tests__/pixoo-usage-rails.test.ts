@@ -40,6 +40,12 @@ function railRows(buf: Uint8Array): number[] {
 const compact32 = (u: UsageEvent | null) => renderFrame(null, u, [], 1_000, 32);
 
 describe('iDotMatrix 32×32 telemetry rails', () => {
+  it('draws GLM credits independently and retracts stale or removed windows', () => {
+    expect(railRows(compact32(usage({ zaiRateLimits: { primary: { usedPercent: 36, windowMinutes: 300 } } })))).toEqual([31]);
+    expect(railRows(compact32(usage({ zaiRateLimits: { primary: { usedPercent: 36, windowMinutes: 300, stale: true } } })))).toEqual([]);
+    expect(railRows(compact32(usage({ zaiRateLimits: {} })))).toEqual([]);
+  });
+
   it('spends no row on a provider that reports nothing', () => {
     // Claude-only: two rails, not four with two dead stripes.
     expect(railRows(compact32(usage({ fiveHourPercent: 42, sevenDayPercent: 17 })))).toEqual([30, 31]);

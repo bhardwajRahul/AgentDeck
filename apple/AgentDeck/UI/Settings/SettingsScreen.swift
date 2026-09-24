@@ -60,6 +60,7 @@ struct SettingsScreen: View {
     @State private var zaiApiKeyInput: String = ""
     @State private var zaiApiKeySaved: Bool = false
     @State private var zaiApiKeyError: String?
+    @State private var zaiApiKeySaving = false
     #if os(macOS)
     @State private var portInput: String = ""
     @StateObject private var weatherLocationPicker = WeatherLocationPicker()
@@ -921,6 +922,18 @@ struct SettingsScreen: View {
 
     private var dashboardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Picker("Dashboard type", selection: Binding(
+                get: { preferences.effectiveDashboardType },
+                set: { preferences.dashboardType = $0 }
+            )) {
+                ForEach(AppPreferences.DashboardType.available) { type in
+                    Text(type.title).tag(type)
+                }
+            }
+            Text(preferences.effectiveDashboardType.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Divider()
             // App-launch + menu-bar prefs are macOS-only — iOS has no
             // separate dashboard window to auto-open and no menu bar.
             // `openDashboardOnLaunch` is read in AgentDeckApp.swift's macOS
@@ -1731,56 +1744,68 @@ struct SettingsScreen: View {
                 if zaiApiKeySaved {
                     Text("Saved in Keychain")
                         .font(.system(size: 10))
-                        .foregroundStyle(.green)
+                        .foregroundStyle(DesignTokens.Status.idle)
                 }
             }
-            Text("Reads remaining plan credits directly from your z.ai account. The same key serves Claude Code, Codex and other tools from one quota.")
+            Text("Shows plan credit usage and MCP tool-call usage from your z.ai account, shared across your coding tools.")
                 .font(.system(size: 10))
                 .foregroundStyle(TerrariumHUD.subtext.opacity(0.75))
                 .fixedSize(horizontal: false, vertical: true)
             if let zaiApiKeyError {
                 Text(zaiApiKeyError)
                     .font(.system(size: 10))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DesignTokens.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .disabled(zaiApiKeySaving)
+        .onChange(of: stateHolder.state.zaiRateLimits?.capturedAt) { _, stamp in
+            if stamp != nil { zaiApiKeyError = nil }
         }
         #else
         EmptyView()
         #endif
     }
 
-    private func loadZaiApiKeyState() {
-        #if os(macOS) && AGENTDECK_APP_STORE
-        zaiApiKeySaved = ZaiUsageApiKeyStore.loadKey() != nil
-        zaiApiKeyError = nil
-        #endif
-    }
-
     private func saveZaiApiKey() {
         #if os(macOS) && AGENTDECK_APP_STORE
-        do {
-            try ZaiUsageApiKeyStore.saveKey(zaiApiKeyInput)
-            zaiApiKeyInput = ""
-            zaiApiKeySaved = true
-            zaiApiKeyError = nil
-            Task { await daemonService.restart() }
-        } catch {
-            zaiApiKeyError = "Could not save key: \(error.localizedDescription)"
+        let key = zaiApiKeyInput
+        zaiApiKeySaving = true
+        zaiApiKeyError = nil
+        Task {
+            defer { zaiApiKeySaving = false }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try ZaiUsageApiKeyStore.saveKey(key)
+                }.value
+                zaiApiKeyInput = ""
+                zaiApiKeySaved = true
+                if !(await daemonService.refreshZaiUsage()) {
+                    zaiApiKeyError = "Key saved. Usage could not be verified. Check your coding-plan key and connection; AgentDeck will retry automatically."
+                }
+            } catch {
+                zaiApiKeyError = "Could not save key: \(error.localizedDescription)"
+            }
         }
         #endif
     }
 
     private func clearZaiApiKey() {
         #if os(macOS) && AGENTDECK_APP_STORE
-        do {
-            try ZaiUsageApiKeyStore.deleteKey()
-            zaiApiKeyInput = ""
-            zaiApiKeySaved = false
-            zaiApiKeyError = nil
-            Task { await daemonService.restart() }
-        } catch {
-            zaiApiKeyError = "Could not clear key: \(error.localizedDescription)"
+        zaiApiKeySaving = true
+        zaiApiKeyError = nil
+        Task {
+            defer { zaiApiKeySaving = false }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try ZaiUsageApiKeyStore.deleteKey()
+                }.value
+                zaiApiKeyInput = ""
+                zaiApiKeySaved = false
+                _ = await daemonService.refreshZaiUsage()
+            } catch {
+                zaiApiKeyError = "Could not clear key: \(error.localizedDescription)"
+            }
         }
         #endif
     }
@@ -2014,7 +2039,7 @@ struct SettingsScreen: View {
             #endif
         case "zai":
             #if os(macOS) && AGENTDECK_APP_STORE
-            zaiApiKeyEditor
+            if !daemonService.isUsingExternalDaemon { zaiApiKeyEditor }
             #else
             Text("Configure on macOS to add a z.ai coding-plan key.")
                 .font(.system(size: 10))
@@ -2260,12 +2285,27 @@ struct SettingsScreen: View {
                     .truncationMode(.middle)
             }
 
+            if let error = preferences.codexConfigError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesignTokens.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
             HStack(spacing: 8) {
-                Button("Enable Codex Observation…") {
+                Button(preferences.codexConfigConsent == .accepted ? "Retry setup" : "Enable Codex Observation…") {
                     _ = CodexConfigInstaller.promptAndInstall()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(preferences.codexConfigConsent == .accepted && preferences.codexConfigInstalled)
+
+                if preferences.codexConfigConsent == .accepted {
+                    Button("Choose config.toml…") {
+                        _ = CodexConfigInstaller.promptAndInstall(chooseFile: true)
+                    }
+                    .buttonStyle(.bordered)
+                }
 
                 Button("Remove") {
                     CodexConfigInstaller.uninstallAndRevoke()
@@ -2283,7 +2323,7 @@ struct SettingsScreen: View {
         switch preferences.codexConfigConsent {
         case .unknown: return "Not configured"
         case .declined: return "Declined — click Enable to revisit"
-        case .accepted: return "Consent granted, not yet written"
+        case .accepted: return preferences.codexConfigError == nil ? "Setup incomplete — retry to finish" : "Setup needs attention"
         }
     }
     #endif

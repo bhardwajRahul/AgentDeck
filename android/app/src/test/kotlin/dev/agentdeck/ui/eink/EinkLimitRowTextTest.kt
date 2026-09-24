@@ -29,10 +29,19 @@ class EinkLimitRowTextTest {
             einkLimitRowText("5h", 84, stale = true),
             einkLimitRowText("Fable", 100, stale = true),
             einkLimitRowText("Sonnet", 7),
+            einkLimitRowText("GLM5h", 100, stale = true),
+            einkLimitRowText("MCP", 100),
         )
         rows.forEach {
             assertTrue("row overruns the card (${width(it)} cols): '$it'", width(it) <= EINK_LIMIT_ROW_COLUMNS)
         }
+    }
+
+    @Test
+    fun `GLM credits retain their provider and window at the widest percentage`() {
+        val row = einkLimitRowText("GLM5h", 100, stale = true)
+        assertTrue(row.startsWith("GLM5h "))
+        assertTrue(row.endsWith("100%!"))
     }
 
     @Test

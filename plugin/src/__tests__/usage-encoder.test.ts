@@ -347,6 +347,18 @@ describe('provider pages and the auto selection', () => {
     expect(pickAutoUsageProvider(DATA, 'zai')).toBe('claude');
   });
 
+  it('releases finished and removed sessions from auto-provider ranking', () => {
+    noteUsageProviderActivity('claude', 0, 100);
+    noteUsageProviderActivity('codex', 0, 200);
+    noteUsageProviderActivity('zai', 4, 300);
+    expect(pickAutoUsageProvider(DATA)).toBe('zai');
+    noteUsageProviderActivity('zai', 0, 0);
+    noteUsageProviderActivity('claude', 1, 100);
+    expect(pickAutoUsageProvider(DATA)).toBe('claude');
+    noteUsageProviderActivity('claude', 0, 100);
+    expect(pickAutoUsageProvider(DATA)).toBe('codex');
+  });
+
   it('buildProviderUsageEncoder dispatches per provider', () => {
     expect(buildProviderUsageEncoder('claude', DATA, true).title).toBe('CLAUDE');
     expect(buildProviderUsageEncoder('codex', DATA, true).title).toBe('CODEX');

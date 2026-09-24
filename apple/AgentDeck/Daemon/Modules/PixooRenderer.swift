@@ -776,6 +776,7 @@ final class PixooRenderer {
             (dashboardState.sevenDayPercent, (54, 154, 255)),
             (codexPrimary, (185, 86, 255)),
             (codexSecondary, (104, 116, 255)),
+            (dashboardState.zaiRateLimits?.primary?.stale == true ? nil : dashboardState.zaiRateLimits?.primary?.usedPercent, (31, 99, 236)),
         ] {
             if let raw = candidate.0 { telemetry.append((raw, candidate.1)) }
         }

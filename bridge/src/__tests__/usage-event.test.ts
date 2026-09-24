@@ -287,6 +287,21 @@ describe('buildUsageEvent Codex window normalization', () => {
       codexRateLimits,
     ] as Parameters<typeof buildUsageEvent>;
 
+  it.each([
+    [19, false, false],
+    [100, false, true],
+    [100, true, false],
+  ])('retires reserve for recovered or ended windows (%s, expired=%s)', (usedPercent, expired, keep) => {
+    const resetsAt = new Date(Date.now() + (expired ? -1 : 1) * 3600_000).toISOString();
+    const evt = buildUsageEvent(...codexArgs({
+      primary: { usedPercent, windowMinutes: 10080, resetsAt },
+      lunaReserve: { usedPercent: 10, available: true },
+    })) as UsageEvent;
+    const wire = JSON.parse(JSON.stringify(evt));
+    expect(wire.codexRateLimits.secondary.usedPercent).toBe(usedPercent);
+    expect(Boolean(wire.codexRateLimits.lunaReserve)).toBe(keep);
+  });
+
   it('marks an expired window stale and drops its resetsAt (no misleading "now")', () => {
     const expired = new Date(Date.now() - 30 * 60_000).toISOString();
     const evt = buildUsageEvent(
@@ -514,7 +529,7 @@ describe('buildUsageEvent Codex plan reconciliation', () => {
     const expired = { usedPercent: 20, resetsAt: new Date(Date.now() - 60_000).toISOString() };
     const live = { ...expired, resetsAt: future };
     for (const [reserve, expected] of [[expired, undefined], [live, live]] as const) {
-      const evt = buildUsageEvent(...args({ secondary: weekly, lunaReserve: reserve }, undefined)) as UsageEvent;
+      const evt = buildUsageEvent(...args({ secondary: { ...weekly, usedPercent: 100 }, lunaReserve: reserve }, undefined)) as UsageEvent;
       expect(evt.codexRateLimits?.lunaReserve).toEqual(expected);
     }
   });

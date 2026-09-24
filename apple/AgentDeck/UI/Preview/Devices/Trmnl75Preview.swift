@@ -1,3 +1,4 @@
+// The optional physical-key Aquarium page does not change this default dashboard mirror.
 // Trmnl75Preview.swift — TRMNL 7.5" e-ink (Seeed TRMNL OG DIY Kit) preview.
 //
 // Hand-maintained mirror of the firmware dashboard layout in
@@ -38,7 +39,7 @@
 // fails CI when the firmware drifts ahead of this mirror. Update this view and
 // re-pin whenever the firmware layout changes.
 //
-// SYNC-HASH esp32/src/ui/eink/eink_display.cpp 1eccd5e322bd0e534423ad24e6c4d8e5b1b441b2
+// SYNC-HASH esp32/src/ui/eink/eink_display.cpp a684689f2d9114eacebc3c951e4dfcacc8b1f488
 // SYNC-HASH esp32/src/ui/eink/eink_dashboard_layout.h 97b1d2a6f5c84e9cf733b3e5b3145ad45f3136e7
 
 import SwiftUI
@@ -412,6 +413,7 @@ struct Trmnl75Preview: View {
         let otherPlans = selection.live?.source.subscriptions.filter { sub in
             !rows.contains { row in
                 (row.label == "CLAUDE" && sub.name.hasPrefix("Claude")) ||
+                (row.label == "Z.AI" && sub.name.hasPrefix("GLM Coding Plan")) ||
                 (row.label == "CODEX" && (sub.name.hasPrefix("ChatGPT") || sub.name.hasPrefix("Codex")))
             }
         } ?? []
@@ -422,7 +424,7 @@ struct Trmnl75Preview: View {
             if !rows.isEmpty {
                 Rectangle().fill(ink).frame(height: 1.4)
                 ForEach(rows) { row in
-                    providerRow(glyphAgent: row.agent, label: row.label, plan: row.plan, p5: row.p5, p7: row.p7)
+                    providerRow(agentType: row.agentType, label: row.label, plan: row.plan, p5: row.p5, p7: row.p7, secondaryLabel: row.secondaryLabel)
                 }
             }
             if selection.state != .disconnected {
@@ -481,9 +483,9 @@ struct Trmnl75Preview: View {
         }
     }
 
-    private func providerRow(glyphAgent: PixooPreviewAgent, label: String, plan: String, p5: Double, p7: Double) -> some View {
+    private func providerRow(agentType: String, label: String, plan: String, p5: Double, p7: Double, secondaryLabel: String) -> some View {
         HStack(spacing: 6) {
-            PreviewCreatureGlyph(agent: glyphAgent, state: .idle, size: 13, tintOverride: ink)
+            PreviewUsageMark(agentType: agentType, size: 13, color: ink)
             VStack(alignment: .leading, spacing: 0) {
                 Text(label)
                     .font(.system(size: 8, weight: .bold))
@@ -494,7 +496,7 @@ struct Trmnl75Preview: View {
             // Present windows share the available width; an absent window
             // leaves its space to the remaining gauge.
             if p5 >= 0 { gaugeBar(tag: "5H", pct: p5) }
-            if p7 >= 0 { gaugeBar(tag: "7D", pct: p7) }
+            if p7 >= 0 { gaugeBar(tag: secondaryLabel, pct: p7) }
             if !plan.isEmpty {
                 Text(plan).font(.system(size: 8)).foregroundStyle(ink)
                     .frame(width: 90, alignment: .trailing).lineLimit(1)

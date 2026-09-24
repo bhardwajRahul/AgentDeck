@@ -69,6 +69,7 @@ void epd_draw_image(LilyEpdRect area, uint8_t* data, int mode);
 
 #if defined(BOARD_TRMNL_75) && !defined(BOARD_SIM_PULL)
 #define AGENTDECK_TRMNL_75_UI 1
+#include "ui/eink/paper_aquarium_generated.h"
 #endif
 
 namespace {
@@ -1265,7 +1266,9 @@ void drawSessionGrid(const Snap& s, const AgentDeckEink::Layout& layout) {
 // TRMNL 7.5" exposes the full five-face set. Pull-default readers expose the
 // durable GLANCE/DIGEST/ROSTER base set. DECISION and ANSWER become eligible
 // only while a physical action has opened an eight-minute interactive lease.
-enum class PaperFace : uint8_t { Glance, Decision, Answer, Digest, Roster };
+enum class PaperFace : uint8_t { Glance, Decision, Answer, Digest, Roster, Aquarium };
+PaperFace lastPaintedFace = PaperFace::Glance;
+uint8_t lastAquariumAttention = 0;
 
 PaperFace renderFace = PaperFace::Glance;
 PaperFace manualFace = PaperFace::Glance;
@@ -1363,6 +1366,7 @@ const char* faceName(PaperFace face) {
         case PaperFace::Answer:   return "ANSWER";
         case PaperFace::Digest:   return "DIGEST";
         case PaperFace::Roster:   return "ROSTER";
+        case PaperFace::Aquarium: return "AQUARIUM";
         default:                  return "GLANCE";
     }
 }
@@ -1438,6 +1442,25 @@ uint32_t paperHash(const Snap& s, PaperFace face) {
 #if defined(AGENTDECK_EPD47_UI)
     if (face == PaperFace::Glance) h = fnv(h, &epd47Page, sizeof(epd47Page));
 #endif
+    if (face == PaperFace::Aquarium) {
+        // Only the footer is dynamic. Tool strings, ticker and reset countdowns
+        // cannot repaint the plate or spend a panel cleanup cycle.
+        h = fnv(h, &s.totalSessions, sizeof(s.totalSessions));
+        h = fnv(h, &s.usageStale, sizeof(s.usageStale));
+        if (!s.bridgeConnected) return h;
+        uint8_t working = 0, attention = 0;
+        for (uint8_t i = 0; i < s.rowCount; i++) {
+            const auto status = AgentDeckEink::classifyStatus(s.rows[i].state);
+            if (status == AgentDeckEink::StatusKind::Processing) working++;
+            if (status == AgentDeckEink::StatusKind::Attention) attention++;
+        }
+        h = fnv(h, &working, sizeof(working));
+        h = fnv(h, &attention, sizeof(attention));
+        if (s.usageStale) return h;
+        const float values[] = {s.fiveH, s.sevenD, s.codexP, s.codexS, s.zaiP, s.zaiS};
+        for (float value : values) { const int percent = (int)value; h = fnv(h, &percent, sizeof(percent)); }
+        return fnv(h, &s.zaiIsMcp, sizeof(s.zaiIsMcp));
+    }
     if (face == PaperFace::Decision) return fnv(h, &lastDecisionHash, sizeof(lastDecisionHash));
     if (face == PaperFace::Answer) return fnv(h, &lastAnswerHash, sizeof(lastAnswerHash));
     if (face == PaperFace::Roster) return contentHash(s);
@@ -1973,7 +1996,7 @@ void drawGlanceFace(const Snap& s) {
     char summary[48]; snprintf(summary, sizeof(summary), "%u needs you  /  %u working", attention, working);
     { InkScope ink(attention ? accentColor() : GxEPD_BLACK);
       textAt(14, 72, summary, &FreeSansBold9pt7b); }
-    const int windowCount = (s.fiveH >= 0) + (s.sevenD >= 0) + (s.codexP >= 0) + (s.codexS >= 0);
+    const int windowCount = (s.fiveH >= 0) + (s.sevenD >= 0) + (s.codexP >= 0) + (s.codexS >= 0) + (s.zaiP >= 0);
     const int16_t usageTop = windowCount > 2 ? 158 : 192;
     const int i = primarySession(s);
     if (i >= 0) {
@@ -2000,6 +2023,7 @@ void drawGlanceFace(const Snap& s) {
     window("Claude 7D", s.sevenD, s.sevenReset);
     window("Codex 5H", s.codexP, s.codexPReset);
     window("Codex 7D", s.codexS, s.codexSReset);
+    window("Z.AI 5H", s.zaiP, s.zaiPReset);
     if (!windowCount) { textAt(14, y + 12, "No usage limits", &FreeSans9pt7b); y += 23; }
     const char* plan = s.codexPlan[0] ? s.codexPlan : s.claudePlan[0] ? s.claudePlan : s.agPlan;
     if (plan[0] && y < 266) {
@@ -2311,6 +2335,36 @@ void drawDigestFace(const Snap& s) {
     }
 }
 
+#if defined(AGENTDECK_TRMNL_75_UI)
+void drawAquariumFace(const Snap& s) {
+    // 38,400 bytes in flash, no decode buffer and no render-loop allocation.
+    display.drawBitmap(0, 0, PAPER_AQUARIUM, 800, 384, GxEPD_BLACK);
+    display.drawFastHLine(16, 386, W - 32, GxEPD_BLACK);
+    uint8_t working = 0, attention = 0;
+    for (uint8_t i = 0; i < s.rowCount; i++) {
+        const auto kind = AgentDeckEink::classifyStatus(s.rows[i].state);
+        if (kind == AgentDeckEink::StatusKind::Processing) working++;
+        if (kind == AgentDeckEink::StatusKind::Attention) attention++;
+    }
+    char summary[88];
+    if (s.bridgeConnected) snprintf(summary, sizeof(summary), "%u SESSIONS   %u WORKING   %u NEED YOU",
+        s.totalSessions, working, attention);
+    else snprintf(summary, sizeof(summary), "OFFLINE  -  RECONNECTING");
+    textAt(16, 405, summary, CLASSIC_FONT);
+    textRight(W - 16, 405, "AQUARIUM", CLASSIC_FONT);
+    const bool known = s.bridgeConnected && !s.usageStale;
+    const int16_t stride = (W - 32) / 3;
+    drawMiniUsage(16, 418, stride - 14, "Claude 5h", known ? s.fiveH : -1, 62);
+    drawMiniUsage(16, 437, stride - 14, "7d", known ? s.sevenD : -1, 62);
+    drawMiniUsage(16 + stride, 418, stride - 14, "Codex 5h", known ? s.codexP : -1, 62);
+    drawMiniUsage(16 + stride, 437, stride - 14, "7d", known ? s.codexS : -1, 62);
+    drawMiniUsage(16 + stride * 2, 418, stride - 14, "GLM 5h", known ? s.zaiP : -1, 62);
+    drawMiniUsage(16 + stride * 2, 437, stride - 14, s.zaiIsMcp ? "MCP" : "7d", known ? s.zaiS : -1, 62);
+    textAt(16, H - 9, "KEY1 NEXT   KEY2 HOME", CLASSIC_FONT);
+    textRight(W - 16, H - 9, known ? "QUIET UPDATES / URGENT ALERTS" : "USAGE UNAVAILABLE", CLASSIC_FONT);
+}
+#endif
+
 void drawSearching(const Snap& s) {
     display.fillScreen(GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
@@ -2393,6 +2447,9 @@ void drawDashboard(const Snap& s) {
     display.setTextColor(GxEPD_BLACK);
     setInk(false);
     switch (renderFace) {
+#if defined(AGENTDECK_TRMNL_75_UI)
+        case PaperFace::Aquarium: drawAquariumFace(s); break;
+#endif
         case PaperFace::Decision: drawDecisionFace(s); break;
         case PaperFace::Answer:   drawAnswerFace(s); break;
         case PaperFace::Digest:   drawDigestFace(s); break;
@@ -2497,7 +2554,12 @@ void refresh(void (*draw)(const Snap&), const Snap& s, bool full,
         partialCount = 0;
         lastFullMs = millis();
     } else {
-        display.setPartialWindow(0, 0, display.width(), display.height());
+#if defined(AGENTDECK_TRMNL_75_UI)
+        if (renderFace == PaperFace::Aquarium && lastPaintedFace == PaperFace::Aquarium)
+            display.setPartialWindow(0, 384, display.width(), display.height() - 384);
+        else
+#endif
+            display.setPartialWindow(0, 0, display.width(), display.height());
         partialCount++;
     }
     display.firstPage();
@@ -2732,7 +2794,8 @@ void update(float /*dt*/) {
         } else {
 #if defined(BOARD_TRMNL_75) && !defined(BOARD_SIM_PULL)
             switch (manualFace) {
-                case PaperFace::Glance: manualFace = PaperFace::Digest; break;
+                case PaperFace::Glance: manualFace = PaperFace::Aquarium; break;
+                case PaperFace::Aquarium: manualFace = PaperFace::Digest; break;
                 case PaperFace::Digest: manualFace = PaperFace::Answer; break;
                 case PaperFace::Answer: manualFace = PaperFace::Roster; break;
                 default: manualFace = PaperFace::Glance; break;
@@ -2879,7 +2942,8 @@ void render() {
 
     bool searching = !s.bridgeConnected;
     const bool leaseActive = interactiveLeaseActive(now);
-    const bool faceHeld = faceHoldUntilMs != 0 && (int32_t)(faceHoldUntilMs - now) > 0;
+    const bool faceHeld = manualFace == PaperFace::Aquarium ||
+        (faceHoldUntilMs != 0 && (int32_t)(faceHoldUntilMs - now) > 0);
 #if defined(AGENTDECK_EPD47_UI)
     const bool pageHeld = epd47PageHoldUntilMs != 0 &&
                           (int32_t)(epd47PageHoldUntilMs - now) > 0;
@@ -2919,7 +2983,7 @@ void render() {
     }
 #endif
     if (searching) {
-        renderFace = PaperFace::Roster;
+        renderFace = manualFace == PaperFace::Aquarium ? PaperFace::Aquarium : PaperFace::Roster;
 #if defined(AGENTDECK_EPD47_UI)
     } else if (faceHeld) {
         // A touch-selected tab/face owns the body for eight minutes. New work
@@ -2928,6 +2992,8 @@ void render() {
 #endif
     } else if (awaiting >= 0 && s.optionCount > 0 && lastDecisionHash != suppressedDecisionHash && leaseActive) {
         renderFace = PaperFace::Decision;
+    } else if (manualFace == PaperFace::Aquarium) {
+        renderFace = PaperFace::Aquarium;
     } else if (!searching && faceHoldUntilMs != 0 && (int32_t)(faceHoldUntilMs - now) > 0) {
         renderFace = manualFace;
     } else {
@@ -2964,8 +3030,17 @@ void render() {
         nmPendingWorking = 255;
     }
 #endif
+    const bool galleryTransition = renderFace != lastPaintedFace &&
+        (renderFace == PaperFace::Aquarium || lastPaintedFace == PaperFace::Aquarium);
+    uint8_t aquariumAttention = 0;
+    if (renderFace == PaperFace::Aquarium) {
+        for (uint8_t i = 0; i < s.rowCount; i++) if (isAwaiting(s.rows[i].state)) aquariumAttention++;
+    }
+    urgentTransition = urgentTransition || galleryTransition ||
+        (renderFace == PaperFace::Aquarium && aquariumAttention > lastAquariumAttention);
+    const uint32_t interval = renderFace == PaperFace::Aquarium ? 60000UL : MIN_REFRESH_INTERVAL_MS;
     if (!forceFull && !forceRefresh && !urgentTransition &&
-        (now - lastDrawMs) < MIN_REFRESH_INTERVAL_MS) return;  // coalesce bursts
+        (now - lastDrawMs) < interval) return;  // coalesce bursts
 
 #if defined(BOARD_LILYGO_EPD47)
     // A logical page transition is not a pigment reset. It gets the same quiet
@@ -2988,7 +3063,8 @@ void render() {
     // after boot rides `firstDraw`.
     const bool tickerReplaced = lastTickerShown[0] != '\0' && s.tickerCount > 0 &&
         strncmp(lastTickerShown, s.tickerText[0], sizeof(lastTickerShown) - 1) != 0;
-    bool full = forceFull || firstDraw || tickerReplaced ||
+    bool full = forceFull || firstDraw || galleryTransition ||
+                (renderFace != PaperFace::Aquarium && tickerReplaced) ||
                 partialCount >= FULL_EVERY_N_PARTIALS ||
                 (now - lastFullMs) > FULL_MAX_AGE_MS ||
                 (searching != wasSearching);
@@ -3005,7 +3081,7 @@ void render() {
     // Keep transport-offline distinct from a live daemon with an empty roster.
     // init() already uses this split; subsequent refreshes must preserve it or
     // the first timed repaint replaces OFFLINE with "no active sessions".
-    refresh(searching ? drawSearching : drawDashboard, s, full);
+    refresh(searching && renderFace != PaperFace::Aquarium ? drawSearching : drawDashboard, s, full);
 #endif
 
 #if defined(AGENTDECK_EPD47_UI)
@@ -3022,6 +3098,8 @@ void render() {
 
     displayedDecisionHash = renderFace == PaperFace::Decision ? decisionHash(s) : 0;
     lastHash = h;
+    lastPaintedFace = renderFace;
+    lastAquariumAttention = aquariumAttention;
     lastDrawMs = now;
     firstDraw = false;
     forceFull = false;

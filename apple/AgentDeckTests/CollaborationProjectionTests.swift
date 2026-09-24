@@ -1,5 +1,6 @@
 import XCTest
 #if os(macOS)
+import Combine
 import SwiftUI
 #endif
 @testable import AgentDeck
@@ -8,6 +9,39 @@ final class CollaborationProjectionTests: XCTestCase {
     private func sample(_ events: String) throws -> CollaborationSample {
         try JSONDecoder().decode(CollaborationSample.self,
             from: Data("{\"id\":\"t1\",\"sessionId\":\"s1\",\"events\":\(events)}".utf8))
+    }
+
+    func testRelatedNavigationUsesIdentityAndCurrentRosterState() throws {
+        let roster = try JSONDecoder().decode([SessionInfo].self, from: Data("""
+        [{"id":"parent","port":1,"alive":true,"projectName":"Shared","state":"processing"},
+         {"id":"worker","port":2,"alive":true,"projectName":"Shared","state":"processing"},
+         {"id":"waiting","port":3,"alive":true,"projectName":"Review","state":"awaiting_permission"},
+         {"id":"unrelated","port":4,"alive":true,"projectName":"Shared","state":"awaiting_permission"}]
+        """.utf8))
+        let value = try sample("""
+        [{"kind":"relation","ts":1,"relation":"spawned","direction":"out","phase":"closed","peerSessionId":"worker"},
+         {"kind":"relation","ts":2,"relation":"messaged","direction":"in","phase":"closed","peerSessionId":"waiting"},
+         {"kind":"relation","ts":3,"relation":"messaged","direction":"in","phase":"closed","peerSessionId":"worker"},
+         {"kind":"relation","ts":4,"relation":"spawned","direction":"in","phase":"open","peerSessionId":"parent"},
+         {"kind":"relation","ts":5,"relation":"spawned","direction":"out","phase":"open","peerSessionId":"missing"},
+         {"kind":"relation","ts":6,"relation":"spawned","direction":"out","phase":"open","peerSessionId":"unrelated","evidence":"bash_claude_p"}]
+        """)
+        let relations = CollaborationProjection.relations(sample: value, sessionId: "s1", taskId: "t1")
+        let peers = CollaborationProjection.relatedSessions(relations, roster: roster, excluding: "parent")
+        XCTAssertEqual(peers.map(\.id), ["waiting", "worker"])
+        XCTAssertEqual(peers.last?.state, "processing", "A historical close must not override live state")
+        XCTAssertTrue(CollaborationProjection.relatedSessions([], roster: roster, excluding: "parent").isEmpty)
+    }
+
+    func testTaskHeadingKeepsTaskSeparateFromResultAndIgnoresBlankTitles() throws {
+        let task = try JSONDecoder().decode(CollaborationTask.self, from: Data("""
+        {"id":"t","sessionId":"s","title":"Review layout","summary":"Two issues found"}
+        """.utf8))
+        XCTAssertEqual(task.displayTitle, "Review layout")
+        let untitled = try JSONDecoder().decode(CollaborationTask.self, from: Data("""
+        {"id":"t","sessionId":"s","title":"  ","summary":"Two issues found"}
+        """.utf8))
+        XCTAssertEqual(untitled.displayTitle, "Two issues found")
     }
 
     func testOnlyTypedEvidenceCreatesBranchesAndCompletionWins() throws {
@@ -387,6 +421,30 @@ final class CollaborationFeedTests: XCTestCase {
         XCTAssertNil(feed.task)
     }
 
+    func testHistoricalTaskSelectionDoesNotJumpToLatestAndMissingTaskDoesNotSubstitute() async {
+        let history = #"{"tasks":[{"id":"new","sessionId":"s1","title":"New task"},{"id":"t1","sessionId":"s1","title":"Earlier task"}]}"#
+        let responses = CollaborationResponses([json(history), json(detail), json(history), json(detail), json(page)])
+        let feed = CollaborationFeed(load: { try await responses.read($0) }, pause: { throw CancellationError() })
+        await feed.observe(sessionId: "s1", port: 1, taskId: "t1")
+        XCTAssertEqual(feed.task?.id, "t1")
+        XCTAssertEqual(feed.recentTasks.map(\.id), ["new", "t1"])
+        await feed.observe(sessionId: "s1", port: 1, taskId: "t1")
+        XCTAssertEqual(feed.task?.id, "t1", "Polling must preserve the historical selection")
+        await feed.observe(sessionId: "s1", port: 1, taskId: "missing")
+        XCTAssertEqual(feed.state, .taskUnavailable)
+        XCTAssertNil(feed.task)
+        XCTAssertTrue(feed.relations.isEmpty)
+    }
+
+    func testHistoryPageRejectsForeignSessionEvenAfterValidFirstRow() async {
+        let responses = CollaborationResponses([json(#"{"tasks":[{"id":"t1","sessionId":"s1"},{"id":"t2","sessionId":"foreign"}]}"#)])
+        let feed = CollaborationFeed(load: { try await responses.read($0) }, pause: { throw CancellationError() })
+        await feed.observe(sessionId: "s1", port: 1)
+        XCTAssertEqual(feed.state, .unsupported)
+        XCTAssertTrue(feed.recentTasks.isEmpty)
+        XCTAssertNil(feed.task)
+    }
+
     func testRenderCollaborationHistoryAtRailWidth() async throws {
         let holder = AgentStateHolder()
         holder.stopConnectionAttempts()
@@ -409,6 +467,12 @@ final class CollaborationFeedTests: XCTestCase {
         await feed.observe(sessionId: "s1", port: 1)
         let view = CollaborationPanel(maxHeight: 1000, port: 1, feed: feed, inspectedID: "s1")
             .environmentObject(holder).frame(width: 390, height: 1000).environment(\.colorScheme, .dark)
+        // Mounting the panel starts its own async observation. Wait for that
+        // refresh rather than assuming a CI runner finishes it within 100 ms.
+        let refreshed = expectation(description: "Mounted collaboration feed is ready")
+        let readySubscription = feed.$state.dropFirst().first(where: { $0 == .ready })
+            .sink { _ in refreshed.fulfill() }
+        defer { readySubscription.cancel() }
         let hosting = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 1000),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -416,7 +480,7 @@ final class CollaborationFeedTests: XCTestCase {
         window.contentView = hosting
         defer { window.close() }
         hosting.frame = NSRect(x: 0, y: 0, width: 390, height: 1000)
-        try await Task.sleep(for: .milliseconds(100))
+        await fulfillment(of: [refreshed], timeout: 5)
         XCTAssertEqual(holder.state.focusedSessionId, "s1")
         XCTAssertEqual(feed.state, .ready)
         XCTAssertEqual(feed.relations.count, 3)

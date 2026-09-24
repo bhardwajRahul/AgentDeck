@@ -1071,6 +1071,12 @@ final class DaemonService: ObservableObject {
 
     // MARK: - Device Summary Refresh
 
+    /// Refresh only the edited provider; keep sessions and devices connected.
+    func refreshZaiUsage() async -> Bool {
+        guard let server, !isUsingExternalDaemon else { return false }
+        return await server.refreshZaiUsage(configurationChanged: true)
+    }
+
     /// Refresh the published `deviceSummary` from the running daemon's
     /// in-process module snapshots. Called on each health-monitor tick.
     /// Zero network — snapshots come straight from the module actors.

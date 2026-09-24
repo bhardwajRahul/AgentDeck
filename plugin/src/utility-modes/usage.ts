@@ -333,8 +333,8 @@ export function noteUsageProviderActivity(
   processing: number,
   recencyScore: number,
 ): void {
-  providerProcessing[provider] = Math.max(providerProcessing[provider] ?? 0, processing);
-  providerActivity[provider] = Math.max(providerActivity[provider] ?? 0, recencyScore);
+  providerProcessing[provider] = Math.max(0, processing);
+  providerActivity[provider] = Math.max(0, recencyScore);
 }
 
 /**

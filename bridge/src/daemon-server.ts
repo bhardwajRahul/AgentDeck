@@ -16,6 +16,7 @@ import { transcribeDeviceAudio, type VoiceTranscriptionSettings } from './device
 import { createServer, type Server, type ServerResponse } from 'http';
 import { createHash, randomUUID } from 'crypto';
 import WebSocket from 'ws';
+import { trackDaemonSockets } from './daemon-socket-drain.js';
 import { BridgeCore, buildCappedTimelineHistory } from './bridge-core.js';
 import { buildDisplayStateEvent } from './display-dim.js';
 import { SERIAL_FORWARDED_EVENTS } from '@agentdeck/shared/protocol';
@@ -24,6 +25,7 @@ import { OpenClawAdapter } from './adapters/openclaw.js';
 import { BridgeLogStream } from './log-stream.js';
 import { distBuildId } from './daemon-build-identity.js';
 import { PassiveSessionObserver } from './passive-observer.js';
+import { HookClaudeSessions } from './hook-claude-sessions.js';
 import { SessionTimelineRelay } from './session-timeline-relay.js';
 import { SessionFocusRelay } from './session-focus-relay.js';
 import { SubagentTimelineTracker } from './subagent-timeline.js';
@@ -161,10 +163,11 @@ import { startedBySupervisor } from './daemon-supervisor.js';
 import { isForeignDaemon } from './daemon-takeover.js';
 import { loadDaemonSettings } from './daemon-settings.js';
 import { dashboardProviders } from './dashboard-providers.js';
+import { listenOnce, listenWithReclaim } from './daemon-listen.js';
 import {
   resolveDaemonPort,
   describeDaemonPortSource,
-  PREFERRED_PORT_RECLAIM_MS,
+  preferredPortReclaimBudgetMs,
   type DaemonPortSource,
 } from './daemon-port.js';
 import { enableClaudeUsageRecovery, fetchUsageFromApi, hasOAuthToken, resetConsecutiveFailures, type ApiUsageData, type UsageFetchResult } from './usage-api.js';
@@ -1638,6 +1641,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   // Codex sessions known only from `codex_*` hooks — the backstop for when the
   // process scan can't see one (lsof timeout, no rollout held open).
   const hookCodexSessions = new HookCodexSessions();
+  const hookClaudeSessions = new HookClaudeSessions();
   // Who last moved the hub's global state machine — see hub-state-identity.ts.
   const hubDriver = new HubStateDriverTracker();
   // Codex Desktop ambient-suggestions threads — see codex-ambient-hooks.ts.
@@ -2142,7 +2146,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           const confirmed = [
             ...(core.oauthConnected ? ['claude'] : []),
             ...(core.lastBuiltCodexRateLimits ? ['codex'] : []),
-            ...(core.cachedZaiQuota ? ['zai'] : []),
+            ...(core.cachedZaiQuota?.primary || core.cachedZaiQuota?.secondary ? ['zai'] : []),
             ...(core.cachedGatewayConnected ? ['openclaw'] : []),
             ...((core.cachedMlxModels?.length ?? 0) > 0 ? ['mlx'] : []),
             ...(core.cachedOllamaStatus ? ['ollama'] : []),
@@ -3205,6 +3209,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
             : JSON.stringify({ received: true }));
           return;
         }
+        // After child-only filtering and before any state-machine broadcast.
+        if (hookClaudeSessions.note(eventName, json)) core.maybeBroadcastSessionsList();
         const hookTimelineEntry = claudeHookTimelineEntry(eventName, json);
         if (hookTimelineEntry) core.bridgeTimeline.addEntry(hookTimelineEntry);
         // Hook-derived Codex session rows. Placed after the child-hook return so
@@ -3936,12 +3942,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
 
     if (req.method === 'POST' && pathname === '/shutdown') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'shutting_down' }));
+      res.end(JSON.stringify({ status: 'shutting_down' }), () => { void core.shutdown(); });
       const hardExitTimer = setTimeout(() => {
         log('[agentdeck] Shutdown route timeout — forcing exit.');
         exitProcessNow(0);
       }, 5000);
-      core.shutdown();
       return;
     }
 
@@ -4082,6 +4087,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     res.end(JSON.stringify({ error: 'Not found' }));
   });
 
+  const drainDaemonSockets = trackDaemonSockets(httpServer);
+
   // Catch HTTP-level client errors (malformed requests, abrupt disconnects during upgrade)
   httpServer.on('clientError', (err, socket) => {
     debug('daemon', `HTTP client error: ${(err as Error).message}`);
@@ -4095,90 +4102,41 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
   // with no LAN devices can opt into a loopback-only posture (issue #145),
   // which also silences everything the daemon emits (see network-posture.ts).
   const bindHost = bindHostFor(posture);
-  await new Promise<void>((resolve, reject) => {
-    httpServer.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        // Port was grabbed between our check and bind — find alternative
-        reject(new Error(`EADDRINUSE:${port}`));
-      } else {
-        reject(err);
-      }
-    });
-    httpServer.listen(port, bindHost, () => resolve());
-  }).catch(async (err: Error) => {
-    // Handle race condition: port became unavailable after our pre-bind probe.
-    // This is the concurrent-start case (e.g. two logon-trigger fires landing
-    // within ~1s): both processes pass the singleton guard because neither has
-    // bound yet, then exactly one wins the OS bind and the rest get EADDRINUSE.
-    if (err.message.startsWith('EADDRINUSE:') && port === requestedPort) {
-      // Re-probe the occupant. If ANOTHER daemon grabbed the port, we lost the
-      // race — exit instead of falling back to a new port, or we'd leave two
-      // daemons running (and clobber daemon.json to point at the wrong one).
-      // Only fall back when a *non-daemon* (e.g. a session bridge) holds it.
-      const occupant = await probeDaemonHealth(requestedPort);
-      // Harden against a forged/stale `mode:'daemon'` response squatting the
-      // port: concede (exit) only to a verified live distinct daemon. A claim
-      // backed by a dead/own PID is treated as stale → fall through to a fresh
-      // port and keep running. See `shouldConcedePortToOccupant`.
-      if (shouldConcedePortToOccupant(occupant, process.pid)) {
-        const who = typeof occupant?.pid === 'number' ? `PID ${occupant.pid}` : 'a daemon';
-        log(`[agentdeck] Lost startup race for port ${requestedPort} (${who} already serving). Exiting.`);
-        process.exit(0);
-      }
-      if (occupant?.mode === 'daemon') {
-        log(`[agentdeck] Port ${requestedPort} reports a daemon but PID ${occupant.pid} is not a live distinct process; treating as stale and falling back.`);
-      }
-
-      // Nobody answered on the preferred port, yet it refuses to bind. That is
-      // not a peer to yield to — it is the kernel still holding a port whose
-      // owner has already gone: macOS keeps a NECP reservation for ~14s after
-      // an `NWListener.cancel()` (measured 2026-08-06: bindable at ~17s, with
-      // `lsof` showing zero sockets throughout), and a half-closed socket in
-      // TIME_WAIT/LAST_ACK looks the same from here.
-      //
-      // Without this wait the daemon conceded instantly and moved to 9121 —
-      // permanently, because nothing ever moved it back. Seconds after that
-      // decision the canonical port was free and owned by nobody. Waiting is
-      // the whole recovery: `waitForPortBindable` polls, so a kernel-held port
-      // costs the ~14s it is actually held, and only a genuinely occupied port
-      // pays the full budget before falling back.
-      if (!occupant) {
-        log(`[agentdeck] Port ${requestedPort} is held but nothing answers /health — usually the kernel still `
-          + `releasing it after the previous owner exited. Waiting up to ${Math.round(PREFERRED_PORT_RECLAIM_MS / 1000)}s…`);
-        if (await waitForPortBindable(requestedPort, PREFERRED_PORT_RECLAIM_MS)) {
-          const bound = await new Promise<boolean>((resolve) => {
-            const onError = () => resolve(false);
-            httpServer.once('error', onError);
-            httpServer.listen(requestedPort, bindHost, () => {
-              httpServer.removeListener('error', onError);
-              resolve(true);
-            });
-          });
-          if (bound) {
-            log(`[agentdeck] Port ${requestedPort} came free — bound it instead of falling back.`);
-            return;
-          }
-          // Lost it again between the probe bind and ours. Rare, and the
-          // fallback below is exactly the right answer for it.
-          log(`[agentdeck] Port ${requestedPort} was taken again before this daemon could bind it.`);
-        } else {
-          log(`[agentdeck] Port ${requestedPort} is still held after ${Math.round(PREFERRED_PORT_RECLAIM_MS / 1000)}s — `
-            + `something outside AgentDeck is listening on it, or a sleeping device is holding a half-closed socket.`);
+  if (port === requestedPort) {
+    const budgetMs = preferredPortReclaimBudgetMs();
+    const result = await listenWithReclaim(httpServer, {
+      port, host: bindHost, budgetMs,
+      onConflict: async () => {
+        const occupant = await probeDaemonHealth(requestedPort);
+        // Ownership is checked on every discovery, including a peer that
+        // appears while startup is waiting. Never evict a peer here.
+        if (occupant?.mode === 'daemon' && isForeignDaemon(occupant)) {
+          log(`[agentdeck] Port ${requestedPort} is held by another user's daemon — leaving it alone.`);
+          return 'fallback';
         }
-      }
-
-      port = await findAvailablePort();
-      log(`[agentdeck] Port ${requestedPort} grabbed by ${occupant?.mode ?? 'a non-daemon'}, retrying on ${port}...`);
-      log(`[agentdeck] This daemon prefers port ${requestedPort} (${describeDaemonPortSource(preferred.source)}). `
-        + `Clients resolve the actual port from daemon.json; 'agentdeck daemon restart' aims at the preferred port again.`);
-      await new Promise<void>((resolve, reject) => {
-        httpServer.on('error', (e: NodeJS.ErrnoException) => reject(e));
-        httpServer.listen(port, bindHost, () => resolve());
-      });
-    } else {
-      throw err;
+        if (shouldConcedePortToOccupant(occupant, process.pid)) {
+          log(`[agentdeck] Lost startup race for port ${requestedPort}; another daemon is serving. Exiting.`);
+          return 'concede';
+        }
+        // An answering non-daemon or stale daemon is not a silent handoff.
+        return occupant ? 'fallback' : 'retry';
+      },
+      onWaiting: () => log(`[agentdeck] Port ${requestedPort} cannot bind and /health did not respond. `
+        + `Retrying the listener for up to ${Math.round(budgetMs / 1000)}s; the cause is unknown.`),
+    });
+    if (result === 'concede') {
+      process.exit(0);
     }
-  });
+    if (result === 'fallback') {
+      port = await findAvailablePort();
+      log(`[agentdeck] Preferred port ${requestedPort} (${describeDaemonPortSource(preferred.source)}) `
+        + `remains unavailable; binding fallback ${port}. `
+        + `Clients resolve daemon.json; 'agentdeck daemon restart' retries the preferred port.`);
+      await listenOnce(httpServer, port, bindHost);
+    }
+  } else {
+    await listenOnce(httpServer, port, bindHost);
+  }
 
   log(describeDaemonPosture(posture, port));
   if (preferred.source === 'settings' || preferred.source === 'env') {
@@ -4503,7 +4461,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         relayed: u,
         ownCodexRateLimits: core.lastBuiltCodexRateLimits,
         ownLiveFamilyAuthorityExpiresAtMs: core.lastBuiltCodexLiveFamilyAuthorityExpiresAtMs,
-        ownZaiRateLimits: core.lastBuiltZaiQuota ?? undefined,
+        ownZaiRateLimits: core.zaiQuotaForWire() ?? undefined,
         buildOwnUsage: () => core.buildUsage() as UsageEvent,
       }), ollamaStatus: core.cachedOllamaStatus ?? undefined,
       mlxModels: core.cachedMlxModels ?? [], mlxResidency: core.cachedMlxResidency });
@@ -4957,9 +4915,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
     // synthesize a `codex-app` row for any thread the process scan missed —
     // Swift's only Codex-app source, here a second opinion on top of the
     // observer. See bridge/src/codex-otel.ts.
+    // Claude hooks correct only existing row state/tool before awaiting wins.
+    const passive = hookClaudeSessions.applyTo(passiveSessionObserver.collect(sessions));
     const observed = applyAwaitingOverlayToObserved(
       hookOpenCodeSessions.applyTo(
-        hookCodexSessions.applyTo(codexOtel.applyTo(passiveSessionObserver.collect(sessions))),
+        hookCodexSessions.applyTo(codexOtel.applyTo(passive)),
       ),
     )
       .map((s) => {
@@ -6035,6 +5995,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       return;
     }
     if (cmd.type === 'query_usage') {
+      void core.refreshZaiUsage().catch(() => {});
       fetchUsageRelayed(port).then((result) => core.applyUsageResult(result));
     }
   };
@@ -7255,6 +7216,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
 
   // ===== Shutdown =====
   core.onShutdown(async () => {
+    drainDaemonSockets();
     clearInterval(permissionSweepTimer);
     clearInterval(daemonInfoHealTimer);
     clearInterval(openclawFeedTimer);

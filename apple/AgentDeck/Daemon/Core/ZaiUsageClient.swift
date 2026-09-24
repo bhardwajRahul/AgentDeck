@@ -40,7 +40,11 @@ enum ZaiUsageApiKeyStore {
         }
         let data = Data(trimmed.utf8)
         let query = keychainQuery()
-        SecItemDelete(query as CFDictionary)
+        let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(updateStatus), userInfo: nil)
+        }
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -84,53 +88,99 @@ struct ZaiUsageResult: Sendable {
 /// Lock-guarded client state. Sync accessors only — the lock must never be
 /// held across a suspension point, so every method is synchronous and small
 /// (the `UsageCacheDataBox` pattern from UsageAPIClient.swift).
-private final class ZaiUsageState: @unchecked Sendable {
+final class ZaiUsageState: @unchecked Sendable {
     private let lock = NSLock()
-    private var _cached: ZaiRateLimits?
-    private var _fetchedAt: Date = .distantPast
+    private var key: String?
+    private var generation = 0
+    private var reading: ZaiRateLimits?
+    private var fetchedAt: Date = .distantPast
     private var failures = 0
     private var lastAttemptAt: Date = .distantPast
+    private var fetching = false
+
+    func revision() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return generation
+    }
+
+    /// A settings edit invalidates pending responses before the next key read.
+    func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        reset()
+        key = nil
+    }
+
+    private func reset() {
+        generation += 1
+        reading = ZaiRateLimits()
+        fetchedAt = .distantPast
+        failures = 0
+        lastAttemptAt = .distantPast
+        fetching = false
+    }
+
+    func prepare(key newKey: String?, expectedRevision: Int) -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        guard generation == expectedRevision else { return nil }
+        if key != newKey {
+            reset()
+            key = newKey
+        }
+        return generation
+    }
 
     func cached() -> (data: ZaiRateLimits, fetchedAt: Date)? {
         lock.lock(); defer { lock.unlock() }
-        guard let data = _cached else { return nil }
-        return (data, _fetchedAt)
+        return reading.map { ($0, fetchedAt) }
     }
 
-    func store(_ data: ZaiRateLimits, at fetchedAt: Date) {
+    @discardableResult
+    func store(_ data: ZaiRateLimits, at date: Date, revision: Int) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        _cached = data
-        _fetchedAt = fetchedAt
+        guard generation == revision else { return false }
+        reading = data
+        fetchedAt = date
+        failures = 0
+        return true
     }
 
     func cacheFresh(now: Date, ttl: TimeInterval, slack: TimeInterval) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return now.timeIntervalSince(_fetchedAt) < ttl - slack
+        let age = now.timeIntervalSince(fetchedAt)
+        return age >= 0 && age < ttl - slack
     }
 
-    /// Backoff gate: returns true when a network attempt may start now.
-    func shouldAttempt(now: Date, backoffs: [TimeInterval]) -> Bool {
+    func beginAttempt(now: Date, backoffs: [TimeInterval], revision: Int) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard failures > 0 else { return true }
-        let backoff = backoffs[min(failures - 1, backoffs.count - 1)]
-        return now.timeIntervalSince(lastAttemptAt) >= backoff
-    }
-
-    func markAttempt(now: Date) {
-        lock.lock(); defer { lock.unlock() }
+        guard generation == revision, !fetching else { return false }
+        if failures > 0 && now.timeIntervalSince(lastAttemptAt) < backoffs[min(failures - 1, backoffs.count - 1)] {
+            return false
+        }
+        fetching = true
         lastAttemptAt = now
+        return true
     }
 
-    /// Increments the failure count and returns it (for the log-once policy).
-    func noteFailure() -> Int {
+    func endAttempt(revision: Int) {
         lock.lock(); defer { lock.unlock() }
+        if generation == revision { fetching = false }
+    }
+
+    func noteFailure(revision: Int) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        guard generation == revision else { return 0 }
         failures += 1
         return failures
     }
+}
 
-    func resetFailures() {
-        lock.lock(); defer { lock.unlock() }
-        failures = 0
+/// Never forward a provider credential through a redirect.
+private final class ZaiNoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 
@@ -148,19 +198,23 @@ final class ZaiUsageClient: @unchecked Sendable {
     private static let backoffIntervals: [TimeInterval] = [45, 90, 180, 300]
 
     private let state = ZaiUsageState()
+    private let keyLoader: @Sendable () -> String?
+    private let session: URLSession
 
-    /// Keychain reads can block on `mach_msg2_trap` while macOS shows the ACL
-    /// approval prompt (a first-run access from a newly signed build). The
-    /// daemon actor must never wait on that — the whole daemon (health
-    /// included) shares the actor — so availability checks hop to a detached
-    /// task. Same idiom as SettingsScreen's Keychain reads.
-    static func hasKeyOffActor() async -> Bool {
-        await Task.detached(priority: .userInitiated) {
-            ZaiUsageApiKeyStore.loadKey() != nil
-        }.value
+    init(keyLoader: @escaping @Sendable () -> String? = { ZaiUsageApiKeyStore.loadKey() },
+         session: URLSession? = nil) {
+        self.keyLoader = keyLoader
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForResource = 10
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        self.session = session ?? URLSession(configuration: configuration, delegate: ZaiNoRedirectDelegate(), delegateQueue: nil)
     }
 
-    func hasKey() -> Bool { ZaiUsageApiKeyStore.loadKey() != nil }
+    deinit { session.invalidateAndCancel() }
+
+    func invalidate() { state.invalidate() }
 
     /// The cached reading and when it was fetched, if any.
     func cached() -> (data: ZaiRateLimits, fetchedAt: Date)? {
@@ -169,11 +223,12 @@ final class ZaiUsageClient: @unchecked Sendable {
 
     /// Fetch the quota. Returns a not-fresh cached reading on failure, and
     /// `{data: nil, fresh: false}` only when no key is configured. The key
-    /// read happens off the caller's actor (see `hasKeyOffActor`).
+    /// read happens in a detached task so a Keychain prompt cannot block the daemon actor.
     func fetch() async -> ZaiUsageResult {
-        let key = await Task.detached(priority: .userInitiated) {
-            ZaiUsageApiKeyStore.loadKey()
-        }.value
+        let expectedRevision = state.revision()
+        let keyLoader = self.keyLoader
+        let key = await Task.detached(priority: .userInitiated) { keyLoader() }.value
+        guard let revision = state.prepare(key: key, expectedRevision: expectedRevision) else { return failResult() }
         guard let key else {
             return ZaiUsageResult(data: nil, fresh: false)
         }
@@ -187,15 +242,14 @@ final class ZaiUsageClient: @unchecked Sendable {
             let payg = ZaiRateLimits(
                 primary: nil, secondary: nil, planType: nil, limitId: "payg", capturedAt: nil
             )
-            state.store(payg, at: Date())
-            state.resetFailures()
+            state.store(payg, at: Date(), revision: revision)
             return ZaiUsageResult(data: payg, fresh: true)
         }
 
-        guard state.shouldAttempt(now: Date(), backoffs: Self.backoffIntervals) else {
+        guard state.beginAttempt(now: Date(), backoffs: Self.backoffIntervals, revision: revision) else {
             return ZaiUsageResult(data: state.cached()?.data, fresh: false)
         }
-        state.markAttempt(now: Date())
+        defer { state.endAttempt(revision: revision) }
 
         var request = URLRequest(url: Self.quotaURL)
         request.httpMethod = "GET"
@@ -207,28 +261,22 @@ final class ZaiUsageClient: @unchecked Sendable {
         request.httpShouldHandleCookies = false
 
         do {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 10
-            configuration.urlCache = nil
-            configuration.httpCookieStorage = nil
-            let session = URLSession(configuration: configuration)
-            defer { session.finishTasksAndInvalidate() }
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                noteFailure("no HTTP response")
+                noteFailure("no HTTP response", revision: revision)
                 return failResult()
             }
             guard http.statusCode == 200 else {
-                noteFailure("HTTP \(http.statusCode)")
+                noteFailure("HTTP \(http.statusCode)", revision: revision)
                 return failResult()
             }
             guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let envelope = body["data"] as? [String: Any],
-                  (body["code"] as? NSNumber)?.intValue == 200 || body["success"] as? Bool == true
+                  (body["code"] as? NSNumber)?.intValue == 200, body["success"] as? Bool == true
             else {
                 // The envelope answers 200 with {code:500} for a moved path —
                 // an HTTP-200 failure is still a failure.
-                noteFailure("error envelope")
+                noteFailure("error envelope", revision: revision)
                 return failResult()
             }
 
@@ -243,11 +291,10 @@ final class ZaiUsageClient: @unchecked Sendable {
                 limitId: windows.limitId,
                 capturedAt: ISO8601DateFormatter().string(from: Date())
             )
-            state.resetFailures()
-            state.store(reading, at: Date())
+            guard state.store(reading, at: Date(), revision: revision) else { return failResult() }
             return ZaiUsageResult(data: reading, fresh: true)
         } catch {
-            noteFailure(error.localizedDescription)
+            noteFailure("network request failed", revision: revision)
             return failResult()
         }
     }
@@ -269,11 +316,11 @@ final class ZaiUsageClient: @unchecked Sendable {
         ZaiUsageResult(data: state.cached()?.data, fresh: false)
     }
 
-    private func noteFailure(_ reason: String) {
+    private func noteFailure(_ reason: String, revision: Int) {
         // First failure and every fifth after it — the key and the response
         // body never appear in a log line.
-        let count = state.noteFailure()
-        if count == 1 || count % 5 == 0 {
+        let count = state.noteFailure(revision: revision)
+        if count == 1 || (count > 0 && count % 5 == 0) {
             DaemonLogger.shared.debug("ZaiUsage", "fetch failed (\(count)x): \(reason)")
         }
     }

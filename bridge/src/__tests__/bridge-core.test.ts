@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServer } from 'http';
+import { resolveRelayedUsageEvent } from '../relayed-usage.js';
 import { BridgeCore, INITIAL_TIMELINE_HISTORY_MAX_BYTES } from '../bridge-core.js';
 import { WsTestClient } from './helpers/ws-test-client.js';
 import { createTempDataDir, type TempDataDir } from './helpers/temp-data-dir.js';
@@ -62,6 +63,66 @@ describe('BridgeCore Orchestration', () => {
       setTimeout(resolve, 500);
     });
     tempDir.cleanup();
+  });
+
+  it('retires old disk quota after a failed first poll and never restamps cache hits', () => {
+    const capturedAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    core.applyZaiUsageResult({ fresh: false, data: {
+      primary: { usedPercent: 92, windowMinutes: 300 }, capturedAt, planType: 'max',
+    } });
+    expect((core.buildUsage() as UsageEvent).zaiRateLimits?.primary).toBeUndefined();
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    core.applyZaiUsageResult({ fresh: true, data: {
+      primary: { usedPercent: 12, windowMinutes: 300 }, capturedAt: recent,
+    } });
+    expect(core.lastZaiFetchTime).toBe(Date.parse(recent));
+    expect((core.buildUsage() as UsageEvent).zaiRateLimits?.primary?.usedPercent).toBe(12);
+    core.applyZaiUsageResult({ data: null, fresh: false });
+    expect(JSON.parse(JSON.stringify(core.buildUsage())).zaiRateLimits).toEqual({});
+  });
+
+  it('expires z.ai on a focused relay without rebuilding usage or extending capture time', () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const capturedAt = new Date(now).toISOString();
+      core.applyZaiUsageResult({ fresh: true, data: {
+        capturedAt, planType: 'max', limitId: 'standard',
+        primary: { usedPercent: 92, windowMinutes: 300 },
+        secondary: { usedPercent: 100, windowMinutes: 43200, quantity: 'mcp' },
+      } });
+      const buildOwnUsage = vi.spyOn(core, 'buildUsage');
+      const relay = () => JSON.parse(JSON.stringify(resolveRelayedUsageEvent({
+        relayed: { type: 'usage_update', fiveHourPercent: 63, inputTokens: 42,
+          subscriptions: [{ name: 'Claude' }] },
+        ownCodexRateLimits: null,
+        ownZaiRateLimits: core.zaiQuotaForWire(),
+        buildOwnUsage: () => core.buildUsage() as UsageEvent,
+      })));
+      clock.mockReturnValue(now + 10 * 60_000);
+      expect(relay().zaiRateLimits.capturedAt).toBe(capturedAt);
+      expect(relay().subscriptions).toContainEqual({ name: 'GLM Coding Plan · Max' });
+      clock.mockReturnValue(now + 10 * 60_000 + 1);
+      const expired = relay();
+      expect(expired.zaiRateLimits).toEqual({ planType: 'max', limitId: 'standard' });
+      expect(expired.subscriptions).toEqual([{ name: 'Claude' }]);
+      expect(expired.inputTokens).toBe(42);
+      expect(expired.fiveHourPercent).toBe(63);
+      expect(buildOwnUsage).not.toHaveBeenCalled();
+      buildOwnUsage.mockRestore();
+
+      // Replacement/removal must be visible on the next relay too.
+      core.applyZaiUsageResult({ fresh: true, data: {
+        capturedAt: new Date(Date.now()).toISOString(), planType: 'lite',
+        primary: { usedPercent: 3, windowMinutes: 300 },
+      } });
+      expect(relay().subscriptions).toContainEqual({ name: 'GLM Coding Plan · Lite' });
+      core.applyZaiUsageResult({ fresh: false, data: null });
+      expect(relay().zaiRateLimits).toEqual({});
+      expect(relay().subscriptions).toEqual([{ name: 'Claude' }]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   // ─── State event building ─────────────────────────────────────────

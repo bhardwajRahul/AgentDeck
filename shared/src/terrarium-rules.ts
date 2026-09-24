@@ -47,6 +47,20 @@
  *   invariant: clearMaxX + resterMaxWidthFrac/2 < crayfish claw left edge.
  */
 export const TERRARIUM_RULES = {
+  /** Native 3D foreground budget; the full roster remains independently accessible. */
+  nativeResidentLimit: 8,
+  /** Vertical field of view for the same authored habitat across native engines. */
+  nativeCameraFov: 38,
+  nativeCameraWideFov: 32,
+  nativeCameraWideAspect: 2,
+  // Full-canvas underwater wash; shared by native tablet and desktop scenes.
+  nativeViewingDistance: 0.82,
+  nativeViewingResponseSeconds: 0.18,
+  nativeWaterTint: 0.12,
+  nativeDepthFadeStart: 0.4,
+  nativeDepthFadeShoulder: 0.72,
+  nativeDepthFadeShoulderOpacity: 0.85,
+  nativeDepthFadeEndOpacity: 0.95,
   crayfish: {
     /** Unified dashboard home center X (Swift/Android agreed on 0.78). */
     homeX: 0.78,

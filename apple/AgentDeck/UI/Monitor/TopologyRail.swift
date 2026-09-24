@@ -462,7 +462,7 @@ struct TopologyRail: View {
         return AnyView(
             ProviderRow(
                 name: "z.ai",
-                status: .ok,
+                status: limits.primary?.usedPercent != nil || limits.secondary?.usedPercent != nil ? .ok : .dim,
                 subtitle: Self.zaiSubtitle(limits),
                 rateLimits: zaiRateLimitChips,
                 consumers: []

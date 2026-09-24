@@ -9,7 +9,7 @@ import { DisplayMonitor } from './display-monitor.js';
 import { BridgeTimelineStore } from './timeline-store.js';
 import type { BridgeLogStream } from './log-stream.js';
 import { readAntigravityLocalStatus } from './antigravity-local.js';
-import { buildSubscriptions, buildUsageEvent } from './usage-event.js';
+import { buildSubscriptions, buildUsageEvent, normalizeZaiRateLimits } from './usage-event.js';
 import { readCodexAuthStatus } from './codex-auth.js';
 import { readCodexRateLimits } from './codex-rate-limits.js';
 import {
@@ -22,7 +22,7 @@ import { buildDisplayStateEvent } from './display-dim.js';
 import { foldCodexSessionsForDisplay, loadMlxSettings, sortSessions } from '@agentdeck/shared';
 import { probeGateway, checkGatewayHealth } from './gateway-probe.js';
 import { fetchUsageFromApi, hasOAuthToken, getTokenStatus, type ApiUsageData, type UsageFetchResult } from './usage-api.js';
-import { fetchZaiQuota, zaiUsageConfigured, type ZaiUsageFetchResult } from './zai-usage.js';
+import { fetchZaiQuota, type ZaiUsageFetchResult } from './zai-usage.js';
 import { buildEnrichedSessionsList } from './session-aggregator.js';
 import { activityFor } from './session-activity.js';
 import {
@@ -218,6 +218,7 @@ export class BridgeCore {
   private intervals: ReturnType<typeof setInterval>[] = [];
   private timeouts: ReturnType<typeof setTimeout>[] = [];
   private lastSessionsListBroadcast = 0;
+  private sessionsListTrailingTimer: ReturnType<typeof setTimeout> | undefined;
   private lastSessionsListEvent: BridgeEvent | null = null;
   private shutdownInProgress = false;
   private shutdownCallbacks: (() => void | Promise<void>)[] = [];
@@ -482,11 +483,6 @@ export class BridgeCore {
    */
   lastBuiltCodexRateLimits: CodexRateLimits | null = null;
 
-  /** The z.ai block from this daemon's last built usage event — the relay path
-   *  re-attaches it onto session-bridge events (which never poll the provider
-   *  themselves), the same way `lastBuiltCodexRateLimits` rides the codex half. */
-  lastBuiltZaiQuota: import('./types.js').ZaiRateLimits | null = null;
-
   /**
    * Whether a live `codex app-server` answer stands behind that block's limit
    * FAMILY — not whether the live snapshot itself was published. It is the
@@ -514,12 +510,12 @@ export class BridgeCore {
    *  its windows rather than reading as live — the plan/family axes survive so
    *  surfaces can still name the provider row). Null means "never fetched /
    *  not configured" and omits the block: no information. */
-  private zaiQuotaForWire(): import('./types.js').ZaiRateLimits | null {
+  zaiQuotaForWire(): import('./types.js').ZaiRateLimits | null {
     if (!this.cachedZaiQuota) return null;
-    if (this.lastZaiFetchTime > 0 && Date.now() - this.lastZaiFetchTime > BridgeCore.USAGE_STALE_TTL) {
+    if (this.lastZaiFetchTime <= 0 || Date.now() - this.lastZaiFetchTime > BridgeCore.USAGE_STALE_TTL) {
       return { planType: this.cachedZaiQuota.planType, limitId: this.cachedZaiQuota.limitId };
     }
-    return this.cachedZaiQuota;
+    return normalizeZaiRateLimits(this.cachedZaiQuota) ?? null;
   }
 
   /** Build and return a usage event */
@@ -565,7 +561,6 @@ export class BridgeCore {
     event.mlxModels = this.cachedMlxModels ?? [];
     event.mlxResidency = this.cachedMlxResidency;
     this.lastBuiltCodexRateLimits = event.codexRateLimits ?? null;
-    this.lastBuiltZaiQuota = event.zaiRateLimits ?? null;
     // "Is this block backed by a live answer", not "did the live answer win the
     // pick" — when the two agree on family the picker keeps the fresher rollout,
     // which is every build while Codex is working, and reading that as "no live
@@ -649,18 +644,26 @@ export class BridgeCore {
 
   /**
    * Apply a z.ai quota fetch — the provider-account counterpart of
-   * `applyUsageResult`. `fresh` alone advances the display-validity stamp, so
-   * a failing poll ages into the read-time retirement above instead of
-   * laundering a frozen reading as live. A null `data` (no key configured)
-   * keeps whatever cache exists; the TTL retires it on its own.
+   * `applyUsageResult`. The reading's original capture time owns display
+   * validity, including disk-cache hits and failed-poll fallbacks; applying
+   * a result never restamps a frozen reading as live. Credential removal clears the old
+   * account explicitly so retain-on-absent consumers retire their gauges.
    */
   applyZaiUsageResult(result: ZaiUsageFetchResult): boolean {
     if (result.data) {
       this.cachedZaiQuota = result.data;
-      if (result.fresh) this.lastZaiFetchTime = Date.now();
+      const capturedAt = Date.parse(result.data.capturedAt ?? '');
+      this.lastZaiFetchTime = Number.isFinite(capturedAt) && capturedAt <= Date.now() ? capturedAt : 0;
+    } else if (this.cachedZaiQuota) {
+      this.cachedZaiQuota = {};
+      this.lastZaiFetchTime = 0;
     }
     this.broadcastUsage();
     return result.fresh;
+  }
+
+  async refreshZaiUsage(): Promise<void> {
+    this.applyZaiUsageResult(await fetchZaiQuota());
   }
 
   /** Start the z.ai provider-account poll. Daemon-side only — a session bridge
@@ -668,12 +671,10 @@ export class BridgeCore {
   startZaiUsagePolling(intervalMs = 60_000): void {
     // One immediate fetch so a freshly started daemon paints the provider row
     // without waiting a full interval; subsequent ticks share the file cache.
-    if (zaiUsageConfigured()) {
-      fetchZaiQuota().then((r) => this.applyZaiUsageResult(r)).catch(() => {});
-    }
+    void this.refreshZaiUsage().catch(() => {});
     this.addInterval(setInterval(() => {
-      if (!this.hasClients() || !zaiUsageConfigured()) return;
-      fetchZaiQuota().then((r) => this.applyZaiUsageResult(r)).catch(() => {});
+      if (!this.hasClients()) return;
+      void this.refreshZaiUsage().catch(() => {});
     }, intervalMs));
   }
 
@@ -953,10 +954,20 @@ export class BridgeCore {
 
   /** Debounced sessions list broadcast (for state_changed handler) */
   maybeBroadcastSessionsList(): void {
+    if (this.shutdownInProgress || !this.hasClients()) return;
     const now = Date.now();
-    if (now - this.lastSessionsListBroadcast > 2000 && this.hasClients()) {
+    const remaining = 2000 - (now - this.lastSessionsListBroadcast);
+    if (remaining <= 0) {
+      clearTimeout(this.sessionsListTrailingTimer);
+      this.sessionsListTrailingTimer = undefined;
       this.lastSessionsListBroadcast = now;
       this.broadcastSessionsList().catch(() => {});
+    } else if (!this.sessionsListTrailingTimer) {
+      this.sessionsListTrailingTimer = setTimeout(() => {
+        this.sessionsListTrailingTimer = undefined;
+        this.maybeBroadcastSessionsList();
+      }, remaining);
+      this.sessionsListTrailingTimer.unref?.();
     }
   }
 
@@ -1189,6 +1200,8 @@ export class BridgeCore {
       return;
     }
     this.shutdownInProgress = true;
+    clearTimeout(this.sessionsListTrailingTimer);
+    this.sessionsListTrailingTimer = undefined;
 
     log('Shutting down...');
     const hardExitTimer = setTimeout(() => {

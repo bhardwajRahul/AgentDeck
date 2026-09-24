@@ -12,14 +12,38 @@
 #include "../sim.h"
 #include <Arduino.h>
 #include <cstdlib>
+#include <cassert>
 
 // Panel bus instance (declared extern in the SPI shim). No real transfer on host.
 SimSPIClass SPI;
 
 bool SimEink::renderToPng(const char* scene, const char* path) {
   const bool simulateDecision = std::strcmp(scene, "decision") == 0;
-  if (!SimScenes::apply(simulateDecision ? "permission" : scene)) return false;
+  const bool aquarium = std::strcmp(scene, "aquarium") == 0;
+  const bool aquariumOffline = std::strcmp(scene, "aquarium-offline") == 0;
+  if (!SimScenes::apply(aquarium ? "multi" : aquariumOffline ? "offline" : simulateDecision ? "permission" : scene)) return false;
   Eink::init();
+#if !defined(BOARD_SIM_PULL)
+  if (aquarium) {
+    // Exercise the actual footer hash: transient tool text must not spend an
+    // EPD cycle, but a GLM change must. These are intentionally not a mirror hash.
+    static Snap sample; snapshot(sample);
+    sample.bridgeConnected = true; sample.usageStale = false; sample.zaiP = 10;
+    const uint32_t before = paperHash(sample, PaperFace::Aquarium);
+    strncpy(sample.tickerText[0], "different milestone", sizeof(sample.tickerText[0]));
+    strncpy(sample.rows[0].work, "different tool call", sizeof(sample.rows[0].work));
+    assert(before == paperHash(sample, PaperFace::Aquarium));
+    sample.zaiP = 11;
+    assert(before != paperHash(sample, PaperFace::Aquarium));
+    sample.usageStale = true;
+    const uint32_t stale = paperHash(sample, PaperFace::Aquarium);
+    sample.zaiP = 12;
+    assert(stale == paperHash(sample, PaperFace::Aquarium));
+  }
+#endif
+#if !defined(BOARD_SIM_PULL)
+  manualFace = (aquarium || aquariumOffline) ? PaperFace::Aquarium : PaperFace::Glance;
+#endif
 #if defined(BOARD_SIM_PULL)
   if (simulateDecision) {
     // Pixel-exact post-primary-action state: the real pull boards open an

@@ -2,18 +2,19 @@
 import SwiftUI
 
 enum CollaborationReadState: Equatable {
-    case noSelection, disconnected, loading, ready, empty, unsupported, failed, tooLarge
+    case noSelection, disconnected, loading, ready, empty, unsupported, failed, tooLarge, taskUnavailable
 
     var message: String {
         switch self {
         case .noSelection: "Select a session on the left"
         case .disconnected: "Disconnected · reconnect to read collaboration history"
         case .loading: "Reading collaboration history…"
-        case .ready: "Latest task history · live session counts are shown separately"
+        case .ready: "Task history"
         case .empty: "No task has been recorded for this session yet"
         case .unsupported: "Collaboration history is unavailable from this daemon"
         case .failed: "Refresh failed · previously read history may be out of date"
         case .tooLarge: "This task's history is too large to read here"
+        case .taskUnavailable: "This task is no longer in recent history. Choose another task."
         }
     }
 
@@ -25,6 +26,7 @@ enum CollaborationReadError: Error { case unsupported, tooLarge }
 @MainActor
 final class CollaborationFeed: ObservableObject {
     @Published var task: CollaborationTask?
+    @Published var recentTasks: [CollaborationTask] = []
     @Published var children: [CollaborationChild] = []
     @Published var relations: [CollaborationRelation] = []
     @Published var state: CollaborationReadState = .noSelection
@@ -40,12 +42,12 @@ final class CollaborationFeed: ObservableObject {
         self.pause = pause
     }
 
-    func observe(sessionId: String, port: Int, connected: Bool = true) async {
+    func observe(sessionId: String, port: Int, connected: Bool = true, taskId: String? = nil) async {
         let current = UUID()
         generation = current
-        let nextContext = "\(port)|\(sessionId)"
+        let nextContext = "\(port)|\(sessionId)|\(taskId ?? "latest")"
         if context != nextContext {
-            task = nil; children = []; relations = []; fetchedAt = nil
+            task = nil; recentTasks = []; children = []; relations = []; fetchedAt = nil
             context = nextContext
         }
         guard connected, port > 0 else { state = .disconnected; return }
@@ -55,13 +57,17 @@ final class CollaborationFeed: ObservableObject {
         while !Task.isCancelled && generation == current {
             do {
                 var url = URLComponents(string: "http://127.0.0.1:\(port)/apme/tasks")!
-                url.queryItems = [URLQueryItem(name: "session", value: sampleSessionID), URLQueryItem(name: "limit", value: "1")]
+                url.queryItems = [URLQueryItem(name: "session", value: sampleSessionID), URLQueryItem(name: "limit", value: "8")]
                 let page: CollaborationTaskPage = try await read(url.url!)
                 try Task.checkCancellation()
                 guard generation == current else { return }
-                if let latest = page.tasks.first {
-                    // A daemon ignoring the session filter is unsupported, not empty.
-                    guard latest.sessionId == sampleSessionID else { throw CollaborationReadError.unsupported }
+                // Validate the whole page before offering historical navigation.
+                guard page.tasks.allSatisfy({ $0.sessionId == sampleSessionID }) else {
+                    throw CollaborationReadError.unsupported
+                }
+                recentTasks = Array(page.tasks.prefix(8))
+                let requested = taskId.flatMap { id in recentTasks.first { $0.id == id } }
+                if let latest = taskId == nil ? recentTasks.first : requested {
                     let detailURL = URL(string: "http://127.0.0.1:\(port)/apme/tasks")!
                         .appendingPathComponent(latest.id)
                     let detail: CollaborationDetail = try await read(detailURL)
@@ -77,7 +83,7 @@ final class CollaborationFeed: ObservableObject {
                     relations = CollaborationProjection.relations(sample: detail.sample, sessionId: sampleSessionID, taskId: latest.id)
                     state = detail.sample == nil ? .unsupported : .ready
                 } else {
-                    task = nil; children = []; relations = []; state = .empty
+                    task = nil; children = []; relations = []; state = taskId == nil ? .empty : .taskUnavailable
                 }
                 fetchedAt = Date()
             } catch {
@@ -124,6 +130,8 @@ struct CollaborationPanel: View {
     @EnvironmentObject private var stateHolder: AgentStateHolder
     @StateObject private var feed: CollaborationFeed
     @State private var inspectedID: String?
+    @State private var selectedTaskID: String?
+    @State private var showsLiveDetails = false
     @State private var showsSystem = false
     @State private var refreshID = UUID()
     @State private var navigationHistory: [String] = []
@@ -141,7 +149,7 @@ struct CollaborationPanel: View {
         stateHolder.state.siblingSessions.first { $0.id == inspectedID }
     }
     private var observationKey: String {
-        "\(port)|\(stateHolder.state.bridgeConnected)|\(selected?.id ?? "")|\(refreshID)"
+        "\(port)|\(stateHolder.state.bridgeConnected)|\(selected?.id ?? "")|\(selectedTaskID ?? "latest")|\(refreshID)"
     }
 
     var body: some View {
@@ -168,7 +176,7 @@ struct CollaborationPanel: View {
                     TopologyRail(maxHeight: 560).frame(width: 330).padding(12)
                 }
             }
-            Text("Who is working, waiting, and exchanging results")
+            Text("Find who needs you and follow delegated work")
                 .font(.caption).foregroundStyle(DesignTokens.Ink.s300)
             Divider().overlay(DesignTokens.Ink.s500)
             feedStatus
@@ -188,39 +196,62 @@ struct CollaborationPanel: View {
                         sessionHeader(selected)
                         if let task = feed.task {
                             VStack(alignment: .leading, spacing: 6) {
-                                Label(task.endedAt == nil ? "Latest task · open" : "Latest task · closed",
-                                      systemImage: "square.stack.3d.up")
-                                    .font(.caption).foregroundStyle(DesignTokens.UI.cyan)
-                                Text(task.displayTitle).font(.system(size: 16, weight: .medium)).lineLimit(4)
+                                Menu {
+                                    Button("Follow latest task") { selectedTaskID = nil }
+                                    ForEach(feed.recentTasks) { item in
+                                        Button(item.displayTitle) { selectedTaskID = item.id }
+                                    }
+                                } label: {
+                                    Label(selectedTaskID == nil ? "Latest task" : "Selected task", systemImage: "clock.arrow.circlepath")
+                                        .font(.caption).foregroundStyle(DesignTokens.UI.cyan)
+                                }.help("Choose from the latest eight tasks in this session")
+                                Text(task.displayTitle).font(.system(size: 16, weight: .medium)).lineLimit(3)
+                                if let summary = task.summary?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !summary.isEmpty, summary != task.displayTitle {
+                                    Text(summary).font(.caption).foregroundStyle(DesignTokens.Ink.s300).lineLimit(4)
+                                }
+                                Text(task.endedAt == nil ? "No task end recorded" : "Task ended")
+                                    .font(.caption2).foregroundStyle(DesignTokens.Ink.s300)
                             }
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .background(DesignTokens.Ink.s700.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
                         }
+                        if feed.state == .ready {
+                            let peers = CollaborationProjection.relatedSessions(feed.relations,
+                                roster: stateHolder.state.siblingSessions, excluding: selected.id)
+                            if !peers.isEmpty {
+                                CollaborationRows(title: "Related sessions · now", symbol: "person.2",
+                                    rows: peers, limit: 3, isCompleted: { _ in false }, content: sessionShortcut)
+                                    .id(inspectedID)
+                            }
+                        }
                         if selected.subagents != nil || selected.coordination != nil {
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                                if let census = selected.subagents {
-                                    metric(census.active, CollaborationPresentation.labels[0], CollaborationPresentation.symbols[0], DesignTokens.UI.cyan)
-                                    metric(census.completed, CollaborationPresentation.labels[1], CollaborationPresentation.symbols[1], DesignTokens.UI.ok)
-                                }
-                                if let coord = selected.coordination {
-                                    metric(coord.spawnedActive, CollaborationPresentation.labels[2], CollaborationPresentation.symbols[2], DesignTokens.UI.cyan)
-                                    metric(coord.backgroundJobs, CollaborationPresentation.labels[3], CollaborationPresentation.symbols[3], DesignTokens.UI.attn)
-                                }
-                            }
-                            if let coord = selected.coordination, coord.messagesIn + coord.messagesOut > 0 {
-                                Text("Peer messages · in \(coord.messagesIn) · out \(coord.messagesOut)\(coord.lastPeerName.map { " · last \($0)" } ?? "")")
-                                    .font(.system(size: 10)).foregroundStyle(DesignTokens.Ink.s300)
-                            }
-                            Text("\(CollaborationPresentation.scope) · may differ in scope from the task record below")
-                                .font(.system(size: 10)).foregroundStyle(DesignTokens.Ink.s300)
+                            DisclosureGroup("Live activity details", isExpanded: $showsLiveDetails) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    if let census = selected.subagents {
+                                        Text("Subagents · \(max(0, census.active)) active · \(max(0, census.completed)) ended this wave")
+                                    }
+                                    if let coord = selected.coordination {
+                                        Text("Spawned sessions · \(max(0, coord.spawnedActive)) running")
+                                        Text("Background jobs · \(max(0, coord.backgroundJobs)) waited on")
+                                        Text("Messages · \(max(0, coord.messagesIn)) received · \(max(0, coord.messagesOut)) sent")
+                                    }
+                                    Text("Current session counts, separate from the selected task history.")
+                                        .foregroundStyle(DesignTokens.Ink.s300)
+                                }.font(.caption).padding(.top, 6)
+                            }.font(.caption)
                         }
                         if !feed.children.isEmpty {
                             CollaborationRows(title: "Child observations", symbol: "arrow.triangle.branch",
-                                              rows: feed.children, limit: 24,
+                                              rows: feed.children, limit: 4,
                                               isCompleted: { $0.phase == "completed" }, content: childRow)
                                 .id(inspectedID)
                         }
                         relationSections.id(inspectedID)
+                        if !feed.children.isEmpty || !feed.relations.isEmpty {
+                            Text("History records observed activity; an end does not confirm that the result was integrated.")
+                                .font(.caption2).foregroundStyle(DesignTokens.Ink.s300)
+                        }
                         if feed.state == .ready && feed.children.isEmpty && feed.relations.isEmpty {
                             VStack(spacing: 8) {
                                 Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
@@ -232,8 +263,13 @@ struct CollaborationPanel: View {
                         }
                     } else {
                         Image(systemName: "cursorarrow.click.2").font(.largeTitle).padding(.top, 20)
-                        Text(inspectedID == nil ? "Select a session in the roster or a creature in the habitat" : "The selected session left the roster. Pick another one.")
+                        Text(inspectedID == nil ? "Choose a session to see its task, delegates and results" : "The selected session left the roster. Pick another one.")
                             .font(.subheadline)
+                        CollaborationRows(title: "Sessions · needs input first", symbol: "hand.raised",
+                            rows: CollaborationProjection.prioritizedSessions(stateHolder.state.siblingSessions),
+                            limit: 4, isCompleted: { _ in false }, content: sessionShortcut)
+                        Text("Links appear only when collaboration was observed. Sharing a project does not imply a team.")
+                            .font(.caption).foregroundStyle(DesignTokens.Ink.s300)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.scrollBounceBehavior(.basedOnSize).id(inspectedID)
@@ -246,8 +282,10 @@ struct CollaborationPanel: View {
         .onChange(of: stateHolder.state.focusedSessionId) { _, id in
             if inspectedID != id { navigationHistory = []; inspectedID = id }
         }
+        .onChange(of: inspectedID) { _, _ in selectedTaskID = nil; showsLiveDetails = false }
         .task(id: observationKey) {
-            await feed.observe(sessionId: selected?.id ?? "", port: port, connected: stateHolder.state.bridgeConnected)
+            await feed.observe(sessionId: selected?.id ?? "", port: port,
+                connected: stateHolder.state.bridgeConnected, taskId: selectedTaskID)
         }
     }
 
@@ -264,6 +302,10 @@ struct CollaborationPanel: View {
                 .help("Refresh collaboration history")
                 .accessibilityLabel("Refresh collaboration history")
                 .disabled(selected == nil || !stateHolder.state.bridgeConnected || feed.state == .loading)
+            }
+            if feed.state == .taskUnavailable {
+                Button("Follow latest task") { selectedTaskID = nil }
+                    .font(.caption)
             }
             if let fetched = feed.fetchedAt {
                 HStack(spacing: 4) {
@@ -327,12 +369,29 @@ struct CollaborationPanel: View {
         }
     }
 
-    private func metric(_ number: Int, _ title: String, _ symbol: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label("\(max(0, number))", systemImage: symbol).font(.system(size: 24, weight: .semibold))
-            Text(title).font(.system(size: 11))
-        }.foregroundStyle(color).frame(maxWidth: .infinity, alignment: .leading).padding(10)
-            .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    private func sessionShortcut(_ session: SessionInfo) -> some View {
+        let waiting = session.state?.hasPrefix("awaiting") == true
+        let workers = (session.subagents?.active ?? 0) > 0 || (session.coordination?.spawnedActive ?? 0) > 0
+        let status = waiting ? "Needs your input" : session.state == "processing" ? "Working"
+            : workers ? "Workers still running" : (session.coordination?.backgroundJobs ?? 0) > 0 ? "Waiting on jobs"
+            : session.state == "idle" ? "Idle" : "State unavailable"
+        return Button { inspect(session.id) } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: waiting ? "hand.raised.fill" : "arrow.up.right.circle")
+                    .foregroundStyle(waiting ? DesignTokens.UI.attn : DesignTokens.UI.cyan)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.projectName ?? "Session").font(.subheadline.bold()).lineLimit(2)
+                    Text("\(session.agentType ?? "Agent") · \(status)")
+                        .font(.caption).foregroundStyle(waiting ? DesignTokens.UI.attn : DesignTokens.Ink.s300)
+                    if let activity = session.activity, !activity.isEmpty {
+                        Text(activity).font(.caption).foregroundStyle(DesignTokens.Ink.s300).lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption)
+            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignTokens.Ink.s800, in: RoundedRectangle(cornerRadius: 10))
+        }.buttonStyle(.plain).help("Inspect session")
     }
 
     @ViewBuilder
@@ -389,7 +448,7 @@ struct CollaborationPanel: View {
         case "spawned":
             symbol = row.direction == "in" ? "arrow.down.left" : "arrow.up.right"
             status = row.isLaunchObservation ? "Launch requested · child not linked"
-                : row.isOpen ? "Observed running" : "End observed · result integration unknown"
+                : row.isOpen ? "Observed running" : "End recorded"
             color = row.isOpen ? DesignTokens.UI.cyan : DesignTokens.UI.ok
         case "waiting_on":
             symbol = "hourglass"
@@ -443,7 +502,7 @@ struct CollaborationPanel: View {
                     Text(child.name).font(.subheadline.bold()).lineLimit(2)
                     Spacer(minLength: 0)
                 }
-                Text(ended ? "Ended · result integration not tracked" : "Started · see the live census for whether it still runs")
+                Text(ended ? "End recorded" : "Start recorded · current state unknown")
                     .font(.system(size: 10)).foregroundStyle(DesignTokens.Ink.s300)
                 if let summary = child.summary, !summary.isEmpty {
                     Text(summary).font(.caption).lineLimit(4)

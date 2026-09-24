@@ -24,7 +24,7 @@
 // against; `scripts/check-preview-mirror-sync.mjs` verifies they match the
 // current `git hash-object` of each file and fails CI when the origin drifts
 // ahead of this mirror. Update them whenever you re-port.
-// SYNC-HASH shared/src/d200h-layout.ts 0ebca57e46613130ffef3e8b43198c909d03e073
+// SYNC-HASH shared/src/d200h-layout.ts 5b9077f18e6697a828fd9d1e8c2722f57f7460b2
 // SYNC-HASH shared/src/session-utils.ts 9b6eebeba19a0bb6ffe7c633d98c83dcee9e55cf
 //
 // INTENTIONALLY OMITTED (not needed by a read-only preview):
@@ -865,12 +865,17 @@ public enum D200HLayoutModel {
         // pair tile too — nothing dropped.
         let afterClaude = logicalCount - (compactCodex ? 1 : 0) - ((compactClaude || pairScopedWith7D) ? 1 : 0)
         let compactZai = afterClaude > budget && zaiPair.count == 2
+        let compactAllClaude = scopedPair != nil && !claudePair.isEmpty
+            && afterClaude - (compactZai ? 1 : 0) > budget
         func cells(_ agent: String, _ tiles: [(D200HSlotKind, String, String)], _ pair: [D200HUsagePairWindow], compact: Bool) -> [(D200HSlotKind, String, String)] {
             compact ? [(.usagePair(agent: agent, windows: pair), pair.map(\.label).joined(separator: " · "), agent)] : tiles
         }
 
         var tiles: [(D200HSlotKind, String, String)]
-        if pairScopedWith7D, let scopedPair {
+        if compactAllClaude, let scopedPair {
+            let windows = claudePair + [scopedPair]
+            tiles = [(.usagePair(agent: "claude", windows: windows), windows.map(\.label).joined(separator: " · "), "claude")]
+        } else if pairScopedWith7D, let scopedPair {
             let paired = [claudePair[1], scopedPair]
             tiles = [
                 claudeTiles[0],

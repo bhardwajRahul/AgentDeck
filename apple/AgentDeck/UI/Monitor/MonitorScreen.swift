@@ -29,6 +29,7 @@ struct MonitorScreen: View {
     /// Dashboard interaction stays consistent even though macOS has extra
     /// windows and host-side controls.
     @State private var hudHidden = false
+    @State private var attentionHeight: CGFloat = 0
     @State private var previousAgentState: AgentConnectionState = .disconnected
     @StateObject private var toastManager = ToastManager()
 
@@ -151,13 +152,41 @@ struct MonitorScreen: View {
 
     // MARK: - Sub-views
 
+    @ViewBuilder
     private var terrariumLayer: some View {
-        TerrariumView(
-            terrariumState: terrariumState,
-            onCreatureTapped: handleCreatureTap,
-            onBackgroundTapped: backgroundTapHandler
-        )
-        .ignoresSafeArea()
+        if preferences.effectiveDashboardType == .aquarium3D {
+            if #available(iOS 18.0, macOS 15.0, *) {
+                GeometryReader { geometry in
+                    let top = featuredAwaitingSession == nil ? 0 : attentionHeight + 24
+                    ZStack(alignment: .top) {
+                        TerrariumColors.deepSea
+                        LivingAquariumScene(viewingMode: hudHidden, terrariumState: terrariumState, onCreatureTapped: handleCreatureTap, onBackgroundTapped: backgroundTapHandler)
+                            .frame(height: max(1, geometry.size.height - top))
+                            .padding(.top, top)
+                        // Keep the habitat continuous behind the timeline, as on macOS.
+                        TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeWaterTint))
+                            .allowsHitTesting(false)
+                        LinearGradient(stops: [
+                            .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeWaterTint)), location: 0),
+                            .init(color: .clear, location: CGFloat(TerrariumRules.nativeDepthFadeStart)),
+                            .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeDepthFadeShoulderOpacity)), location: CGFloat(TerrariumRules.nativeDepthFadeShoulder)),
+                            .init(color: TerrariumColors.deepSea.opacity(Double(TerrariumRules.nativeDepthFadeEndOpacity)), location: 1),
+                        ], startPoint: .top, endPoint: .bottom)
+                        .opacity(hudHidden ? 0 : 1)
+                        .animation(.easeInOut(duration: Double(TerrariumRules.nativeViewingResponseSeconds * 3)), value: hudHidden)
+                        .allowsHitTesting(false)
+                    }
+                }
+                .ignoresSafeArea()
+            }
+        } else {
+            TerrariumView(
+                terrariumState: terrariumState,
+                onCreatureTapped: handleCreatureTap,
+                onBackgroundTapped: backgroundTapHandler
+            )
+            .ignoresSafeArea()
+        }
     }
 
     /// Tap handler for empty terrarium water. When the AttentionTheater
@@ -191,8 +220,8 @@ struct MonitorScreen: View {
                 TimelineStripView()
                     .frame(height: geo.size.height * MonitorLayout.sandFraction)
             }
-            .opacity(disconnected ? 0 : 1)
-            .allowsHitTesting(!disconnected)
+            .opacity(disconnected || (preferences.effectiveDashboardType == .aquarium3D && hudHidden) ? 0 : 1)
+            .allowsHitTesting(!disconnected && !(preferences.effectiveDashboardType == .aquarium3D && hudHidden))
         }
     }
 
@@ -226,6 +255,11 @@ struct MonitorScreen: View {
                     onFocus: { stateHolder.sendCommand(.focusSession(sessionId: featured.id)) }
                 )
                 .frame(maxWidth: landscape ? 460 : .infinity)
+                .background(GeometryReader { size in
+                    Color.clear
+                        .onAppear { attentionHeight = size.size.height }
+                        .onChange(of: size.size.height) { _, height in attentionHeight = height }
+                })
                 .padding(.horizontal, landscape ? 0 : 12)
                 .padding(.top, landscape ? 14 : 10)
                 Spacer()
@@ -379,13 +413,13 @@ struct MonitorScreen: View {
             HStack {
                 Spacer()
                 rotationButton
-                if preferences.showSettingsButton {
+                if preferences.showSettingsButton || preferences.effectiveDashboardType == .aquarium3D {
                     settingsGearButton
                 }
             }
         }
         #else
-        if preferences.showSettingsButton {
+        if preferences.showSettingsButton || preferences.effectiveDashboardType == .aquarium3D {
             VStack {
                 Spacer()
                 HStack {

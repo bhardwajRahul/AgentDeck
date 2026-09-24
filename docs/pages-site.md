@@ -15,4 +15,49 @@ Runbook for the published site surfaces and the CI report generator. Moved out o
 - **The flasher is inside `design/lint.sh` scope.** `lint.sh` prunes `./tools/creature-simulator` but **not** `./tools/web-flasher`, so the app must stay token-clean — no raw hex, no `#fff`/`#000`, IBM Plex and JetBrains Mono only. Written clean rather than added to the prune list. Its `THIRD-PARTY.txt` is generated at build time by `scripts/generate-flash-third-party.mjs` from the installed packages' own LICENSE/NOTICE files: esptool-js is Apache-2.0 and a bundled `.js` is a redistribution, so the notice has to travel with it. Reading `node_modules` rather than checking a copy in keeps it honest about what actually shipped. The bridge npm package has no such obligation — it *declares* esptool-js as a dependency and bundles nothing.
 - **Device photography pipeline**: `scripts/crop-hardware-images.mjs` crops the hardware photos into the catalog card frames (STANDARD 1.75:1 = the 349x200 card, WIDE 3.73:1, HERO 3:2). **Sources are committed** in `assets/hardware-photos/` — the captures actually used, with the EXIF rotation baked in (so the crop table's coordinates are plain display-space pixels) and re-encoded at quality 78, halving 36 MB to 15 MB. The script defaults to that directory, so the repo regenerates its own published crops with no external files; pass a path to crop from raw camera originals instead. **`.rotate()` must be called with no argument** — that applies the EXIF orientation tag; passing an explicit angle skips it and crops from an unrotated buffer (many iPhone captures are orientation 6: stored 4032x3024, actually 3024x4032). Frame the device body with margin, not just its screen, and verify each crop in a browser before shipping.
 
+## Public aquarium media
+
+The README uses `docs/media/aquarium-preview.gif` as a linked motion preview;
+the overview plays `docs/media/aquarium-demo.mp4` with native controls and
+`preload="none"`. It does not autoplay. The poster is `aquarium-dashboard.jpg`;
+`aquarium-ipad.jpg` illustrates the Apple guide. The Pages assembly copies these
+assets explicitly (JPEGs use the existing photo copy step).
+
+The hero was re-recorded on 2026-09-23 in the native iPad app (1.5.0 UI,
+source `6ba97043`; the app sources are unchanged at `cea760b6`). It uses five
+fictional sessions: implement session search, write regression tests, check
+accessibility, document the feature, and reproduce an empty-result report.
+Sessions arrive one at a time; an unfocused timeline interleaves edits, tests,
+permission waiting, and completion. Approval is simulated in the source terminal,
+not presented as an action performed by the dashboard.
+
+Reproduce the feed with
+`node scripts/appstore-demo-orchestrator.mjs serve --story --port 9231`.
+[`scripts/aquarium-demo-story.mjs`](../scripts/aquarium-demo-story.mjs) owns the
+46-second cycle. The existing 30-second App Store scenario remains the default.
+Use a Debug simulator build with `-AgentDeckScreenshotURL ws://127.0.0.1:9231`
+and `-prefs.dashboardType aquarium3d`, in landscape. Capture with
+`xcrun simctl io <device-id> recordVideo --codec=h264 <output.mov>` and stop with
+SIGINT. Keep the fixture loopback-only and out of production daemons.
+
+The published MP4 is **2752 × 2000, 30 fps, 42.8 seconds**, H.264 CRF 18,
+`yuv420p`, with fast-start metadata (about 20 MB). The source display is
+2752 × 2064; only the 64-pixel system bar was cropped. There is no upscaling,
+motion interpolation, retouching, or composited app UI. The cut begins after the
+first session arrives and ends with all five idle. The eight-second GIF excerpt
+starts three seconds into the MP4, runs at native speed and 8 fps, and is scaled
+to 720 pixels wide. The poster is extracted at 21 seconds. The Apple guide's
+separate `aquarium-ipad.jpg` remains the earlier capture.
+
+English captions are on by default; Korean and Japanese tracks are selectable
+in the native player. The three `aquarium-story.*.vtt` files describe the story
+without audio. The overview retains controls, full screen, and `preload="none"`;
+it does not fetch the 20 MB video until requested. README uses the lightweight
+GIF linked to this player because inline MP4 playback is not portable across
+GitHub Markdown surfaces.
+
+Keep public copy in English, with optional Korean/Japanese translations. Store
+links stay evergreen; measured submission receipts belong in release records,
+not temporary review-status copy in installation instructions.
+
 See [testing.md](testing.md) for the full testing reference.
