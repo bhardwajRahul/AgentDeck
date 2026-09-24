@@ -68,3 +68,39 @@ describe('warm local speech server', () => {
     expect(mocks.exec).not.toHaveBeenCalled();
   });
 });
+
+describe('speech-presence gate', () => {
+  const gated = { ...local, whisperVadCli: '/opt/bin/vad', whisperVadModel: '/models/vad.bin',
+    whisperServerUrl: 'http://127.0.0.1:19121/inference' };
+  it('rejects silence before recognition or any CLI fallback', async () => {
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    mocks.exec.mockImplementation((_exe, _args, _options, cb) => cb(null, { stdout: '\nDetected 0 speech segments:\n', stderr: '' }));
+    await expect(transcribeDeviceAudio('/tmp/silence.wav', gated)).rejects.toThrow('No speech');
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.exec).toHaveBeenCalledOnce();
+  });
+  it('passes the unchanged recording after positive VAD evidence', async () => {
+    const original = Buffer.from([4, 3, 2, 1]);mocks.read.mockResolvedValue(original);
+    const fetcher = vi.fn().mockResolvedValue(new Response('{"text":"취소"}'));vi.stubGlobal('fetch', fetcher);
+    mocks.exec.mockImplementation((_exe, _args, _options, cb) => cb(null, {
+      stdout: 'Detected 1 speech segments:\nSpeech segment 0: start = 99.00, end = 518.00\n', stderr: '' }));
+    await expect(transcribeDeviceAudio('/tmp/original.wav', gated)).resolves.toBe('취소');
+    expect(mocks.exec).toHaveBeenCalledWith(gated.whisperVadCli,
+      ['-vm', gated.whisperVadModel, '-f', '/tmp/original.wav', '-np'],
+      expect.objectContaining({ timeout: 5000, windowsHide: true }), expect.any(Function));
+    expect(Buffer.from(await fetcher.mock.calls[0][1].body.get('file').arrayBuffer())).toEqual(original);
+  });
+  it.each(['', 'model missing', 'Detected 1 speech segments:',
+    'Detected 1 speech segments:\nSpeech segment 0: start = 10.00, end = 1.00'])
+    ('fails closed for an invalid VAD response: %s', async (stdout) => {
+      const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+      mocks.exec.mockImplementation((_exe,_args,_options,cb)=>cb(null,{stdout,stderr:''}));
+      await expect(transcribeDeviceAudio('/tmp/a.wav',gated)).rejects.toThrow('invalid_vad_response');
+      expect(fetcher).not.toHaveBeenCalled();
+    });
+  it('does not bypass a failed or incomplete VAD setup', async () => {
+    await expect(transcribeDeviceAudio('/tmp/a.wav', { ...gated, whisperVadModel: undefined })).rejects.toThrow('vad_paths_required');
+    mocks.exec.mockImplementation((_exe,_args,_options,cb)=>cb(new Error('VAD timeout')));
+    await expect(transcribeDeviceAudio('/tmp/a.wav',gated)).rejects.toThrow('VAD timeout');
+  });
+});

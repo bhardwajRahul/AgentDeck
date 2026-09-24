@@ -9,6 +9,11 @@ export interface PersonalVoiceGateway {
   sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string): Promise<{ runId?: string }>;
 }
 
+/** Shared by live routing and offline evaluation; never send the invocation alone. */
+export function personalVoiceCommand(text: string): string {
+  return text.replace(/^\s*(?:오픈\s*클(?:로(?:우)?|록)|open\s*claw)[\s,.!?:，-]*/i, '').trim();
+}
+
 /** A device voice turn belongs to a personal session AND its acknowledged run.
  * Register before chat.send: an immediate final can precede the RPC response.
  * Never fall back to the gateway's most recently active (possibly cron) key. */
@@ -17,7 +22,7 @@ export async function startPersonalVoiceTurn(
   timeoutMs = 10 * 60_000,
 ): Promise<{ runId: string; completion: Promise<string> }> {
   if (!/^agent:[^:]+:main$/.test(sessionKey)) throw new Error('invalid_personal_session');
-  const message = text.replace(/^\s*(?:오픈\s*클(?:로(?:우)?|록)|open\s*claw)[\s,.!?:，-]*/i, '').trim();
+  const message = personalVoiceCommand(text);
   if (!message) throw new Error('no_command');
   let expected: string | undefined;
   const early = new Map<string, VoiceChat>();

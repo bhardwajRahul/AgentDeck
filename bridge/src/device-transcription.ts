@@ -11,8 +11,23 @@ export interface VoiceTranscriptionSettings {
   whisperModel?: string;
   /** Explicit opt-in to an operator-managed, loopback-only warm model server. */
   whisperServerUrl?: string;
+  /** Optional local speech-presence gate. Both paths are required together. */
+  whisperVadCli?: string;
+  whisperVadModel?: string;
 }
 const run = promisify(execFile);
+
+/** Parse the VAD tool's result, never treating a failed/changed probe as silence. */
+export function vadHasSpeech(output: string): boolean {
+  const match = output.match(/^Detected (\d+) speech segments:$/m);
+  if (!match) throw new Error('invalid_vad_response');
+  const count = Number(match[1]);
+  const segments = [...output.matchAll(/^Speech segment (\d+): start = ([\d.]+), end = ([\d.]+)$/gm)];
+  if (!Number.isSafeInteger(count) || count !== segments.length || segments.some((s, i) =>
+    Number(s[1]) !== i || !Number.isFinite(Number(s[2])) || !Number.isFinite(Number(s[3]))
+      || Number(s[3]) <= Number(s[2]))) throw new Error('invalid_vad_response');
+  return count > 0;
+}
 
 /** Explicit local backend selection: no network ASR or implicit model download. */
 export async function transcribeDeviceAudio(wav: string, settings?: VoiceTranscriptionSettings): Promise<string> {
@@ -26,6 +41,18 @@ export async function transcribeDeviceAudio(wav: string, settings?: VoiceTranscr
   }
   const language = settings.locale?.split(/[-_]/)[0].toLowerCase() || 'auto';
   if (!/^(?:[a-z]{2,3}|auto)$/.test(language)) throw new Error('invalid_voice_locale');
+  if (settings.whisperVadCli || settings.whisperVadModel) {
+    if (!settings.whisperVadCli || !isAbsolute(settings.whisperVadCli)
+      || !settings.whisperVadModel || !isAbsolute(settings.whisperVadModel)) {
+      throw new Error('vad_paths_required');
+    }
+    // Presence only: recognizers still receive the full original WAV. Do not
+    // trim consonants or feed a VAD-spliced waveform to the decoder.
+    const { stdout } = await run(settings.whisperVadCli, [
+      '-vm', settings.whisperVadModel, '-f', wav, '-np',
+    ], { timeout: 5_000, maxBuffer: 256 * 1024, windowsHide: true, encoding: 'utf8' });
+    if (!vadHasSpeech(stdout)) throw new Error('No speech detected');
+  }
   if (settings.whisperServerUrl) {
     const endpoint = new URL(settings.whisperServerUrl);
     if (endpoint.protocol !== 'http:' || endpoint.hostname !== '127.0.0.1'
