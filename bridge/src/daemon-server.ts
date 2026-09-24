@@ -2360,7 +2360,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
         });
         // The HTTP response only confirms receipt of the bytes; the
         // transcript/outcome goes to the board as a voice_result frame.
-        void finishVoiceCapture(saved, boardResultSinkFor(board));
+        const id = Number(parsedUrl.searchParams.get('requestId'));
+        void finishVoiceCapture({ ...saved, requestId: Number.isInteger(id) && id > 0 && id <= 0xffffffff ? id : undefined }, boardResultSinkFor(board));
         return { ok: true, bytes: total };
       })().then((result) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -6139,14 +6140,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
    */
   /** Speak `text` to every board waiting on `sessionId`, or tell them there was
    *  nothing to read. Shared by both completion shapes below. */
-  const speakReplyTo = (sessionId: string, text: string): void => {
+  const speakReplyTo = (sessionId: string, text: string, requestId?: number, isCurrent: () => boolean = () => true): void => {
+    if (!isCurrent()) return;
     const targets = voiceReply.targetsFor(sessionId);
     if (targets.length === 0) return;
     log(`[agentdeck] voice: reply ready for ${sessionId.slice(0, 32)}`
       + ` -> ${targets.length} board(s)`);
     const voiceCfg = loadDaemonSettings().voice as
       { locale?: unknown; speakReplies?: unknown; speakFullReply?: unknown } | undefined;
-    if (voiceCfg?.speakReplies === false) return;  // opt-out, default on
+    if (voiceCfg?.speakReplies === false) {
+      for (const sink of targets) {
+        sink.send(JSON.stringify({ type: 'voice_reply_skipped', requestId }));
+        voiceReply.disarm(sink);
+      }
+      return;
+    }
     // Speech gets the lead, not the transcript: an explicit summary line if the
     // answer has one, else its first sentence. The full answer is already on the
     // screen the user is sitting at, where it can be skimmed — read aloud it is
@@ -6164,7 +6172,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       // spelling out punctuation, so the user still knows the turn finished.
       log('[agentdeck] voice: reply held nothing speakable — skipped');
       for (const sink of targets) {
-        try { sink.send(JSON.stringify({ type: 'voice_reply_skipped' })); } catch { /* closing */ }
+        try { sink.send(JSON.stringify({ type: 'voice_reply_skipped', requestId })); } catch { /* closing */ }
         // Consume the arming either way: the dictation was answered, and
         // leaving it armed would read out the session's *next* turn instead.
         voiceReply.disarm(sink);
@@ -6196,7 +6204,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       try {
         await synthesizeWavWithHelper(spoken, out, locale ? { locale } : {});
         const wav = await readFile(out);
-        for (const sink of boardTargets) {
+        if (!isCurrent()) return;
+        for (const armedSink of boardTargets) {
+          const sink = voiceReply.resolveTarget(armedSink);
+          if (!sink.isOpen()) throw new Error("reply_transport_unavailable");
           // Pull-capable boards fetch the audio themselves over HTTP — the WS
           // push stream both stuttered and could crash the hosted-link RX
           // path (pkt_rxbuff assert). Stage the PCM, send a tiny notify
@@ -6209,7 +6220,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
               });
               try {
                 sink.send(JSON.stringify({
-                  type: 'audio_reply_ready',
+                  type: 'audio_reply_ready', requestId,
                   bytes: parsed.pcm.length,
                   sampleRate: parsed.sampleRate,
                   durationMs: Math.round((parsed.pcm.length / 2) / parsed.sampleRate * 1000),
@@ -6218,16 +6229,20 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
                 log(`[agentdeck] voice: staged reply for ${sink.deviceKey()}`
                   + ` (${parsed.pcm.length}B pull, ${spoken.length} chars)`);
               } catch { /* sink closing — TTL sweep reclaims the staging */ }
-              voiceReply.disarm(sink);
+              voiceReply.disarm(armedSink);
               continue;
             }
           }
-          const ok = await voiceReply.stream(sink, wav, spoken);
+          const ok = await voiceReply.stream(armedSink, wav, spoken);
           log(`[agentdeck] voice: ${ok ? 'spoke' : 'FAILED to speak'} reply`
             + ` (${wav.length}B, ${spoken.length} chars)`);
         }
       } catch (err) {
         log(`[agentdeck] voice: reply synthesis failed: ${String(err).slice(0, 140)}`);
+        if (isCurrent()) for (const sink of boardTargets) {
+          try { sink.send(JSON.stringify({ type: 'voice_result', requestId, delivered: false, error: 'reply_synthesis_failed' })); } catch { /* disconnected */ }
+          voiceReply.disarm(sink);
+        }
       } finally {
         await rm(out, { force: true }).catch(() => {});
       }
@@ -6491,42 +6506,46 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
       sessionId: string;
       board: string;
       integrityError?: string;
+      requestId?: number;
       cleanup: () => void;
     },
     sink: ReplySink,
   ): Promise<void> => {
+        const device = sink.deviceKey();
+        const generation = randomUUID();
+        const personal = captured.sessionId === 'openclaw-personal';
+        if (personal) personalVoiceActive.set(device, generation);
+        const isCurrent = () => !personal || personalVoiceActive.get(device) === generation;
         try {
           if (captured.integrityError) {
             throw new Error(captured.integrityError);
           }
           const text = await transcribeDeviceAudio(captured.wavPath, loadDaemonSettings().voice as VoiceTranscriptionSettings | undefined);
-          if (captured.sessionId === 'openclaw-personal') {
+          if (!isCurrent()) return;
+          if (personal) {
             if (!gatewayAdapter?.isAlive()) throw new Error('openclaw_unavailable');
             const settings = loadDaemonSettings().voice as { openclawSessionKey?: unknown } | undefined;
             const key = typeof settings?.openclawSessionKey === 'string'
               ? settings.openclawSessionKey : 'agent:main:main';
-            const device = sink.deviceKey();
-            const generation = randomUUID();
-            personalVoiceActive.set(device, generation);
             const turn = await startPersonalVoiceTurn(gatewayAdapter, text, key);
+            if (!isCurrent()) { void turn.completion.catch(() => {}); return; }
             const voiceId = `openclaw-voice:${turn.runId}`;
             const armSink = audioArmSinkFor(sink, captured.board);
             // This ID is never used by generic timeline completions. Only the
             // session+run matched response below can cause personal speech.
             voiceReply.disarm(armSink);
             voiceReply.arm(armSink, voiceId);
-            sink.send(JSON.stringify({ type: 'voice_result', text, sessionId: captured.sessionId,
+            sink.send(JSON.stringify({ type: 'voice_result', requestId: captured.requestId, text, sessionId: captured.sessionId,
               delivered: true, via: 'gateway-personal', runId: turn.runId }));
             log(`[agentdeck] personal voice accepted: ${key} run=${turn.runId} board=${device}`);
             void turn.completion.then((answer) => {
               if (personalVoiceActive.get(device) !== generation) return;
-              personalVoiceActive.delete(device);
-              speakReplyTo(voiceId, answer);
+              speakReplyTo(voiceId, answer, captured.requestId, isCurrent);
             }).catch((error) => {
               if (personalVoiceActive.get(device) !== generation) return;
               personalVoiceActive.delete(device);
               voiceReply.disarm(armSink);
-              if (sink.isOpen()) sink.send(JSON.stringify({ type: 'voice_result', text: '',
+              if (sink.isOpen()) sink.send(JSON.stringify({ type: 'voice_result', requestId: captured.requestId, text: '',
                 delivered: false, error: 'openclaw_reply_failed', detail: String(error).slice(0, 160) }));
             });
             return;
@@ -6602,12 +6621,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           }
           try {
             sink.send(JSON.stringify({
-              type: 'voice_result', text, sessionId, delivered,
+              type: 'voice_result', requestId: captured.requestId, text, sessionId, delivered,
               ...(via ? { via } : {}),
               ...(deliverReason ? { deliverReason } : {}),
             }));
           } catch { /* client disconnecting */ }
         } catch (err) {
+          if (!isCurrent()) return;
           const reason = String(err).slice(0, 300);
           // Voice turns are rare and user-initiated. Keep failures at info
           // level so a board's short "Voice error" banner can always be
@@ -6624,7 +6644,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
             : 'voice_failed';
           try {
             sink.send(JSON.stringify({
-              type: 'voice_result', text: '', error: code, detail: reason.slice(0, 160),
+              type: 'voice_result', requestId: captured.requestId, text: '', error: code, detail: reason.slice(0, 160),
             }));
           } catch { /* client disconnecting */ }
         } finally {

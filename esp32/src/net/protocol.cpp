@@ -1197,6 +1197,7 @@ static void sendDeviceInfo() {
     resp["wakeMaxUs"] = WakeWord::maxInferenceUs();
     resp["wakeScore"] = WakeWord::score();
     resp["voiceState"] = Audio::voiceState();
+    resp["voiceRequestId"] = Audio::micReplyGeneration();
     resp["micLevel"] = Audio::micLevel();
 #endif
     resp["buildEpoch"] = (uint32_t)BUILD_EPOCH;
@@ -1666,6 +1667,9 @@ void parseMessage(const char* json, size_t length) {
         HUD::clearSpeaking();
 #if defined(BOARD_VOICE_HTTP_UPLOAD)
     } else if (strcmp(type, "audio_reply_ready") == 0) {
+#if defined(BOARD_IPS10)
+        if (obj["requestId"].is<uint32_t>() && obj["requestId"].as<uint32_t>() != Audio::micReplyGeneration()) return;
+#endif
         // The daemon staged a spoken reply for HTTP pull (audio_http_pull
         // capability): fetch it into PSRAM and play locally. See
         // queueVoiceReplyDownload for why this board never takes the WS
@@ -1681,11 +1685,17 @@ void parseMessage(const char* json, size_t length) {
                 HUD::setSpeaking(said[0] ? said : "(reply)");
                 HUD::setVoiceAnswer(said);
             } else {
+#if defined(BOARD_IPS10)
+                Audio::micVoiceResult(false);
+#endif
                 HUD::notify("Reply fetch busy - skipped");
             }
         }
 #endif
     } else if (strcmp(type, "voice_result") == 0) {
+#if defined(BOARD_IPS10)
+        if (obj["requestId"].is<uint32_t>() && obj["requestId"].as<uint32_t>() != Audio::micReplyGeneration()) return;
+#endif
         // What the host heard, and whether it landed. Silence here was the worst
         // part of the knob's early voice UX: a failed delivery looked identical
         // to a successful one.
@@ -1714,6 +1724,12 @@ void parseMessage(const char* json, size_t length) {
         if (delivered && text[0]) HUD::pushVoiceQuestion(text);
         HUD::notify(note);
     } else if (strcmp(type, "voice_reply_skipped") == 0) {
+#if defined(BOARD_IPS10)
+        if (obj["requestId"].is<uint32_t>() && obj["requestId"].as<uint32_t>() != Audio::micReplyGeneration()) return;
+#endif
+#if defined(BOARD_IPS10)
+        Audio::micVoiceResult(false);
+#endif
         HUD::notify("Reply: nothing to read aloud");
 #endif
 #if defined(BOARD_IPS10)

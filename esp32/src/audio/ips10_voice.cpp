@@ -69,7 +69,7 @@ void beginCapture(const char* target, bool wake) {
     }
     snprintf(session,sizeof(session),"%s",target);
     IPS10Workspace::voiceStarted(target);
-    ++replyGeneration; replyAllowed=true;
+    ++replyGeneration; replyAllowed=true;resultAt=0;
     automatic=wake; closing=false; used=0;
     if (wake) {
         // Keep the end of the wake word + immediate command onset. The host
@@ -148,8 +148,8 @@ void run(void*) {
                 pendingNotice=true;
                 HUD::notify(phase==Phase::Sending?"Still sending audio":phase==Phase::Transcribing?"Still recognizing speech":"OpenClaw is still working");
             }
-            // Host personal turns can run for ten minutes. Do not reopen wake
-            // detection at 25 s and accidentally overlap a still-pending turn.
+            // Host personal turns can run for ten minutes. Explicit re-wake
+            // supersedes their reply generation; silence alone does not.
             // A lost result must nevertheless have a bounded recovery path.
             if(now-waitingSince>11*60*1000) {
                 phase=Phase::Error;replyAllowed=false;++replyGeneration;
@@ -157,7 +157,7 @@ void run(void*) {
             }
         }
         bool suppressed=!WakeWord::enabled() || playback || Net::voiceUploadBusy() ||
-            phase==Phase::Sending || phase==Phase::Transcribing || phase==Phase::Waiting || int32_t(now-cooldownUntil)<0;
+            phase==Phase::Sending || int32_t(now-cooldownUntil)<0;
         if(suppressed) {if(!wasSuppressed) WakeWord::reset();wasSuppressed=true;preCount=0;}
         else {
             if(wasSuppressed) WakeWord::reset();wasSuppressed=false;
@@ -182,6 +182,7 @@ bool micInit() {
     if(xTaskCreate(run,"ips10_voice",12288,nullptr,3,&task)!=pdPASS) {
         free(utterance);free(pre);utterance=pre=nullptr;Serial.println("[WakeVoice] task allocation failed");return false;
     }
+    replyGeneration=esp_random();
     ready=true;return true;
 }
 bool micReady(){return ready;}

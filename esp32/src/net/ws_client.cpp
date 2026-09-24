@@ -90,6 +90,7 @@ static char voiceHttpBoard[16] = {0};
 static char voiceHttpSession[40] = {0};
 static uint32_t voiceHttpRate = 16000;
 static uint32_t voiceHttpMs = 0;
+static uint32_t voiceHttpRequestId = 0;
 static volatile bool voiceHttpPending = false;
 static char voiceHttpIp[16] = {0};
 static uint16_t voiceHttpPort = 0;
@@ -722,6 +723,8 @@ static void pumpVoiceReplyDownload() {
         if (xTaskCreate(replyFeedTask, "reply_feed", 4096, nullptr, 2, nullptr) != pdPASS) {
             replyFeeding = false;
 #if defined(BOARD_IPS10)
+            Audio::playbackStop();
+            Audio::micVoiceResult(false);
             HUD::notify("Reply playback task failed");
 #endif
         }
@@ -730,6 +733,7 @@ static void pumpVoiceReplyDownload() {
         // than let it starve out over 8 s.
         Audio::playbackStop();
 #if defined(BOARD_IPS10)
+        if(!replyCancelled())Audio::micVoiceResult(false);
         HUD::notify(replyCancelled() ? "Reply stopped" : "Reply download failed");
         HUD::clearSpeaking();
 #endif
@@ -776,6 +780,9 @@ bool queueVoiceHttpUpload(const uint8_t* pcm, size_t len, const char* board,
         voiceHttpSession[sizeof(voiceHttpSession) - 1] = '\0';
         voiceHttpRate = sampleRate;
         voiceHttpMs = durationMs;
+#if defined(BOARD_IPS10)
+        voiceHttpRequestId = Audio::micReplyGeneration();
+#endif
         strncpy(voiceHttpIp, ip, sizeof(voiceHttpIp) - 1);
         voiceHttpPort = port;
         strncpy(voiceHttpToken, token, sizeof(voiceHttpToken) - 1);
@@ -814,9 +821,9 @@ static void pumpVoiceHttp() {
     char path[220];
     strncpy(ip, voiceHttpIp, sizeof(ip) - 1); ip[sizeof(ip) - 1] = '\0';
     snprintf(path, sizeof(path),
-             "/esp32/voice?board=%s&sessionId=%s&rate=%lu&ms=%lu&token=%s",
+             "/esp32/voice?board=%s&sessionId=%s&rate=%lu&ms=%lu&requestId=%lu&token=%s",
              voiceHttpBoard, voiceHttpSession,
-             (unsigned long)voiceHttpRate, (unsigned long)voiceHttpMs, voiceHttpToken);
+             (unsigned long)voiceHttpRate, (unsigned long)voiceHttpMs, (unsigned long)voiceHttpRequestId, voiceHttpToken);
     xSemaphoreGive(voiceHttpMutex);
     if (!buf || len == 0) { voiceHttpPending = false; return; }
 
