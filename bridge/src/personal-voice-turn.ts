@@ -6,7 +6,7 @@ export interface VoiceChat {
 export interface PersonalVoiceGateway {
   on(event: 'voice_chat', listener: (event: VoiceChat) => void): unknown;
   off(event: 'voice_chat', listener: (event: VoiceChat) => void): unknown;
-  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string): Promise<{ runId?: string }>;
+  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string, thinking?: 'off' | 'low'): Promise<{ runId?: string }>;
 }
 
 /** Shared by live routing and offline evaluation; never send the invocation alone. */
@@ -20,6 +20,7 @@ export function personalVoiceCommand(text: string): string {
 export async function startPersonalVoiceTurn(
   gateway: PersonalVoiceGateway, text: string, sessionKey = 'agent:main:main',
   timeoutMs = 10 * 60_000,
+  thinking?: 'off' | 'low',
 ): Promise<{ runId: string; completion: Promise<string> }> {
   if (!/^agent:[^:]+:main$/.test(sessionKey)) throw new Error('invalid_personal_session');
   const message = personalVoiceCommand(text);
@@ -54,7 +55,10 @@ export async function startPersonalVoiceTurn(
   timer.unref?.();
   gateway.on('voice_chat', listener);
   try {
-    const ack = await gateway.sendPersonalPrompt(message, sessionKey, randomUUID());
+    const id = randomUUID();
+    const ack = await (thinking
+      ? gateway.sendPersonalPrompt(message, sessionKey, id, thinking)
+      : gateway.sendPersonalPrompt(message, sessionKey, id));
     if (typeof ack.runId !== 'string' || !ack.runId) throw new Error('openclaw_missing_run_id');
     expected = ack.runId;
     if (early.has(expected)) consume(early.get(expected)!);

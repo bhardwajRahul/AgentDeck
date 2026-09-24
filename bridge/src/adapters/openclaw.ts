@@ -1496,8 +1496,8 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
    * a compile error here rather than a runtime surprise.
    */
   /** Explicit personal voice route; acknowledgement is not inferred from enqueue. */
-  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string) {
-    return this.rpcCall('chat.send', { sessionKey, message: text, idempotencyKey });
+  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string, thinking?: 'off' | 'low') {
+    return this.rpcCall('chat.send', { sessionKey, message: text, idempotencyKey, ...(thinking ? { thinking } : {}) });
   }
 
   private rpcCall<M extends keyof GatewayMethodMap>(

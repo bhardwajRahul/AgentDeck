@@ -1,0 +1,7 @@
+# 2026-09-24 — Reduce personal voice agent latency
+
+Measured the installed pipeline before changing endpointing again: recent personal runs spent 8.429 and 14.859 seconds between Gateway acceptance and final answer, followed by 0.660 and 0.517 seconds to synthesize/stage audio. The main personal conversation held about 132k tokens; recent short answers also generated reasoning tokens. This identifies the agent stage as the main measured delay, without attributing all of it to reasoning or context size.
+
+Added optional `voice.openclawThinking` (`off` or `low`; omitted/unknown inherits normal behavior). The value travels only on personal voice `chat.send` requests as `thinking`. It does not patch session defaults, switch models or discard conversation history. The installed Gateway handler forwards this field as `thinkingLevelOverride`; its reply resolver prefers that turn override to session defaults. Disabling reasoning favors voice response speed and can reduce deliberation on complex requests; remove the setting to inherit the normal policy. Added per-run agent latency logging to distinguish future agent delays from ASR and TTS. Generated Gateway schema/Swift/Kotlin shapes include the optional field.
+
+Validation: build and typecheck passed; 4684 tests passed, two skipped, including the explicit voice override and existing unconfigured/run-scoping tests. Protocol artifacts regenerated with the field.

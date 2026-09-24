@@ -9,6 +9,12 @@ class Gateway extends EventEmitter {
   }
 }
 describe('personal voice turn',()=>{
+  it('passes an explicit voice-only thinking override without changing the session key', async () => {
+    const g = new Gateway();
+    const turn = await startPersonalVoiceTurn(g, '연결 확인', undefined, undefined, 'off');
+    expect(g.sendPersonalPrompt).toHaveBeenCalledWith('연결 확인', 'agent:main:main', expect.any(String), 'off');
+    g.chat('mine'); await turn.completion;
+  });
   it('removes the local recognizer spelling of the wake word', async () => {
     const g = new Gateway(); const turn = await startPersonalVoiceTurn(g, '오픈클록. 음성 연결 확인');
     expect(g.sendPersonalPrompt).toHaveBeenCalledWith('음성 연결 확인', 'agent:main:main', expect.any(String));

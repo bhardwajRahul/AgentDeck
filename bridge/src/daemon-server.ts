@@ -6524,10 +6524,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
           if (!isCurrent()) return;
           if (personal) {
             if (!gatewayAdapter?.isAlive()) throw new Error('openclaw_unavailable');
-            const settings = loadDaemonSettings().voice as { openclawSessionKey?: unknown } | undefined;
+            const settings = loadDaemonSettings().voice as { openclawSessionKey?: unknown; openclawThinking?: unknown } | undefined;
             const key = typeof settings?.openclawSessionKey === 'string'
               ? settings.openclawSessionKey : 'agent:main:main';
-            const turn = await startPersonalVoiceTurn(gatewayAdapter, text, key);
+            const thinking = settings?.openclawThinking === 'off' || settings?.openclawThinking === 'low'
+              ? settings.openclawThinking : undefined;
+            const started = performance.now();
+            const turn = await startPersonalVoiceTurn(gatewayAdapter, text, key, undefined, thinking);
             if (!isCurrent()) { void turn.completion.catch(() => {}); return; }
             const voiceId = `openclaw-voice:${turn.runId}`;
             const armSink = audioArmSinkFor(sink, captured.board);
@@ -6540,6 +6543,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<void> {
             log(`[agentdeck] personal voice accepted: ${key} run=${turn.runId} board=${device}`);
             void turn.completion.then((answer) => {
               if (personalVoiceActive.get(device) !== generation) return;
+              log(`[agentdeck] voice latency: agentMs=${Math.round(performance.now() - started)} thinking=${thinking ?? 'inherit'} run=${turn.runId}`);
               speakReplyTo(voiceId, answer, captured.requestId, isCurrent);
             }).catch((error) => {
               if (personalVoiceActive.get(device) !== generation) return;
