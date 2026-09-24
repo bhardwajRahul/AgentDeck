@@ -22,7 +22,7 @@ export async function startPersonalVoiceTurn(
   timeoutMs = 10 * 60_000,
   thinking?: 'off' | 'low',
 ): Promise<{ runId: string; completion: Promise<string> }> {
-  if (!/^agent:[^:]+:main$/.test(sessionKey)) throw new Error('invalid_personal_session');
+  if (!/^agent:[^:]+:(?:main|voice)$/.test(sessionKey)) throw new Error('invalid_personal_session');
   const message = personalVoiceCommand(text);
   if (!message) throw new Error('no_command');
   let expected: string | undefined;

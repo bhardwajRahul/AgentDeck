@@ -15,6 +15,14 @@ describe('personal voice turn',()=>{
     expect(g.sendPersonalPrompt).toHaveBeenCalledWith('연결 확인', 'agent:main:main', expect.any(String), 'off');
     g.chat('mine'); await turn.completion;
   });
+  it('allows a dedicated voice conversation on the same personal agent', async () => {
+    const g = new Gateway();
+    const turn = await startPersonalVoiceTurn(g, '연결 확인', 'agent:main:voice', undefined, 'low');
+    g.chat('mine', 'agent:main:main');
+    expect(g.listenerCount('voice_chat')).toBe(1);
+    g.chat('mine', 'agent:main:voice');
+    await expect(turn.completion).resolves.toBe('answer');
+  });
   it('removes the local recognizer spelling of the wake word', async () => {
     const g = new Gateway(); const turn = await startPersonalVoiceTurn(g, '오픈클록. 음성 연결 확인');
     expect(g.sendPersonalPrompt).toHaveBeenCalledWith('음성 연결 확인', 'agent:main:main', expect.any(String));
