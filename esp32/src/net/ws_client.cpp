@@ -107,7 +107,7 @@ static SemaphoreHandle_t voiceHttpMutex = nullptr;
 static uint8_t voiceHttpAttempts = 0;
 static uint32_t voiceHttpFirstTryMs = 0;
 static bool voiceHttpRejoinKicked = false;
-static constexpr uint32_t VOICE_HTTP_DEADLINE_MS = 30000;
+static constexpr uint32_t VOICE_HTTP_DEADLINE_MS = 12000;
 
 // ── spoken-reply HTTP pull (network core → PSRAM → local playback) ──
 // See queueVoiceReplyDownload in ws_client.h for why this replaces WS binary
@@ -828,7 +828,7 @@ static void pumpVoiceHttp() {
     if (!buf || len == 0) { voiceHttpPending = false; return; }
 
     // Multi-pass retry with a radio bounce: one pump pass makes ONE quick
-    // connect attempt (3 s cap) so the network core keeps servicing serial/WS
+    // connect attempt (1.5 s cap) so the network core keeps servicing serial/WS
     // between tries; the utterance stays latched in PSRAM until the deadline.
     uint32_t now = millis();
     if (voiceHttpFirstTryMs == 0) voiceHttpFirstTryMs = now;
@@ -869,21 +869,23 @@ static void pumpVoiceHttp() {
         code = -3;
     } else {
         WiFiClient client;
-        if (client.connect(ip, port, 3000)) {
+        if (client.connect(ip, port, 1500)) {
             char hdr[360];
             int hlen = snprintf(hdr, sizeof(hdr),
                      "POST %s HTTP/1.1\r\nHost: %s:%u\r\n"
                      "Content-Type: application/octet-stream\r\n"
                      "Content-Length: %u\r\nConnection: close\r\n\r\n",
                      path, ip, (unsigned)port, (unsigned)len);
-            client.write((const uint8_t*)hdr, (size_t)hlen);
+            const bool validHeader = hlen > 0 && size_t(hlen) < sizeof(hdr);
+            size_t headerOff = 0;
             size_t off = 0;
             uint32_t startMs = millis();
             uint32_t lastProgressMs = startMs;
             size_t burstBytes = 0;
-            while (off < len && client.connected() &&
-                   (uint32_t)(millis() - startMs) < 90000 &&
-                   (uint32_t)(millis() - lastProgressMs) < 20000) {
+            while (validHeader && (headerOff < size_t(hlen) || off < len) && client.connected() &&
+                   (uint32_t)(millis() - startMs) < 8000 &&
+                   (uint32_t)(millis() - lastProgressMs) < 1500 &&
+                   (uint32_t)(millis() - voiceHttpFirstTryMs) < VOICE_HTTP_DEADLINE_MS) {
                 // This is the network owner task. A blocking NetworkClient::write
                 // can spend ten seconds retrying while WS RX buffers accumulate.
                 // Keep both control transports draining and let TCP backpressure
@@ -901,11 +903,16 @@ static void pumpVoiceHttp() {
                     burstBytes = 0;
                     continue;
                 }
-                size_t chunk = len - off;
+                // Header writes share the PCM deadline; no blocking write before the loop.
+                const bool sendingHeader = headerOff < size_t(hlen);
+                const uint8_t* data = sendingHeader
+                    ? reinterpret_cast<const uint8_t*>(hdr) + headerOff : buf + off;
+                size_t chunk = sendingHeader ? size_t(hlen) - headerOff : len - off;
                 if (chunk > 512) chunk = 512;
-                int wrote = ::send(client.fd(), buf + off, chunk, MSG_DONTWAIT);
+                int wrote = ::send(client.fd(), data, chunk, MSG_DONTWAIT);
                 if (wrote > 0) {
-                    off += size_t(wrote); lastProgressMs = millis();
+                    if (sendingHeader) headerOff += size_t(wrote); else off += size_t(wrote);
+                    lastProgressMs = millis();
                     burstBytes += size_t(wrote);
                     // At most 2 KiB between scheduler yields. A successful
                     // 512-byte send no longer incurs a fixed 20 ms penalty.
@@ -918,13 +925,13 @@ static void pumpVoiceHttp() {
                     vTaskDelay(pdMS_TO_TICKS(20));
                 }
             }
-            if (off == len) {
+            if (off == len && headerOff == size_t(hlen)) {
                 // "HTTP/1.1 200 OK" — enough of the status line to judge.
                 char status[16] = {0};
                 size_t got = 0;
                 uint32_t waitMs = millis();
                 while (got < sizeof(status) - 1 &&
-                       (uint32_t)(millis() - waitMs) < 15000 && (client.connected() || client.available())) {
+                       (uint32_t)(millis() - waitMs) < 2000 && (client.connected() || client.available())) {
                     ws.loop();
                     Net::serialLoop();
                     int avail = client.available();
