@@ -50,7 +50,11 @@ export async function transcribeDeviceAudio(wav: string, settings?: VoiceTranscr
     // trim consonants or feed a VAD-spliced waveform to the decoder.
     const { stdout } = await run(settings.whisperVadCli, [
       '-vm', settings.whisperVadModel, '-f', wav, '-np',
-    ], { timeout: 5_000, maxBuffer: 256 * 1024, windowsHide: true, encoding: 'utf8' });
+    ], { timeout: 5_000, maxBuffer: 256 * 1024, windowsHide: true, encoding: 'utf8',
+      // VAD uses CPU by default. Avoid unrelated Metal library compilation on
+      // every probe (which can stall behind a resident GPU model on macOS).
+      env: process.platform === 'darwin' ? { ...process.env, GGML_METAL_DEVICES: '' } : process.env,
+    });
     if (!vadHasSpeech(stdout)) throw new Error('No speech detected');
   }
   if (settings.whisperServerUrl) {

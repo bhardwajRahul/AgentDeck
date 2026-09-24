@@ -87,7 +87,9 @@ describe('speech-presence gate', () => {
     await expect(transcribeDeviceAudio('/tmp/original.wav', gated)).resolves.toBe('취소');
     expect(mocks.exec).toHaveBeenCalledWith(gated.whisperVadCli,
       ['-vm', gated.whisperVadModel, '-f', '/tmp/original.wav', '-np'],
-      expect.objectContaining({ timeout: 5000, windowsHide: true }), expect.any(Function));
+      expect.objectContaining({ timeout: 5000, windowsHide: true,
+        env: process.platform === 'darwin' ? expect.objectContaining({ GGML_METAL_DEVICES: '' }) : process.env,
+      }), expect.any(Function));
     expect(Buffer.from(await fetcher.mock.calls[0][1].body.get('file').arrayBuffer())).toEqual(original);
   });
   it.each(['', 'model missing', 'Detected 1 speech segments:',
