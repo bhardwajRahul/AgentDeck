@@ -4,6 +4,7 @@ export interface VoiceChat {
   state: string; sessionKey: string; runId: string; text?: string;
 }
 export interface PersonalVoiceGateway {
+  beginPersonalActivity?(sessionKey: string): () => void;
   on(event: 'voice_chat', listener: (event: VoiceChat) => void): unknown;
   off(event: 'voice_chat', listener: (event: VoiceChat) => void): unknown;
   sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string, thinking?: 'off' | 'low'): Promise<{ runId?: string }>;
@@ -31,12 +32,15 @@ export async function startPersonalVoiceTurn(
   let resolve!: (text: string) => void;
   let reject!: (error: Error) => void;
   let done = false;
+  let endActivity: (() => void) | undefined;
   const completion = new Promise<string>((yes, no) => { resolve = yes; reject = no; });
   // A fast failure may arrive while the caller is still waiting for the ack.
   void completion.catch(() => {});
   const close = (error?: string, text?: string) => {
     if (done) return;
     done = true; clearTimeout(timer); gateway.off('voice_chat', listener);
+    // Let the adapter finish processing a synchronous final before settling UI.
+    if (endActivity) queueMicrotask(endActivity);
     error ? reject(new Error(error)) : resolve(text ?? '');
   };
   const consume = (event: VoiceChat) => {
@@ -55,6 +59,7 @@ export async function startPersonalVoiceTurn(
   timer.unref?.();
   gateway.on('voice_chat', listener);
   try {
+    endActivity = gateway.beginPersonalActivity?.(sessionKey);
     const id = randomUUID();
     const ack = await (thinking
       ? gateway.sendPersonalPrompt(message, sessionKey, id, thinking)

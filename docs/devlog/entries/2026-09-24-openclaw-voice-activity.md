@@ -1,0 +1,7 @@
+# 2026-09-24 — Show personal OpenClaw work before its first reply
+
+Personal device voice used `sendPersonalPrompt`, bypassing the ordinary prompt path's immediate processing event. A model could spend several seconds thinking while the Gateway row remained idle; a final-only answer never emitted processing. The voice turn now owns an activity lease from dispatch through matched completion, refusal or its existing deadline. Overlapping voice requests retain independent leases, unrelated chat completions cannot hide pending voice work, and permission prompts retain precedence. The lease does not delay completion or invent extra work after an answer.
+
+The shared macOS/iOS dashboard roster now emphasizes processing rows with a tinted background, border, bold name and WORKING label. Idle indicators use the neutral product token. This changes the roster only; creature animation and session sorting are unchanged.
+
+Validation: real-adapter regressions cover the silent interval, final-only and pre-acknowledgement completion, concurrent voice turns, unrelated cron completion, refusal, timeout and permission precedence. macOS signed Debug and iOS Simulator builds pass; build/typecheck and 4,691 JavaScript tests pass (two skipped). Protocol generation leaves no drift, token mirrors and docs/catalog checks pass. Design lint reports the unchanged built-checkout baseline of 92 findings (89 source findings plus three generated plugin findings). Runtime installation is separate from source verification; this is not an App Store release.

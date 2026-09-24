@@ -219,6 +219,7 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
   private pluginApprovalReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   // Chat tracking for timeline events
+  private readonly personalActivity = new Set<symbol>();
   private chatStarted = false;
   private chatStartTime = 0;
   private chatToolCount = 0;
@@ -1489,17 +1490,35 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
 
   // ===== Private: Request/Response =====
 
+  /** Activity starts at dispatch, including the silent model-thinking interval.
+   * The voice turn owns the bounded lifetime (completion, refusal or timeout).
+   * Separate leases prevent an unrelated/older final from hiding a newer turn. */
+  beginPersonalActivity(sessionKey: string): () => void {
+    const token = Symbol(sessionKey);
+    this.personalActivity.add(token);
+    this.emitAdapterEvent({ source: 'parser', event: 'spinner_start' });
+    return () => {
+      if (!this.personalActivity.delete(token)) return;
+      if (this.activePendingApproval()) {
+        this.rebroadcastActivePrompt();
+        return;
+      }
+      const otherChat = this.chatStarted && this.currentSessionKey !== sessionKey;
+      this.emitAdapterEvent({ source: 'parser', event: otherChat ? 'spinner_start' : 'idle' });
+    };
+  }
+
+  /** Explicit personal voice route; acknowledgement is not inferred from enqueue. */
+  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string, thinking?: 'off' | 'low') {
+    return this.rpcCall('chat.send', { sessionKey, message: text, idempotencyKey, ...(thinking ? { thinking } : {}) });
+  }
+
   /**
    * Typed RPC dispatch. `GatewayMethodMap` correlates the method name with
    * its param shape and result shape (declared in `shared/gateway-protocol.ts`),
    * so misuse — wrong params for a method, or calling an unknown method — is
    * a compile error here rather than a runtime surprise.
    */
-  /** Explicit personal voice route; acknowledgement is not inferred from enqueue. */
-  sendPersonalPrompt(text: string, sessionKey: string, idempotencyKey: string, thinking?: 'off' | 'low') {
-    return this.rpcCall('chat.send', { sessionKey, message: text, idempotencyKey, ...(thinking ? { thinking } : {}) });
-  }
-
   private rpcCall<M extends keyof GatewayMethodMap>(
     method: M,
     params: GatewayMethodMap[M]['params'],
@@ -2474,6 +2493,16 @@ export class OpenClawAdapter extends EventEmitter implements AgentAdapter {
   }
 
   private emitAdapterEvent(evt: AdapterEvent): void {
+    if (evt.source === 'parser' && (evt.event === 'idle' || evt.event === 'spinner_start')) {
+      // Active permissions outrank work, including while a voice turn is open.
+      if (this.personalActivity.size > 0 && this.activePendingApproval()) {
+        this.rebroadcastActivePrompt();
+        return;
+      }
+      if (evt.event === 'idle' && this.personalActivity.size > 0) {
+        evt = { ...evt, event: 'spinner_start' };
+      }
+    }
     this.emit('event', evt);
   }
 }
