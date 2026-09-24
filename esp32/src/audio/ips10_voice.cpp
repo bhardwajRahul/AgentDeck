@@ -123,7 +123,7 @@ void run(void*) {
         if(active) {
             size_t add=n<MAX_SAMPLES-used?n:MAX_SAMPLES-used;
             memcpy(utterance+used,mono,add*sizeof(int16_t));used+=add;
-            const auto decision=endpoint.update(now,rms,uint32_t(n*1000/RATE));
+            const auto decision=endpoint.update(now,rms,uint32_t(n*1000/RATE),playbackActive());
             speechActive=endpoint.speaking();speechHeard=endpoint.heard();
             quietMs=uint16_t(endpoint.quietMs(now)>65535?65535:endpoint.quietMs(now));
             if(closing && int32_t(now-closeAt)>=0) finish(false);
