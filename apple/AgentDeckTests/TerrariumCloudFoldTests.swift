@@ -377,6 +377,12 @@ final class TerrariumCloudFoldTests: XCTestCase {
             XCTAssertLessThan(max(span.x, span.y, span.z), 0.30,
                 "An arm hinge must not rotate a full-height side of Claude's torso")
         }
+        let flanks = claude.children.filter { $0.name.hasPrefix("claudecode_canonical_flank_") }
+        XCTAssertEqual(flanks.count, 4)
+        for flank in flanks {
+            XCTAssertLessThan(flank.visualBounds(relativeTo: flank).extents.x, 0.015,
+                "Fixed torso bevels must not retain thin shelves above or below the moving arms")
+        }
         XCTAssertNotNil(library.findEntity(named: "joint_claw_0"))
         XCTAssertNotNil(library.findEntity(named: "joint_claw_1"))
     }

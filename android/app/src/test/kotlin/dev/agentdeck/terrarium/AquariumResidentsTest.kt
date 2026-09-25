@@ -101,5 +101,16 @@ class AquariumResidentsTest {
             assertTrue("Arm $side must be a narrow horizontal strip, not a full-height torso edge",
                 high.getDouble(2) - low.getDouble(2) < 0.20)
         }
+        val flanks = (0 until nodes.length()).map { nodes.getJSONObject(it) }
+            .filter { it.optString("name").startsWith("claudecode_canonical_flank_") }
+        assertEquals(4, flanks.size)
+        for (flank in flanks) {
+            val primitive = json.getJSONArray("meshes").getJSONObject(flank.getInt("mesh"))
+                .getJSONArray("primitives").getJSONObject(0)
+            val positions = json.getJSONArray("accessors").getJSONObject(
+                primitive.getJSONObject("attributes").getInt("POSITION"))
+            assertTrue("Fixed bevel must not leave a shelf reaching to the arm tip",
+                positions.getJSONArray("max").getDouble(0) - positions.getJSONArray("min").getDouble(0) < 0.015)
+        }
     }
 }
