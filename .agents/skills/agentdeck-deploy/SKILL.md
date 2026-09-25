@@ -18,8 +18,8 @@ Parse the argument string to determine target(s). Multiple targets can be combin
 | `pantone` / `pantone6` | Pantone 6 only |
 | `crema` | Crema S only |
 | `lenovo` / `tablet` / `tab` | Lenovo Tab only |
-| `ios` | All iOS devices (iPad + iPhone) |
-| `iphone` | iPhone XR only |
+| `ios` | Connected routine iOS targets (iPad Air M2 + iPhone 14 Pro Max) |
+| `iphone` | iPhone 14 Pro Max only |
 | `ipad` | iPad Air M2 only |
 | `macos` / `mac` | macOS app only |
 | `apple` | iOS + macOS |
@@ -47,8 +47,12 @@ Parse the argument string to determine target(s). Multiple targets can be combin
 | Device | devicectl ID | xcodebuild destination | Type |
 |--------|-------------|----------------------|------|
 | **iPad Air 11" (M2)** | `8B71247D-A740-535E-8B2C-6FE9A196F342` | `platform=iOS,id=00008112-001608A02ED2601E` | WiFi/USB |
-| **iPhone XR** | `E5F3252C-69A4-5AC9-9E9A-BC2B328D24E3` | `platform=iOS,id=E5F3252C-69A4-5AC9-9E9A-BC2B328D24E3` | WiFi/USB |
+| **iPhone 14 Pro Max** | `00008120-001169AA11D8C01E` | `platform=iOS,id=00008120-001169AA11D8C01E` | WiFi/USB |
 | **macOS** | — | `platform=macOS` | Local |
+
+iPhone XR is retired from routine test and deploy targets. Do not include it in
+`all`, `ios`, or `iphone` runs even if it appears in device discovery; target it
+only when the user explicitly requests that device.
 
 ### ESP32 Boards
 
