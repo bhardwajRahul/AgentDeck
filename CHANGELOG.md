@@ -47,6 +47,8 @@ bumped, superseded by 1.0.17, and never published, so it exists only in git.
 
 ## Unreleased
 
+- Apple and Android 3D dashboards: emphasize working agents with high-contrast WORKING badges, visible activity bars and stronger motion across all six creature types. Keep activity cues visible in viewing mode, respect reduced motion, and separate selection from the creature silhouette. Native activity tuning is generated from a shared definition.
+
 - Stream Deck Classic/XL: use the full bottom row for subscription usage. Claude 5H/7D, one Codex window and two z.ai windows fit together on Classic without MORE; page only when the physical row overflows.
 - Stream Deck+: select Claude, Codex or z.ai on either usage LCD. Explicit selections adjust the other dial to avoid duplication and survive plugin restart; hold E2 to resume automatic selection.
 - Pixoo64 (Node and Swift daemons): display all three usage providers together, reserve room above their rows, and retain Claude when only its seven-day window is reported.
