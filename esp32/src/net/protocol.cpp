@@ -282,6 +282,7 @@ static void handleUsageUpdate(JsonObject& obj) {
     // Codex (ChatGPT) rolling-window limits. Nested object mirrors the Claude
     // 5h/7d shape — primary ≈ 5h window, secondary ≈ 7d. Absent (→ sentinel)
     // for non-Codex users. Reuses the storeResetTime lambda on each window.
+    g_state.codexPrimaryMinutes = g_state.codexSecondaryMinutes = 0;
     g_state.codexPrimaryPercent = -1.0f;
     g_state.codexSecondaryPercent = -1.0f;
     g_state.codexPrimaryReset[0] = '\0';
@@ -293,6 +294,7 @@ static void handleUsageUpdate(JsonObject& obj) {
             if (!p["stale"].as<bool>()) {
                 if (p["usedPercent"].is<float>()) g_state.codexPrimaryPercent = p["usedPercent"].as<float>();
                 storeResetTime(p, "resetsAt", g_state.codexPrimaryReset, sizeof(g_state.codexPrimaryReset));
+                g_state.codexPrimaryMinutes = p["windowMinutes"] | 0;
             }
         }
         if (cx["secondary"].is<JsonObject>()) {
@@ -300,6 +302,7 @@ static void handleUsageUpdate(JsonObject& obj) {
             if (!s["stale"].as<bool>()) {
                 if (s["usedPercent"].is<float>()) g_state.codexSecondaryPercent = s["usedPercent"].as<float>();
                 storeResetTime(s, "resetsAt", g_state.codexSecondaryReset, sizeof(g_state.codexSecondaryReset));
+                g_state.codexSecondaryMinutes = s["windowMinutes"] | 0;
             }
         }
     }
@@ -307,6 +310,7 @@ static void handleUsageUpdate(JsonObject& obj) {
     // z.ai GLM Coding Plan limits (#350) — same nested grammar. The secondary
     // window carries `quantity`: "mcp" meters TOOL CALLS and renderers label
     // it "MCP", never a window length; anything else meters token credits.
+    g_state.zaiPrimaryMinutes = g_state.zaiSecondaryMinutes = 0;
     g_state.zaiPrimaryPercent = -1.0f;
     g_state.zaiSecondaryPercent = -1.0f;
     g_state.zaiPrimaryReset[0] = '\0';
@@ -319,6 +323,7 @@ static void handleUsageUpdate(JsonObject& obj) {
             if (!p["stale"].as<bool>()) {
                 if (p["usedPercent"].is<float>()) g_state.zaiPrimaryPercent = p["usedPercent"].as<float>();
                 storeResetTime(p, "resetsAt", g_state.zaiPrimaryReset, sizeof(g_state.zaiPrimaryReset));
+                g_state.zaiPrimaryMinutes = p["windowMinutes"] | 0;
             }
         }
         if (zr["secondary"].is<JsonObject>()) {
@@ -326,6 +331,7 @@ static void handleUsageUpdate(JsonObject& obj) {
             if (!s["stale"].as<bool>()) {
                 if (s["usedPercent"].is<float>()) g_state.zaiSecondaryPercent = s["usedPercent"].as<float>();
                 storeResetTime(s, "resetsAt", g_state.zaiSecondaryReset, sizeof(g_state.zaiSecondaryReset));
+                g_state.zaiSecondaryMinutes = s["windowMinutes"] | 0;
                 if (s["quantity"].is<const char*>() &&
                     strcmp(s["quantity"].as<const char*>(), "mcp") == 0) {
                     g_state.zaiSecondaryIsMcp = true;

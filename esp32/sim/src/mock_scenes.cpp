@@ -85,6 +85,10 @@ void base(CreatureState cs) {
   g_state.inputTokens = 128000; g_state.outputTokens = 41000;
   g_state.toolCalls = 87; g_state.sessionDurationSec = 5400;
   g_state.estimatedCostUsd = 3.42f;
+  g_state.codexPrimaryMinutes = 300;
+  g_state.codexSecondaryMinutes = 10080;
+  g_state.zaiPrimaryMinutes = 300;
+  g_state.zaiSecondaryMinutes = 10080;
   g_state.codexPrimaryPercent = -1.0f;   // no Codex-window data by default
   g_state.codexSecondaryPercent = -1.0f;
   g_state.zaiPrimaryPercent = g_state.zaiSecondaryPercent = -1.0f;

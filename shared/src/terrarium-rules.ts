@@ -47,6 +47,9 @@
  *   invariant: clearMaxX + resterMaxWidthFrac/2 < crayfish claw left edge.
  */
 export const TERRARIUM_RULES = {
+  /** Pixoo HUD rows reserve space for every live provider in both daemons. */
+  pixooUsageRowHeight: 7,
+  pixooUsageCreatureMargin: 11,
   /** Native 3D foreground budget; the full roster remains independently accessible. */
   nativeResidentLimit: 8,
   /** Vertical field of view for the same authored habitat across native engines. */

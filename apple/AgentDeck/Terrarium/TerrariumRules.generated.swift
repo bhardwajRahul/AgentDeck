@@ -5,6 +5,8 @@
 /// Cross-platform terrarium rules. See shared/src/terrarium-rules.ts for
 /// what each value means and the clearance invariant they encode.
 enum TerrariumRules {
+    static let pixooUsageRowHeight: Int = 7
+    static let pixooUsageCreatureMargin: Int = 11
     static let nativeResidentLimit: Int = 8
     static let nativeCameraFov: Float = 38.0
     static let nativeCameraWideFov: Float = 32.0

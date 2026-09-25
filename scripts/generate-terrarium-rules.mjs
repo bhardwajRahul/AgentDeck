@@ -39,6 +39,8 @@ export function emitSwift(rules) {
 /// Cross-platform terrarium rules. See shared/src/terrarium-rules.ts for
 /// what each value means and the clearance invariant they encode.
 enum TerrariumRules {
+    static let pixooUsageRowHeight: Int = ${rules.pixooUsageRowHeight}
+    static let pixooUsageCreatureMargin: Int = ${rules.pixooUsageCreatureMargin}
     static let nativeResidentLimit: Int = ${rules.nativeResidentLimit}
     static let nativeCameraFov: Float = ${f(rules.nativeCameraFov)}
     static let nativeCameraWideFov: Float = ${f(rules.nativeCameraWideFov)}
