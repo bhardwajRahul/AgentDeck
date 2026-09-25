@@ -68,6 +68,9 @@ def clipped(source,name,planes):
         edges=[e for e in cut['geom_cut'] if isinstance(e,bmesh.types.BMEdge) and e.is_boundary]
         if edges:bmesh.ops.holes_fill(bm,edges=edges,sides=0)
     mesh=bpy.data.meshes.new(name);bm.to_mesh(mesh);bm.free()
+    # Intersecting the SVG's pixel-step edges can leave a zero-area cap;
+    # glTF rejects that even though Blender displays the silhouette normally.
+    mesh.validate(clean_customdata=False)
     o=bpy.data.objects.new(name,mesh);scene.collection.objects.link(o)
     o.data.materials.append(source.data.materials[0]);return o
 for brand in brands:
@@ -116,9 +119,21 @@ for brand in brands:
         bpy.ops.object.transform_apply(location=True,rotation=False,scale=True)
         middle=[((.375,0,0),(1,0,0)),((-.375,0,0),(-1,0,0))]
         torso=clipped(source,'claudecode_canonical_body',middle+[((0,-.19079,0),(0,-1,0))]);torso.parent=root
+        # The SVG's horizontal arms occupy y=10.949..14.051 (in a 24-unit
+        # viewBox). Clipping only by x also picked up the full-height outer
+        # torso edge; rotating that edge produced broken-looking spikes behind
+        # the character. Keep the non-arm parts of each side fixed to the body.
+        arm_top=(12.5-10.949)/24
+        arm_bottom=(12.5-14.051)/24
         for index,side in enumerate([-1,1]):
-            arm=clipped(source,'claudecode_canonical_arm', [((side*.375,0,0),(-side,0,0))])
+            outer=[((side*.375,0,0),(-side,0,0))]
+            arm=clipped(source,'claudecode_canonical_arm',outer+[
+                ((0,arm_top,0),(0,1,0)),((0,arm_bottom,0),(0,-1,0))])
             hinge(arm,'arm_'+str(index),(side*.375,0,0),root)
+            for name,cut in [('upper',((0,arm_top,0),(0,-1,0))),
+                             ('lower',((0,arm_bottom,0),(0,1,0)))]:
+                flank=clipped(source,'claudecode_canonical_flank_'+name,outer+[cut])
+                flank.parent=root
         # Original four pixel feet, cut at their existing junction with the body.
         intervals=[(-.31305,-.25),(-.18805,-.125),(.125,.18805),(.25,.31305)]
         for i,(left,right) in enumerate(intervals):

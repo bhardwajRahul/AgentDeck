@@ -371,6 +371,12 @@ final class TerrariumCloudFoldTests: XCTestCase {
         let bounds = claude.visualBounds(relativeTo: nil).extents
         XCTAssertGreaterThan(bounds.x / bounds.y, 1.5, "Retain the original wide pixel silhouette")
         XCTAssertEqual(names(claude).filter { $0.hasPrefix("joint_foot_") }.count, 4)
+        for side in 0...1 {
+            let arm = try XCTUnwrap(claude.findEntity(named: "joint_arm_\(side)"))
+            let span = arm.visualBounds(relativeTo: arm).extents
+            XCTAssertLessThan(max(span.x, span.y, span.z), 0.30,
+                "An arm hinge must not rotate a full-height side of Claude's torso")
+        }
         XCTAssertNotNil(library.findEntity(named: "joint_claw_0"))
         XCTAssertNotNil(library.findEntity(named: "joint_claw_1"))
     }
