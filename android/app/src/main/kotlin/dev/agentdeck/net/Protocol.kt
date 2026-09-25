@@ -115,6 +115,7 @@ data class StateUpdate(
     val antigravityStatus: AntigravityStatusInfo? = null,
     val gatewayAvailable: Boolean? = null,
     val gatewayConnected: Boolean? = null,
+    val gatewayAuthStatus: String? = null,
     val gatewayHasError: Boolean? = null,
     val moduleHealth: ModuleHealthState? = null,
     val voiceAssistantState: String? = null,

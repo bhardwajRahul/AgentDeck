@@ -424,7 +424,9 @@ private fun UpstreamRows(state: DashboardState, scale: MonitorLayoutScale, visib
             )
         }
 
-        val openClawVisible = "openclaw" in visible
+        val gatewaySetup = dev.agentdeck.net.GatewaySetupStatus.evaluate(
+            state.gatewayAuthStatus, state.gatewayConnected, state.gatewayAvailable)
+        val openClawVisible = "openclaw" in visible || (state.bridgeConnected && gatewaySetup.needsAttention)
         if (openClawVisible) {
             // Only surface the catalog under OpenClaw when it actually
             // belongs to OpenClaw — same gate we apply to the Claude row.
@@ -434,6 +436,7 @@ private fun UpstreamRows(state: DashboardState, scale: MonitorLayoutScale, visib
                 emptyList()
             }
             val subtitle = when {
+                gatewaySetup.needsAttention -> gatewaySetup.detail
                 openClawLines.isNotEmpty() -> openClawLines.joinToString(", ")
                 state.gatewayConnected != true -> "Not connected"
                 else -> null
@@ -442,13 +445,12 @@ private fun UpstreamRows(state: DashboardState, scale: MonitorLayoutScale, visib
                 name = "OpenClaw",
                 status = when {
                     state.gatewayHasError == true -> LEDStatus.ERROR
-                    // OK only when the Gateway is authenticated — reachability
-                    // alone keeps the row amber so users know setup isn't
-                    // finished (matches iOS topology semantics).
+                    gatewaySetup.needsAttention -> LEDStatus.WARN
                     state.gatewayConnected == true -> LEDStatus.OK
-                    else -> LEDStatus.WARN
+                    else -> LEDStatus.DIM
                 },
                 subtitle = subtitle,
+                subtitleMaxLines = if (gatewaySetup.needsAttention) 4 else 1,
                 consumers = consumersFor(ProviderKey.OPENCLAW, state),
                 rateLimits = emptyList(),
             )
@@ -625,6 +627,7 @@ private fun ProviderRow(
     subtitle: String?,
     consumers: List<Color>,
     rateLimits: List<RateChip>,
+    subtitleMaxLines: Int = 1,
 ) {
     val tight = PlatformTextStyle(includeFontPadding = false)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -678,7 +681,7 @@ private fun ProviderRow(
                 color = TerrariumColors.HUDSubtext,
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
-                maxLines = 1,
+                maxLines = subtitleMaxLines,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 14.dp),
                 style = TextStyle(platformStyle = tight),
