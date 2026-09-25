@@ -186,6 +186,8 @@ struct DashboardState {
     // -1.0f sentinel = "no data" (window absent / not a Codex user).
     float codexPrimaryPercent;     // ≈5h window usedPercent (0-100)
     float codexSecondaryPercent;   // ≈7d window usedPercent (0-100)
+    int codexPrimaryMinutes;
+    int codexSecondaryMinutes;
     char codexPrimaryReset[20];    // "1h 23m" relative (needs NTP) or ""
     char codexSecondaryReset[20];
 #if defined(BOARD_IPS10)
@@ -200,6 +202,8 @@ struct DashboardState {
     // token usage. -1.0f sentinel as above.
     float zaiPrimaryPercent;       // 5h credits window usedPercent (0-100)
     float zaiSecondaryPercent;     // long window (weekly credits OR monthly MCP)
+    int zaiPrimaryMinutes;
+    int zaiSecondaryMinutes;
     char zaiPrimaryReset[20];
     char zaiSecondaryReset[20];
     bool zaiSecondaryIsMcp;
@@ -316,6 +320,11 @@ struct DashboardState {
         fiveHourPercent = -1.0f;
         sevenDayPercent = -1.0f;
         estimatedCostUsd = -1.0f;
+        codexPrimaryMinutes = codexSecondaryMinutes = 0;
+        zaiPrimaryMinutes = zaiSecondaryMinutes = 0;
+        zaiPrimaryPercent = zaiSecondaryPercent = -1.0f;
+        zaiPrimaryReset[0] = zaiSecondaryReset[0] = '\0';
+        zaiSecondaryIsMcp = false;
         codexPrimaryPercent = -1.0f;
         codexSecondaryPercent = -1.0f;
         codexPrimaryReset[0] = '\0';
@@ -358,6 +367,11 @@ struct DashboardState {
         sevenDayPercent = -1.0f;
         fiveHourReset[0] = '\0';
         sevenDayReset[0] = '\0';
+        codexPrimaryMinutes = codexSecondaryMinutes = 0;
+        zaiPrimaryMinutes = zaiSecondaryMinutes = 0;
+        zaiPrimaryPercent = zaiSecondaryPercent = -1.0f;
+        zaiPrimaryReset[0] = zaiSecondaryReset[0] = '\0';
+        zaiSecondaryIsMcp = false;
         codexPrimaryPercent = -1.0f;
         codexSecondaryPercent = -1.0f;
         codexPrimaryReset[0] = '\0';
